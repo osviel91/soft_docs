@@ -11,6 +11,7 @@ import SemanticMessageInspector from "./SemanticMessageInspector";
 import TraceExplorer from "./TraceExplorer";
 import { useDiagram } from "./use-diagram";
 import { semanticComparison, type ComparisonOccurrence, type ComparisonPane as ComparisonPaneId, type SemanticComparison } from "./semantic-comparison";
+import { crossContextAnalysis, type AnalysisOptions, type CrossContextAnalysis } from "./cross-context-analysis";
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 
 export interface ComparisonViewProps {
@@ -209,10 +210,19 @@ export default function ComparisonView({
   } satisfies Session : null;
   const comparison = useMemo(
     () => semanticComparison(index, primarySession ? resourceIdForFile(primarySession.resource) : null, secondary ? resourceIdForFile(secondary) : null, relationships),
-    [index, primarySession, resourceIdForFile, relationships, secondary],
+    [index, primarySession?.resource.id, secondary?.id, resourceIdForFile, relationships],
   );
   const [selected, setSelected] = useState<{ pane: ComparisonPaneId; messageId: string } | null>(null);
   const [focused, setFocused] = useState<ComparisonOccurrence | null>(null);
+  const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>({ direction: "both", maxDepth: 8, maxNodes: 120, includeCandidates: false, includeRecovery: false });
+  const analysis = useMemo<CrossContextAnalysis>(() => crossContextAnalysis(
+    { index: index ?? emptyIndex, resourceId: primarySession ? resourceIdForFile(primarySession.resource) : null, sessionId: "a" },
+    { index: index ?? emptyIndex, resourceId: secondary ? resourceIdForFile(secondary) : null, sessionId: "b" },
+    comparison,
+    selected ? { messageId: selected.messageId } : null,
+    analysisOptions,
+    relationships,
+  ), [index, primarySession?.resource.id, secondary?.id, resourceIdForFile, comparison, selected?.messageId, analysisOptions, relationships]);
   const selectedCounterparts = selected
     ? (selected.pane === "a" ? comparison.occurrences.b : comparison.occurrences.a).filter((entry) => entry.messageId === selected.messageId)
     : [];
@@ -252,7 +262,7 @@ export default function ComparisonView({
         <button type="button" className="button button--ghost" onClick={onToggleEditor}>{editorHidden ? "Show editor" : "Hide editor"}</button>
         <button type="button" className="button button--ghost" onClick={onExit}>Close comparison</button>
       </header>
-      <ComparisonSummary comparison={comparison} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
+      <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
       <div className="comparison__panes">
         <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
           {primarySession ? <ComparisonPane pane="a" session={primarySession} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} /> : null}
@@ -263,16 +273,46 @@ export default function ComparisonView({
   );
 }
 
-function ComparisonSummary({ comparison, selected, onSelect, onFocus, onStep, resourceNames }: { comparison: SemanticComparison; selected: { pane: ComparisonPaneId; messageId: string } | null; onSelect: (pane: ComparisonPaneId, id: string) => void; onFocus: (occurrence: ComparisonOccurrence) => void; onStep: (direction: 1 | -1) => void; resourceNames: Record<ComparisonPaneId, string> }) {
+const emptyIndex = { projectId: "", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } satisfies ProjectIndex;
+
+function ComparisonSummary({ comparison, analysis, selected, onSelect, onFocus, onStep, onOpenResource, options, onOptionsChange, resourceNames }: { comparison: SemanticComparison; analysis: CrossContextAnalysis; selected: { pane: ComparisonPaneId; messageId: string } | null; onSelect: (pane: ComparisonPaneId, id: string) => void; onFocus: (occurrence: ComparisonOccurrence) => void; onStep: (direction: 1 | -1) => void; onOpenResource: (resourceId: string, nodeId?: string) => void; options: AnalysisOptions; onOptionsChange: (options: AnalysisOptions) => void; resourceNames: Record<ComparisonPaneId, string> }) {
   const groups = [
     ["Shared", comparison.shared, "both", `${resourceNames.a} + ${resourceNames.b}`],
-    ["Only A", comparison.onlyA, "a", resourceNames.a],
-    ["Only B", comparison.onlyB, "b", resourceNames.b],
+    ["Documented only in A", comparison.onlyA, "a", resourceNames.a],
+    ["Documented only in B", comparison.onlyB, "b", resourceNames.b],
   ] as const;
-  return <aside className="comparison__summary" aria-label="Semantic comparison summary" data-testid="semantic-comparison-summary">
+  return <aside className="comparison__summary" aria-label="Architectural analysis summary" data-testid="semantic-comparison-summary">
     <div className="comparison__counts">{groups.map(([label, identities]) => <span key={label}>{label}: <strong>{identities.length}</strong></span>)}<span>Unresolved: <strong>{new Set(comparison.candidates.map((entry) => `${entry.kind}:${entry.name}`)).size}</strong></span></div>
     {comparison.relationship ? <p className="comparison__relationship">Complementary view: {comparison.relationship.sourceRole ?? "other"} ↔ {comparison.relationship.targetRole ?? "other"}</p> : null}
-    {groups.map(([label, identities, pane, resourceName]) => <section className="comparison__group" key={label} data-testid={`semantic-group-${label.toLowerCase().replace(" ", "-")}`}><h3>{label} <small>{resourceName}</small></h3>{identities.map((identity) => {
+    <section className="comparison__analysis" aria-label="Architectural Analysis" data-testid="architectural-analysis">
+      <h3>Architectural Analysis</h3>
+      {!analysis.anchor && !analysis.staleAnchor ? <p>Select an authoritative semantic identity to anchor a bounded trace.</p> : <>
+        {analysis.staleAnchor ? <p role="alert">The analysis anchor is no longer available.</p> : null}
+        {analysis.anchor ? <>
+        <p>Anchor: <strong>{comparison.identities.get(analysis.anchor.messageId)?.name ?? "stale identity"}</strong></p>
+        <div className="comparison__analysis-controls">
+          <label>Direction <select aria-label="Analysis direction" value={options.direction} onChange={(event) => onOptionsChange({ ...options, direction: event.target.value as AnalysisOptions["direction"] })}><option value="upstream">Upstream</option><option value="downstream">Downstream</option><option value="both">Both</option></select></label>
+          <label><input type="checkbox" checked={options.includeCandidates} onChange={(event) => onOptionsChange({ ...options, includeCandidates: event.target.checked })} /> Candidates</label>
+          <label><input type="checkbox" checked={options.includeRecovery} onChange={(event) => onOptionsChange({ ...options, includeRecovery: event.target.checked })} /> Recovery</label>
+        </div>
+        <div className="comparison__analysis-counts" aria-label="Analysis counts">
+          <span>Shared messages: <strong>{analysis.semanticConnections.length}</strong></span>
+          <span>Documented only in A: <strong>{analysis.documentedOnlyA.length}</strong></span>
+          <span>Documented only in B: <strong>{analysis.documentedOnlyB.length}</strong></span>
+          <span>Unknown boundaries A/B: <strong>{analysis.sides.a.unknownBoundaries.length}/{analysis.sides.b.unknownBoundaries.length}</strong></span>
+          <span>Recovery A/B: <strong>{analysis.sides.a.recovery}/{analysis.sides.b.recovery}</strong></span>
+        </div>
+        {analysis.explicitRelationships.length ? <p className="comparison__relationship">Explicit relationship: {analysis.explicitRelationships.map((relationship) => `${relationship.kind} (${relationship.sourceRole ?? "other"} ↔ ${relationship.targetRole ?? "other"})`).join(", ")}</p> : <p>Explicit relationships: none</p>}
+        {analysis.sides.a.effects.length || analysis.sides.b.effects.length ? <p>Effects documented A/B: {analysis.sides.a.effects.length}/{analysis.sides.b.effects.length}</p> : null}
+        {analysis.sides.a.effects.length && !analysis.sides.b.effects.length ? <p>Effect documented only in A.</p> : null}
+        {analysis.sides.b.effects.length && !analysis.sides.a.effects.length ? <p>Effect documented only in B.</p> : null}
+        {analysis.sides.a.cycles || analysis.sides.b.cycles ? <p>Cycle references A/B: {analysis.sides.a.cycles}/{analysis.sides.b.cycles}</p> : null}
+        </> : null}
+      </>}
+      {analysis.candidates.length ? <p className="comparison__candidate">Candidates remain non-authoritative: {analysis.candidates.length}</p> : null}
+      {analysis.sides.a.unknownBoundaries.concat(analysis.sides.b.unknownBoundaries).slice(0, 4).map((node) => <button type="button" className="comparison__analysis-item" key={`${node.id}:${node.source?.resourceId}`} onClick={() => node.source && onOpenResource(node.source.resourceId, node.source.nodeId)}>{node.label} · unknown boundary</button>)}
+    </section>
+    {groups.map(([label, identities, pane, resourceName]) => <section className="comparison__group" key={label} data-testid={`semantic-group-${label.toLowerCase().replaceAll(" ", "-").replace("documented-only-in-", "only-")}`}><h3>{label} <small>{resourceName}</small></h3>{identities.map((identity) => {
       const matchedA = comparison.occurrences.a.filter((entry) => entry.messageId === identity.id).length;
       const matchedB = comparison.occurrences.b.filter((entry) => entry.messageId === identity.id).length;
       const matched = pane === "both" ? matchedA + matchedB : pane === "a" ? matchedA : matchedB;

@@ -172,14 +172,27 @@ related, and eventual evolution analysis across states or revisions. With
 future private resources, it should also support proposed-versus-shared review
 before publication.
 
-This is not a claim that full semantic architecture comparison or private
-resources are currently implemented. The intended comparison is current
-architectural knowledge versus proposed architectural knowledge, not merely
-old DSL versus new DSL. Results may include shared behavior, changed
-producers/consumers, causal consequences, effects, failure/retry semantics,
-knowledge asymmetry, unresolved candidates, and unknown boundaries. A missing
-resource-side representation must never be treated as proof that behavior is
-absent.
+D03.13.3 provides a read-only Analysis Workspace over two independent viewer
+sessions. An Analysis Session supplies context A, context B, an explicit
+semantic anchor, bounded trace options, semantic correlation, and separately
+indexed typed resource relationships. Its evidence classes remain distinct:
+authoritative identity bindings, explicit complementary-view relationships,
+architectural trace intersections, candidates, knowledge asymmetry, and
+unknown boundaries. A typed relationship is not implied by shared identities.
+
+Analysis uses the existing bounded architectural trace query, including its
+direction, depth and node limits, recovery nodes, and cycle references. It
+reports "documented only in A/B" rather than added or removed knowledge, and
+missing structured recovery as unknown rather than no retry. Candidate names
+remain non-authoritative and cannot create identities, bindings, relationships,
+or documentation. Analysis results navigate to their indexed source evidence;
+the diagrams remain independently zoomed, panned, inspected, and rendered.
+
+Private resources and authoritative revision/state lineage are future seams,
+not current capabilities. They may later supply contexts such as shared/current
+and private/proposed, or establish stronger added/removed/changed terminology.
+A missing resource-side representation must never be treated as proof that
+behavior is absent.
 
 ## Sequence Diagrams
 

@@ -945,6 +945,12 @@ body {
 .comparison__identity small { color: var(--text-muted); }
 .comparison__sync-actions { display: inline-flex; gap: 3px; }
 .comparison__candidate { margin: 3px 0; color: var(--text-muted); }
+.comparison__analysis { display: grid; gap: 5px; margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-inset); }
+.comparison__analysis h3, .comparison__analysis p { margin: 0; }
+.comparison__analysis-controls, .comparison__analysis-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-muted); }
+.comparison__analysis-controls label { display: inline-flex; align-items: center; gap: 4px; }
+.comparison__analysis-controls select { padding: 2px 4px; }
+.comparison__analysis-item { width: fit-content; color: var(--warn); text-align: left; background: none; border: 0; cursor: pointer; }
 
 .comparison__panes {
   display: flex;
