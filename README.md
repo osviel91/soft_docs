@@ -1,23 +1,36 @@
 # Software Docs Manager
 
-Software Docs Manager is a local-first browser IDE for documenting software
-systems. It combines editable sequence diagrams, event flows, and Markdown in
-projects that can be rendered, searched, validated, exported, and shared with
-coding agents.
+Software Docs Manager is a local-first architectural oversight workspace for
+software systems. It maintains and exposes architectural knowledge so humans
+can understand, navigate, evaluate, and govern system evolution, including
+systems developed with AI-assisted and agentic workflows.
+
+Diagrams are projections of that knowledge, not the knowledge model itself. The
+product combines editable Sequence views, Event Flow / causal views, and
+Markdown resources in projects that can be rendered, searched, validated,
+exported, and shared with coding agents.
 
 ## The Product
 
-Software documentation is often split between prose, diagramming tools, and
-files that drift apart. This project keeps those artifacts together while
-keeping the source readable outside the application.
+As implementation velocity increases, a human may no longer personally
+construct or retain the complete mental model of every change. Passing tests
+and compiling code establish executable constraints, but do not necessarily
+explain what changed architecturally, which messages or dependencies were
+introduced, who produces or consumes them, what consequences or retry behavior
+exists, which facts are authoritative, or what remains unknown.
 
-The product owns the diagram languages and rendering pipeline. The editor,
-stdio MCP server, HTTP API, and remote MCP service use the same domain and
-application services rather than separate interpretations.
+Software Docs Manager provides a human-oriented surface for those questions.
+It keeps prose, architectural projections, and semantic connections together
+while keeping source readable outside the application.
+
+The product owns the architectural documentation model, diagram languages, and
+rendering pipeline. The editor, stdio MCP server, HTTP API, and remote MCP
+service use the same domain and application services rather than separate
+interpretations.
 
 ## Capabilities
 
-Projects contain three resource types:
+Projects currently contain three resource types:
 
 - **Sequence diagrams** use `.seq` source for participants, messages, notes,
   activations, and control-flow fragments.
@@ -29,7 +42,11 @@ Projects contain three resource types:
 Resources can be edited in mixed tabs, validated, rendered to deterministic SVG,
 searched across a project, renamed without losing stable local identity, and
 exported as portable project archives. The project index supplies diagnostics,
-outlines, symbols, references, completion, and search facts.
+outlines, symbols, references, completion, and search facts. Current semantic
+capabilities also include explicit message identities, publish/consume/dispatch
+occurrences, causal handlers and effects, typed complementary-view
+relationships, architectural traces, provenance, and explicit unknown
+boundaries where the evidence is incomplete.
 
 Each resource can also carry optional semantic context: a short multiline
 description and compact tags. The editor shows this context above the source for
@@ -76,9 +93,65 @@ diagnostics, and follow links between diagrams and Markdown:
 4. Render or export the result and keep the source in the project tree.
 
 Agents can use the local stdio MCP server for filesystem work or the authenticated
-remote MCP service for server projects. Both expose discovery, resource reads and
-writes, validation, rendering, search, and documentation workflows. Writes return
-diagnostics; destructive deletes require confirmation.
+remote MCP service for server projects. MCP is not merely CRUD for diagrams. It
+lets agents discover existing knowledge before changing it, enrich legacy
+documentation, create and update artifacts, bind concepts when evidence exists,
+trace consequences, and preserve uncertainty when evidence does not exist.
+Writes return diagnostics; destructive deletes require confirmation. Agents must
+prefer conservative enrichment over speculative completion.
+
+The intended development loop is:
+
+```text
+software -> human/agent implementation -> architectural knowledge
+         -> semantic/causal analysis -> human evaluation
+         -> architectural decision -> implementation/publication
+```
+
+Documentation is therefore an interface between people and software-development
+agents, not only an output of implementation.
+
+## Analysis Workspace Direction
+
+The emerging Analysis Workspace is intended to inspect two architectural
+contexts simultaneously. It is not merely a diagram comparison or text-diff
+feature. Its direction includes:
+
+- cross-resource analysis through shared semantic knowledge;
+- multi-perspective analysis across execution, causal, topology, and other views;
+- discovery of semantic connections that are not yet explicitly related;
+- eventual evolution analysis across states or revisions;
+- proposed-versus-shared architecture review before publication.
+
+The long-term comparison is **current architectural knowledge versus proposed
+architectural knowledge**, not simply old DSL versus new DSL. Useful results may
+include shared behavior, added or removed documented behavior, changed
+producers or consumers, new consequences or effects, changed failure/retry
+semantics, knowledge asymmetry, unresolved candidates, and unknown boundaries.
+Absence from one resource is not proof that behavior is absent from the system.
+
+The current product has resource viewing, semantic navigation, and revision
+foundations. Private architectural resources and full semantic architecture
+comparison are future direction, not currently available capabilities. The
+intended future workflow is feature branch or work in progress -> private
+architectural knowledge -> Analysis Workspace -> human evaluation -> publish
+when appropriate.
+
+## Product Principles
+
+- **Knowledge over diagrams:** diagrams are views over architectural knowledge.
+- **Evidence over inference:** plausible architecture is not an authoritative fact.
+- **Unknown is meaningful:** preserve uncertainty explicitly.
+- **Identity over naming:** equal names do not establish semantic identity.
+- **Semantics over textual diff:** architectural change matters more than DSL line changes.
+- **Human oversight over autonomous completion:** agents assist understanding; they do not manufacture completeness.
+- **Progressive enrichment over forced migration:** legacy documentation should become richer incrementally.
+- **Multiple perspectives, one knowledge graph:** execution, causal, topology, documentation, and future views correlate without being conflated.
+- **Traceability over hidden coupling:** make consequences navigable across resources and views.
+
+The normative authoring and modeling rules are in
+[docs/documentation-model.md](./docs/documentation-model.md). Development and
+agent constraints are in [AGENTS.md](./AGENTS.md).
 
 ## Architecture At A Glance
 

@@ -13,9 +13,44 @@ understanding, asynchronous behavior, important contracts, business rules,
 invariants, infrastructure boundaries, operational constraints, and agent
 discoverability.
 
+Software Docs Manager is an architectural oversight surface, not primarily a
+diagramming application. A diagram is a projection of architectural knowledge.
+The model exists so a human can evaluate changes made by people, AI-assisted
+developers, and autonomous agents even when implementation velocity exceeds one
+person's ability to retain the whole system mental model. Tests and compilation
+provide executable evidence, but do not by themselves explain architectural
+change, message producers and consumers, causal consequences, failure and retry
+behavior, authority, candidates, or unknowns.
+
 It should not narrate source code line by line. A useful claim is grounded in
 repository evidence and explains a responsibility, relationship, rule, or
 outcome that is not obvious from the visual itself.
+
+### Knowledge integrity principles
+
+- **Knowledge over diagrams:** views expose knowledge; they are not the model.
+- **Evidence over inference:** plausible architecture must not become an authoritative fact without evidence.
+- **Unknown is meaningful:** retain uncertainty and missing boundaries explicitly.
+- **Identity over naming:** equal names do not establish semantic identity.
+- **Semantics over textual diff:** architectural change matters more than DSL line changes.
+- **Human oversight over autonomous completion:** agents assist understanding and must not manufacture completeness.
+- **Progressive enrichment over forced migration:** legacy or unstructured knowledge can become richer incrementally.
+- **Multiple perspectives, one knowledge graph:** execution, causal, topology, documentation, and future views may correlate without being conflated.
+- **Traceability over hidden coupling:** consequences should be navigable across resources and views.
+
+Architectural documentation may be incomplete without being invalid. The
+supported enrichment path is:
+
+```text
+legacy/unstructured knowledge
+  -> structured occurrence
+  -> candidate
+  -> authoritative identity/binding
+  -> cross-view traceability
+```
+
+Do not fill missing architecture merely to make a resource look complete.
+Absence from a resource does not prove behavioral absence; unknown is not false.
 
 The canonical dimensions are:
 
@@ -30,6 +65,15 @@ The canonical dimensions are:
 Conceptual and Database are semantic contracts for future representations, not
 current product capabilities. Do not claim that the product can create,
 render, search, or persist them as dedicated diagram types.
+
+The current product supports Sequence, Event Flow, Markdown, semantic message
+identity and binding, causal handlers and effects, typed resource relationships,
+resource revisions, and agent-facing discovery and mutation surfaces. The
+Analysis Workspace direction extends this foundation toward simultaneous
+inspection of two architectural contexts, cross-resource and multi-perspective
+analysis, semantic discovery, evolution analysis, and proposed-versus-shared
+review. Full semantic architecture comparison and private architectural
+resources are future intent, not current capabilities.
 
 ## Representation Selection
 
@@ -117,6 +161,25 @@ boundary, but important knowledge is missing. A **MISREPRESENTED** resource uses
 a representation whose semantics do not match the observed system behavior.
 For example, synchronous HTTP routing represented as an asynchronous Event Flow
 is MISREPRESENTED, not merely incomplete.
+
+## Analysis Workspace Direction
+
+The Analysis Workspace is an emerging inspection direction for viewing two
+architectural contexts together. It should support cross-resource analysis
+through shared semantic knowledge, multiple perspectives such as execution and
+causality, discovery of semantic connections that are not yet explicitly
+related, and eventual evolution analysis across states or revisions. With
+future private resources, it should also support proposed-versus-shared review
+before publication.
+
+This is not a claim that full semantic architecture comparison or private
+resources are currently implemented. The intended comparison is current
+architectural knowledge versus proposed architectural knowledge, not merely
+old DSL versus new DSL. Results may include shared behavior, changed
+producers/consumers, causal consequences, effects, failure/retry semantics,
+knowledge asymmetry, unresolved candidates, and unknown boundaries. A missing
+resource-side representation must never be treated as proof that behavior is
+absent.
 
 ## Sequence Diagrams
 

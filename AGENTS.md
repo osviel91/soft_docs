@@ -2,8 +2,25 @@
 
 ## Product
 
-- Software Docs Manager is a local-first browser IDE for authoring, validating, rendering, and exporting sequence-diagram and event-flow DSLs, plus Markdown documentation.
+- Software Docs Manager maintains and exposes architectural knowledge for human understanding and oversight of system evolution. It is not primarily a diagramming application; diagrams are projections of the knowledge model.
+- The product is designed for human, AI-assisted, and agentic development workflows. Passing tests or compiling code does not by itself establish the architectural consequences of a change.
 - Its owned core is the two language parsers/validators, framework-free domain and layout models, deterministic SVG renderer, project index, and local workspace repositories. The React UI, stdio MCP server, HTTP API, and remote MCP service all consume those shared layers.
+
+## Architectural Knowledge Rules
+
+- Keep documentation resources, Sequence views, Event Flow / causal views, semantic message identities, publish/consume/dispatch occurrences, typed resource relationships, handlers, effects, failure/retry semantics, architectural traces, provenance, and explicit unknown boundaries semantically distinct.
+- Equal message names are candidates, not proof of one semantic identity. A shared semantic identity is not a complementary-view relationship. An effect is not an architectural message.
+- Absence from a resource is not proof that behavior does not exist. Unknown is not false, and missing evidence must remain visible rather than being filled with plausible architecture.
+- A candidate becomes authoritative only through explicit evidence-backed identity or binding. Preserve progressive enrichment from legacy or unstructured knowledge to structured occurrence, candidate, authoritative binding, and cross-view traceability.
+- Documentation can be incomplete without being invalid. Prefer a truthful partial representation over a complete-looking invented one.
+
+## Human Oversight Direction
+
+- Treat MCP as an architectural knowledge surface, not CRUD for diagrams. Agents should discover existing knowledge before editing, enrich legacy artifacts, bind concepts only when evidence exists, trace consequences, and preserve uncertainty otherwise.
+- Prefer conservative enrichment over speculative completion. The human/agent loop is implementation -> architectural knowledge -> semantic/causal analysis -> human evaluation -> architectural decision -> implementation or publication.
+- The Analysis Workspace direction is inspection of two architectural contexts, including cross-resource, multi-perspective, discovery, evolution, and proposed-versus-shared analysis. It is not currently a guarantee of semantic architecture diffing or private resources.
+- Future private resources are intended for work-in-progress architectural knowledge that can be evaluated before publication. Do not describe private resources, D03.14, or future semantic architecture comparison as implemented.
+- Distinguish current capabilities, work in progress, and future intent in documentation and agent responses. Link product-facing summaries to `docs/documentation-model.md` for normative representation rules.
 
 ## Commands
 
