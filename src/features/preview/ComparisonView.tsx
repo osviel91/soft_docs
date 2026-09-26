@@ -8,7 +8,7 @@ import { diagramDisplayName } from "../../language/diagram-title";
 import Preview from "./Preview";
 import EventFlowPreview, { type EventFlowView } from "./EventFlowPreview";
 import SemanticMessageInspector from "./SemanticMessageInspector";
-import TraceExplorer from "./TraceExplorer";
+import TraceSurface from "./TraceSurface";
 import { useDiagram } from "./use-diagram";
 import { semanticComparison, type ComparisonOccurrence, type ComparisonPane as ComparisonPaneId, type SemanticComparison } from "./semantic-comparison";
 import { crossContextAnalysis, type AnalysisOptions, type CrossContextAnalysis } from "./cross-context-analysis";
@@ -57,6 +57,7 @@ function ComparisonPane({
   onSelectIdentity,
   focusOccurrence,
   onFocusOccurrence,
+  onTrace,
 }: {
   pane: Pane;
   session: Session;
@@ -72,11 +73,10 @@ function ComparisonPane({
   onSelectIdentity: (messageId: string) => void;
   focusOccurrence: ComparisonOccurrence | null;
   onFocusOccurrence: (occurrence: ComparisonOccurrence) => void;
+  onTrace: (start: TraceQueryStart, direction: TraceDirection, pane: Pane) => void;
 }) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [activeSemanticMessageId, setActiveSemanticMessageId] = useState<string | null>(null);
-  const [traceStart, setTraceStart] = useState<TraceQueryStart | null>(null);
-  const [traceDirection, setTraceDirection] = useState<TraceDirection>("both");
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const flow = useMemo(
     () => session.representation === "event-flow" ? analyzeEventFlow(session.source).flow : null,
@@ -90,7 +90,6 @@ function ComparisonPane({
   useEffect(() => {
     setActiveNodeId(null);
     setActiveSemanticMessageId(null);
-    setTraceStart(null);
   }, [session.resource.id, session.source]);
 
   useEffect(() => {
@@ -110,11 +109,7 @@ function ComparisonPane({
   };
   const selectOccurrence = (name: string, nodeId: string | null) => {
     if (nodeId) setActiveNodeId(nodeId);
-    if (resourceId && name) setTraceStart({ resourceId, name });
-  };
-  const openTrace = (start: TraceQueryStart, direction: TraceDirection) => {
-    setTraceStart(start);
-    setTraceDirection(direction);
+    if (resourceId && name) onTrace({ resourceId, name }, "both", pane);
   };
 
   return (
@@ -161,12 +156,11 @@ function ComparisonPane({
         activeNodeId={activeNodeId}
         activeSemanticMessageId={activeSemanticMessageId}
         onOpenResource={onOpenResource}
-        onTrace={openTrace}
+        onTrace={(start, direction) => onTrace(start, direction, pane)}
         counterpartResourceId={counterpartMessageId ? (pane === "a" ? comparison.occurrences.b[0]?.resourceId : comparison.occurrences.a[0]?.resourceId) ?? null : null}
         counterpartOccurrences={activeSemanticMessageId ? (pane === "a" ? comparison.occurrences.b : comparison.occurrences.a).filter((entry) => entry.messageId === activeSemanticMessageId) : []}
         onFocusOccurrence={onFocusOccurrence}
       />
-      {traceStart && index ? <TraceExplorer index={index} start={traceStart} direction={traceDirection} onClose={() => setTraceStart(null)} onOpenResource={onOpenResource} /> : null}
     </section>
   );
 }
@@ -214,6 +208,7 @@ export default function ComparisonView({
   );
   const [selected, setSelected] = useState<{ pane: ComparisonPaneId; messageId: string } | null>(null);
   const [focused, setFocused] = useState<ComparisonOccurrence | null>(null);
+  const [trace, setTrace] = useState<{ start: TraceQueryStart; direction: TraceDirection; pane: Pane } | null>(null);
   const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>({ direction: "both", maxDepth: 8, maxNodes: 120, includeCandidates: false, includeRecovery: false });
   const analysis = useMemo<CrossContextAnalysis>(() => crossContextAnalysis(
     { index: index ?? emptyIndex, resourceId: primarySession ? resourceIdForFile(primarySession.resource) : null, sessionId: "a" },
@@ -246,6 +241,7 @@ export default function ComparisonView({
     setSecondaryId(primarySession.resource.id);
     setSelected((current) => current ? { ...current, pane: current.pane === "a" ? "b" : "a" } : null);
   };
+  const openTrace = (start: TraceQueryStart, direction: TraceDirection, pane: Pane) => setTrace({ start, direction, pane });
 
   return (
     <div className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
@@ -263,11 +259,14 @@ export default function ComparisonView({
         <button type="button" className="button button--ghost" onClick={onExit}>Close comparison</button>
       </header>
       <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
+      <div className="comparison__content">
       <div className="comparison__panes">
         <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-          {primarySession ? <ComparisonPane pane="a" session={primarySession} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} /> : null}
+          {primarySession ? <ComparisonPane pane="a" session={primarySession} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /> : null}
         </div>
-        {secondarySession ? <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}><ComparisonPane pane="b" session={secondarySession} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "b" ? selected.messageId : null} counterpartMessageId={selected?.pane === "a" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "b", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} /></div> : <div className="comparison__empty">{secondaryId ? `Viewer B resource ${secondaryId} is no longer available.` : "Choose a second diagram to compare."}</div>}
+         {secondarySession ? <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}><ComparisonPane pane="b" session={secondarySession} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "b" ? selected.messageId : null} counterpartMessageId={selected?.pane === "a" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "b", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /></div> : <div className="comparison__empty">{secondaryId ? `Viewer B resource ${secondaryId} is no longer available.` : "Choose a second diagram to compare."}</div>}
+      </div>
+      {trace && index ? <TraceSurface index={index} start={trace.start} direction={trace.direction} provenance={`Viewer ${trace.pane.toUpperCase()}`} onOpenResource={onOpenResource} /> : null}
       </div>
     </div>
   );

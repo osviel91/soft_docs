@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   traceArchitectureQuery,
   type TraceDirection,
@@ -85,6 +85,7 @@ export default function TraceExplorer({
   const [includeCandidates, setIncludeCandidates] = useState(false);
   const [includeRecovery, setIncludeRecovery] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  useEffect(() => setDirection(initialDirection), [initialDirection]);
   const result = useMemo(
     () => traceArchitectureQuery(index, start, { direction, maxDepth, maxNodes, includeCandidates, includeRecovery }),
     [index, start, direction, maxDepth, maxNodes, includeCandidates, includeRecovery],

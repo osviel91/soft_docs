@@ -36,7 +36,7 @@ import {
 } from "./features/editor/snippets";
 import Preview from "./features/preview/Preview";
 import SemanticMessageInspector from "./features/preview/SemanticMessageInspector";
-import TraceExplorer from "./features/preview/TraceExplorer";
+import TraceSurface from "./features/preview/TraceSurface";
 import type { TraceDirection, TraceQueryStart } from "./domain/project/architecture-trace";
 import Explorer, { type MenuPosition } from "./features/explorer/Explorer";
 import WorkspaceSwitcher, {
@@ -3135,7 +3135,7 @@ export default function App() {
                         }
                       />
                       <SemanticMessageInspector index={index} eventFlow={eventFlow} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
-                      {traceStart && index ? <TraceExplorer index={index} start={traceStart} direction={traceDirection} onClose={() => setTraceStart(null)} onOpenResource={openResourceById} /> : null}
+                      {traceStart && index ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} /> : null}
                     </>
                   ) : (
                     <>
@@ -3155,7 +3155,7 @@ export default function App() {
                         }
                       />
                       <SemanticMessageInspector index={index} sequence={ast} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
-                      {traceStart && index ? <TraceExplorer index={index} start={traceStart} direction={traceDirection} onClose={() => setTraceStart(null)} onOpenResource={openResourceById} /> : null}
+                      {traceStart && index ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} /> : null}
                     </>
                   )}
                 </section>
