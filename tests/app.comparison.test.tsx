@@ -89,7 +89,55 @@ describe("App — dual viewer foundation", () => {
     await command("New Diagram");
     fireEvent.click(screen.getByTestId("compare-mode-button"));
 
-    expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Shared identities: 0");
-    expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Candidates/unresolved: 0");
+    expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Shared: 0");
+    expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Unresolved: 0");
+  });
+
+  it("hides and restores the editor without losing a dirty buffer", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: "participant Dirty" } });
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide editor" }));
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Dirty");
+    expect(screen.getByRole("button", { name: "Show editor" })).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-view").closest("main")).toHaveClass("app__workspace--comparison-editor-hidden");
+    fireEvent.click(screen.getByRole("button", { name: "Show editor" }));
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Dirty");
+  });
+
+  it("switches both resources symmetrically and swaps their sessions", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    const viewerA = screen.getByRole("combobox", { name: "Viewer A resource" }) as HTMLSelectElement;
+    const viewerB = screen.getByRole("combobox", { name: "Viewer B resource" }) as HTMLSelectElement;
+    const switchedA = Array.from(viewerA.options).find((option) => option.value !== viewerA.value && option.value !== viewerB.value)?.value;
+    expect(switchedA).toBeDefined();
+    fireEvent.change(viewerA, { target: { value: switchedA } });
+    expect(viewerA).toHaveValue(switchedA);
+    const beforeSwapA = viewerA.value;
+    const beforeSwapB = viewerB.value;
+    fireEvent.click(screen.getByRole("button", { name: "Swap viewers" }));
+    expect(viewerA).toHaveValue(beforeSwapB);
+    expect(viewerB).toHaveValue(beforeSwapA);
+  });
+
+  it("keeps comparison content usable at narrow widths by stacking viewers", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide editor" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Maximize Viewer A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Maximize Viewer B" })).toBeInTheDocument();
   });
 });

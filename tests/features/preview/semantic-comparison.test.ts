@@ -21,6 +21,16 @@ function index(overrides: Partial<ProjectIndex> = {}): ProjectIndex {
 }
 
 describe("semanticComparison", () => {
+  const mslSequence = "msl-sequence";
+  const upOneSequence = "upone-sequence";
+  const mslTransactionIngestion = "msl-transaction-ingestion";
+  const negativeLedgerNotification = "negative-ledger-notification";
+  const upOneEventFlow = "upone-event-flow";
+
+  function occurrence(resourceId: string, id: string, kind: "event" | "command", step: number) {
+    return { resourceId, name: id, kind, operation: "publish" as const, step, from: "A", to: "B", messageRef: id, range: { start: { line: step, column: 1 }, end: { line: step, column: 2 } } };
+  }
+
   it("matches authoritative sequence and Event Flow occurrences by identity", () => {
     const result = semanticComparison(index({
       semanticMessages: [{ id: "created", name: "Created", kind: "event" }],
@@ -57,5 +67,38 @@ describe("semanticComparison", () => {
     }), "a", "b", [{ kind: "complementary-view", sourceId: "a", targetId: "b", sourceRole: "execution", targetRole: "causal" }]);
     expect(result.onlyA[0].kind).toBe("command");
     expect(result.relationship?.sourceRole).toBe("execution");
+  });
+
+  it("has zero shared identities for MSL Sequence and UpOne Sequence", () => {
+    const result = semanticComparison(index({
+      semanticMessages: [{ id: "msl-only", name: "MSLMessage", kind: "event" }, { id: "upone-only", name: "UpOneMessage", kind: "event" }],
+      semanticOccurrences: [occurrence(mslSequence, "msl-only", "event", 1), occurrence(upOneSequence, "upone-only", "event", 1)],
+    }), mslSequence, upOneSequence);
+    expect(result.shared).toHaveLength(0);
+  });
+
+  it("shows three shared authoritative identities without implying a relationship", () => {
+    const identities = [
+      { id: "transaction", name: "TransactionIngested", kind: "event" as const },
+      { id: "posted", name: "LedgerPosted", kind: "event" as const },
+      { id: "notify", name: "NegativeBalanceNotification", kind: "command" as const },
+    ];
+    const result = semanticComparison(index({
+      semanticMessages: identities,
+      semanticOccurrences: identities.flatMap((identity, step) => [occurrence(mslTransactionIngestion, identity.id, identity.kind, step + 1), occurrence(negativeLedgerNotification, identity.id, identity.kind, step + 1)]),
+    }), mslTransactionIngestion, negativeLedgerNotification);
+    expect(result.shared).toHaveLength(3);
+    expect(result.relationship).toBeNull();
+    expect(result.shared.find((identity) => identity.kind === "command")?.name).toBe("NegativeBalanceNotification");
+  });
+
+  it("keeps authoritative shared identities distinct from the UpOne relationship", () => {
+    const result = semanticComparison(index({
+      semanticMessages: [{ id: "upone-shared", name: "UpOneCreated", kind: "event" }],
+      semanticOccurrences: [occurrence(upOneSequence, "upone-shared", "event", 1)],
+      eventFlowMessages: [{ resourceId: upOneEventFlow, name: "UpOneCreated", kind: "event", messageRef: "upone-shared", nodeId: "event:1", sourceRange: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } }],
+    }), upOneSequence, upOneEventFlow, [{ kind: "complementary-view", sourceId: upOneSequence, targetId: upOneEventFlow, sourceRole: "execution", targetRole: "causal" }]);
+    expect(result.shared.map((identity) => identity.id)).toEqual(["upone-shared"]);
+    expect(result.relationship?.kind).toBe("complementary-view");
   });
 });

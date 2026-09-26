@@ -408,6 +408,7 @@ export default function App() {
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [previewMaximized, setPreviewMaximized] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [comparisonEditorHidden, setComparisonEditorHidden] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
@@ -2594,6 +2595,7 @@ export default function App() {
               disabled={!selectedDiagram}
               onClick={() => {
                 setComparisonOpen(true);
+                setComparisonEditorHidden(false);
                 setComparisonMaximizedPane(null);
               }}
             >
@@ -2682,7 +2684,7 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${previewMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}`}
+            className={`app__workspace${previewMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonOpen && comparisonEditorHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
           >
             {explorerCollapsed ? (
               <button
@@ -3095,6 +3097,7 @@ export default function App() {
                       resourceIdForFile={resourceIdForFile}
                       onExit={() => {
                         setComparisonOpen(false);
+                        setComparisonEditorHidden(false);
                         setComparisonMaximizedPane(null);
                       }}
                       onOpenResource={openResourceById}
@@ -3102,6 +3105,8 @@ export default function App() {
                       onMaximize={setComparisonMaximizedPane}
                       onRestore={() => setComparisonMaximizedPane(null)}
                       relationships={metadata?.relationships ?? []}
+                      editorHidden={comparisonEditorHidden}
+                      onToggleEditor={() => setComparisonEditorHidden((hidden) => !hidden)}
                     />
                   ) : noteMode ? (
                     <MarkdownView
