@@ -2600,6 +2600,47 @@ body {
   height: 100%;
 }
 
+.explorer__content-region {
+  display: flex;
+  flex: 1 1 58%;
+  flex-direction: column;
+  min-height: 120px;
+  min-width: 0;
+}
+
+.explorer__section-title {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explorer__section-toggle {
+  width: 100%;
+  padding: 8px 0;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.explorer__section-toggle:hover,
+.explorer__section-toggle:focus-visible {
+  color: var(--text);
+}
+
+.explorer__node-children {
+  list-style: none;
+  margin: 0;
+  padding-left: 12px;
+}
+
 .explorer__header {
   display: flex;
   align-items: center;
@@ -2707,6 +2748,7 @@ body {
 }
 
 .explorer__projects {
+   flex: 1 1 auto;
   list-style: none;
   margin: 0;
   padding: 8px 8px 20px;
@@ -4166,7 +4208,10 @@ body {
    project list stays the primary surface.
    ========================================================================== */
 .workspaces {
-  flex: 0 0 auto;
+  flex: 1 1 42%;
+  min-height: 150px;
+  min-width: 0;
+  overflow: hidden;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-inset);
@@ -4230,6 +4275,38 @@ body {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.workspaces__filter {
+  display: block;
+  padding: 5px 0;
+}
+
+.workspaces__projects-scroll {
+  max-height: 45%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workspaces__splitter {
+  height: 8px;
+  margin: 4px -12px -6px;
+  cursor: row-resize;
+  touch-action: none;
+  background: var(--bg-inset);
+}
+
+.workspaces__splitter::after {
+  content: "";
+  display: block;
+  height: 2px;
+  margin: 3px 0;
+  background: var(--border);
+}
+
+.workspaces__splitter:hover::after,
+.workspaces__splitter:focus-visible::after {
+  background: var(--accent);
 }
 
 .workspaces__item {

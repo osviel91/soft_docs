@@ -111,6 +111,34 @@ export interface ExplorerProps {
   switcher?: ReactNode;
 }
 
+/** Navigation nodes are organizational only; containment is not architecture. */
+export interface ExplorerNode {
+  id: string;
+  label: string;
+  kind: "group" | "project" | "resource";
+  children?: ExplorerNode[];
+}
+
+/** Small recursive seam for future grouped project knowledge. */
+export function ExplorerNodeList({
+  nodes,
+  render,
+}: {
+  nodes: ExplorerNode[];
+  render: (node: ExplorerNode) => ReactNode;
+}): ReactNode {
+  return nodes.map((node) => (
+    <li key={node.id} data-node-kind={node.kind}>
+      {render(node)}
+      {node.children?.length ? (
+        <ul className="explorer__node-children">
+          <ExplorerNodeList nodes={node.children} render={render} />
+        </ul>
+      ) : null}
+    </li>
+  ));
+}
+
 const EMPTY_HINT =
   "No projects yet. Create one to start saving diagrams and notes.";
 
@@ -150,6 +178,7 @@ export default function Explorer({
   // The search filters files by name across all projects. It is local UI state:
   // clearing it restores the normal selected-project view.
   const [search, setSearch] = useState<string>("");
+  const [contentExpanded, setContentExpanded] = useState(true);
 
   const create = (): void => {
     const name = pendingName.trim();
@@ -251,6 +280,19 @@ export default function Explorer({
         </div>
       )}
 
+      <section className="explorer__content-region" aria-label="Active project content">
+      <h2 className="explorer__section-title">
+        <button
+          type="button"
+          className="explorer__section-toggle"
+          data-testid="explorer-content-toggle"
+          aria-expanded={contentExpanded}
+          onClick={() => setContentExpanded((expanded) => !expanded)}
+        >
+          Project knowledge <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
+        </button>
+      </h2>
+      {contentExpanded && <>
       <form
         className="explorer__create"
         onSubmit={(event) => {
@@ -578,6 +620,8 @@ export default function Explorer({
           })}
         </ul>
       )}
+      </>}
+      </section>
     </nav>
   );
 }

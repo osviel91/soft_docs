@@ -1,5 +1,5 @@
 /** Choose the local or authenticated server workspace that feeds the editor. */
-import { useState } from "react";
+import { useMemo, useRef, useState, type PointerEvent, type KeyboardEvent } from "react";
 import type {
   ServerProject,
   ServerWorkspace,
@@ -47,7 +47,42 @@ export default function WorkspaceSwitcher({
   const [pendingName, setPendingName] = useState("");
   const [localExpanded, setLocalExpanded] = useState(false);
   const [serverExpanded, setServerExpanded] = useState(true);
+  const [projectFilter, setProjectFilter] = useState("");
+  const [regionHeight, setRegionHeight] = useState<number | null>(null);
+  const regionRef = useRef<HTMLElement>(null);
+  const resizing = useRef(false);
   const name = pendingName.trim();
+  const visibleProjects = useMemo(() => {
+    const query = projectFilter.trim().toLowerCase();
+    return query === ""
+      ? serverProjects
+      : serverProjects.filter((project) =>
+          project.name.toLowerCase().includes(query),
+        );
+  }, [projectFilter, serverProjects]);
+
+  const resizeRegion = (clientY: number): void => {
+    const region = regionRef.current;
+    if (!region) return;
+    const parent = region.parentElement?.getBoundingClientRect();
+    if (!parent) return;
+    if (!Number.isFinite(clientY)) return;
+    const maximum = Math.max(150, parent.height * 0.72);
+    setRegionHeight(Math.min(maximum, Math.max(150, clientY - parent.top)));
+  };
+
+  const onSplitterKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const current = regionRef.current?.getBoundingClientRect().height ?? 240;
+    setRegionHeight(Math.max(150, current + (event.key === "ArrowUp" ? -16 : 16)));
+  };
+
+  const onSplitterPointerDown = (event: PointerEvent<HTMLDivElement>): void => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    resizing.current = true;
+    resizeRegion(event.clientY);
+  };
 
   const create = (): void => {
     if (name === "") return;
@@ -60,6 +95,8 @@ export default function WorkspaceSwitcher({
       className="workspaces"
       data-testid="workspace-switcher"
       aria-label="Workspaces"
+      ref={regionRef}
+      style={regionHeight === null ? undefined : { flexBasis: regionHeight }}
     >
       <h2 className="workspaces__title">Workspaces</h2>
 
@@ -141,6 +178,18 @@ export default function WorkspaceSwitcher({
               </button>
             </form>
 
+            <label className="workspaces__filter">
+              <span className="visually-hidden">Filter server projects</span>
+              <input
+                className="explorer__input"
+                data-testid="workspace-server-project-filter"
+                type="search"
+                placeholder="Filter server projects…"
+                value={projectFilter}
+                onChange={(event) => setProjectFilter(event.target.value)}
+              />
+            </label>
+
             {serverProjectsLoading && (
               <p
                 className="workspaces__note"
@@ -178,8 +227,9 @@ export default function WorkspaceSwitcher({
                 </p>
               )}
             {serverProjects.length > 0 && (
-              <ul className="workspaces__list">
-                {serverProjects.map((project) => (
+              <div className="workspaces__projects-scroll" data-testid="workspace-server-projects-scroll">
+                <ul className="workspaces__list">
+                {visibleProjects.map((project) => (
                   <li key={project.id}>
                     <button
                       type="button"
@@ -202,7 +252,11 @@ export default function WorkspaceSwitcher({
                     </button>
                   </li>
                 ))}
-              </ul>
+                </ul>
+                {visibleProjects.length === 0 && (
+                  <p className="workspaces__note">No server projects match.</p>
+                )}
+              </div>
             )}
             {serverOpenError !== null && (
               <p
@@ -213,6 +267,29 @@ export default function WorkspaceSwitcher({
               </p>
             )}
           </>
+        )}
+        {serverExpanded && (
+          <div
+            className="workspaces__splitter"
+            role="separator"
+            tabIndex={0}
+            aria-label="Resize workspace project browser"
+            aria-orientation="horizontal"
+            aria-valuemin={150}
+            aria-valuenow={Math.round(regionRef.current?.getBoundingClientRect().height ?? 240)}
+            onKeyDown={onSplitterKeyDown}
+            onPointerDown={onSplitterPointerDown}
+            onPointerMove={(event) => {
+              if (resizing.current) resizeRegion(event.clientY);
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              resizing.current = false;
+            }}
+            onPointerCancel={() => { resizing.current = false; }}
+          />
         )}
       </section>
 

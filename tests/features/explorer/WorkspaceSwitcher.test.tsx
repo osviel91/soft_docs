@@ -152,4 +152,32 @@ describe("WorkspaceSwitcher", () => {
     expect(onReloadServerProjects).toHaveBeenCalledTimes(1);
   });
 
+  it("filters server projects without changing the active project", () => {
+    renderSwitcher({
+      mode: "server",
+      serverProjects: [project("p1", "Payments"), project("p2", "Docs")],
+      activeServerProjectId: "p1",
+    });
+    fireEvent.change(screen.getByTestId("workspace-server-project-filter"), {
+      target: { value: "doc" },
+    });
+    expect(screen.getAllByTestId("workspace-server-project")).toHaveLength(1);
+    expect(screen.getByTestId("workspace-server-project")).toHaveTextContent("Docs");
+    expect(screen.getByTestId("workspace-server-project")).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("supports keyboard and pointer resizing at the explorer boundary", () => {
+    renderSwitcher({ serverProjects: [project("p1", "Payments")] });
+    const splitter = screen.getByRole("separator", {
+      name: "Resize workspace project browser",
+    });
+    fireEvent.keyDown(splitter, { key: "ArrowDown" });
+    expect(splitter).toHaveAttribute("aria-valuemin", "150");
+    fireEvent.pointerDown(splitter, { pointerId: 1, clientY: 300 });
+    fireEvent.pointerMove(splitter, { pointerId: 1, clientY: 320 });
+    fireEvent.pointerUp(splitter, { pointerId: 1 });
+  });
+
 });

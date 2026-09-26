@@ -5,7 +5,7 @@ import type {
   NoteFile,
   Project,
 } from "../../../src/domain/workspace/types";
-import Explorer from "../../../src/features/explorer/Explorer";
+import Explorer, { ExplorerNodeList } from "../../../src/features/explorer/Explorer";
 
 const project: Project = {
   id: "proj-1",
@@ -447,6 +447,48 @@ describe("Explorer", () => {
       />,
     );
     expect(screen.queryByTestId("open-folder-button")).toBeNull();
+  });
+
+  it("collapses and restores project knowledge without losing selection", () => {
+    const onLoadDiagram = vi.fn();
+    render(
+      <Explorer
+        projects={[project]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={onLoadDiagram}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("explorer-content-toggle"));
+    expect(screen.queryByTestId("select-diagram-button")).toBeNull();
+    fireEvent.click(screen.getByTestId("explorer-content-toggle"));
+    fireEvent.click(screen.getByTestId("select-diagram-button"));
+    expect(onLoadDiagram).toHaveBeenCalledWith(diagram);
+  });
+
+  it("renders hierarchical navigation nodes without assigning architectural meaning", () => {
+    render(
+      <ul>
+        <ExplorerNodeList
+          nodes={[{
+            id: "shared",
+            label: "SHARED",
+            kind: "group",
+            children: [{ id: "transactions", label: "Transactions", kind: "resource" }],
+          }]}
+          render={(node) => <span>{node.label}</span>}
+        />
+      </ul>,
+    );
+    expect(screen.getByText("SHARED")).toBeInTheDocument();
+    expect(screen.getByText("Transactions")).toBeInTheDocument();
+    expect(screen.getByText("SHARED").closest("li")).toHaveAttribute(
+      "data-node-kind",
+      "group",
+    );
   });
 });
 

@@ -185,6 +185,17 @@ architecture.
   Those are future semantic comparison responsibilities outside
   `DiagramViewport`.
 
+### Workspace Explorer Foundation
+
+- The Explorer separates server project browsing, active project knowledge, and
+  local sources into deliberate, independently bounded sections. LOCAL means
+  machine/local workspace knowledge; it is not future private server-side work.
+- Explorer hierarchy is an organizational navigation projection only. Visual
+  containment does not establish architectural relationships, semantic-message
+  identity, complementary views, causality, bounded contexts, ownership, or
+  lineage. Private work, proposals, publication, and lineage remain future
+  lifecycle capabilities.
+
 ## Known Debt, Not H01 Work
 
 - `ARCHITECTURE.md` contains historical phase and ADR wording that does not
