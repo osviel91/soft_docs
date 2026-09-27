@@ -31,6 +31,7 @@ import type { JsonObject } from "../../shared/json/json-value";
 export const AUDIT_ACTIONS = [
   "project.created",
   "project.updated",
+  "proposal.submitted",
   "project.deleted",
   "project.member.added",
   "project.member.removed",

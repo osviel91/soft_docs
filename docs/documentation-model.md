@@ -77,7 +77,12 @@ tentative knowledge owned by one user inside the project. This is distinct from
 LOCAL machine knowledge and SHARED authoritative project knowledge. MY WORK may
 read SHARED, but SHARED never implicitly reads MY WORK; every private fact keeps
 its context provenance. Full semantic architecture comparison and promotion are
-not implemented here.
+not implemented here. Architectural Proposals are the explicit transition from MY
+WORK to team-visible review: a selected-resource snapshot is immutable,
+non-authoritative, and never a live alias of the source context. Proposal reads
+expose only submitted resources and dependencies. Proposal status is deliberately
+minimal (`open`); approval, rejection, promotion, merge, and lineage remain
+future capabilities.
 
 ## Knowledge Contexts
 
@@ -85,6 +90,7 @@ not implemented here.
 LOCAL   = local machine knowledge
 SHARED  = authoritative server-side project knowledge
 MY WORK = private, tentative server-side knowledge owned by one user
+PROPOSAL = team-visible, submitted, non-authoritative architectural snapshot
 ```
 
 The server and MCP enforce this boundary. Explorer grouping is presentation,
@@ -93,6 +99,11 @@ SHARED, and private context metadata is not stored in the shared project
 manifest. A private context can consume readable SHARED resources, while a
 SHARED query excludes private resources, identities, relationships, indexes,
 and traces.
+PROPOSAL analysis is effective SHARED plus the submitted snapshot, with provenance
+retained. A proposal records a SHARED resource-revision vector as its base. Current
+resource history can be reconstructed from resource revisions, but relationship and
+manifest history are not yet historical proposal bases; a later SHARED vector is
+reported as "base has advanced", not as a merge conflict.
 
 ## Representation Selection
 

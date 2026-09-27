@@ -61,6 +61,7 @@ import { isOk } from "../shared/result/result";
 import { defaultIdFactory } from "../shared/ids/ids";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { PrivateWorkContext } from "../domain/workspace/knowledge-context";
+import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
 
 /**
  * A resource as the API and MCP surface it: identity, path, type, revision.
@@ -99,6 +100,7 @@ export interface ProjectCatalogOptions {
   /** A pre-built mutation service, for a host that shares one with its provider. */
   mutations?: WorkspaceMutationService;
   knowledgeContexts?: KnowledgeContextRepository;
+  architecturalProposals?: ArchitecturalProposalRepository;
   /** Content digest for the journal's staging verification. */
   hashContent?: (content: string) => string;
   /**
@@ -377,6 +379,7 @@ export function createProjectCatalog(
 ): ProjectCatalog {
   const { projects, workspaces, storage, audit } = options;
   const knowledgeContexts = options.knowledgeContexts;
+  const architecturalProposals = options.architecturalProposals;
   const policy =
     options.policy ?? createAuthorizationPolicy<ServerProject>(projects);
 
@@ -699,6 +702,9 @@ export function createProjectCatalog(
 
     async deletePrivateWorkContext(context, projectId, contextId) {
       await requirePrivateContext(context, projectId, contextId);
+      if (architecturalProposals && await architecturalProposals.hasForContext(projectId, contextId)) {
+        throw invalid("Private work cannot be deleted while it is the source of a submitted Architectural Proposal.");
+      }
       const store = storage(projectId, contextId);
       const listed = await store.list();
       if (listed.ok) for (const resource of listed.value) await store.remove(resource.path);

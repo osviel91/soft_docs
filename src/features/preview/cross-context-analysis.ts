@@ -3,6 +3,7 @@ import type { ProjectIndex, ResourceDescriptor } from "../../domain/project/proj
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { SemanticMessageIdentity } from "../../domain/workspace/metadata";
 import type { AnalysisProvenance, KnowledgeContext } from "../../domain/workspace/knowledge-context";
+import type { ArchitecturalProposal } from "../../domain/workspace/architectural-proposal";
 import type { ComparisonOccurrence, SemanticComparison } from "./semantic-comparison";
 
 export interface AnalysisContext {
@@ -39,6 +40,34 @@ export function effectivePrivateIndex(
     eventFlowMessages: [...(shared.eventFlowMessages ?? []).filter((entry) => !privateIds.has(entry.resourceId)), ...(privateIndex.eventFlowMessages ?? [])],
     eventFlowCausality: [...(shared.eventFlowCausality ?? []).filter((entry) => !privateIds.has(entry.resourceId)), ...(privateIndex.eventFlowCausality ?? [])],
     diagnostics: [...shared.diagnostics.filter((entry) => !privateIds.has(entry.resourceId)), ...privateIndex.diagnostics],
+  };
+}
+
+/** Compose SHARED facts with an immutable proposal snapshot while retaining its provenance. */
+export function effectiveProposalIndex(
+  shared: ProjectIndex,
+  proposalIndex: ProjectIndex,
+  proposal: Pick<ArchitecturalProposal, "id" | "title">,
+): ProjectIndex {
+  const sharedProvenance: AnalysisProvenance = { kind: "shared", id: shared.provenance?.id ?? `shared:${shared.projectId}` };
+  const proposalProvenance: AnalysisProvenance = { kind: "proposal", id: proposal.id, label: proposal.title };
+  const mark = <T extends ResourceDescriptor>(resources: T[], provenance: AnalysisProvenance): T[] => resources.map((resource) => ({ ...resource, provenance }));
+  const proposalIds = new Set(proposalIndex.resources.map((resource) => resource.id));
+  return {
+    ...shared,
+    provenance: proposalProvenance,
+    resources: [...mark(shared.resources.filter((resource) => !proposalIds.has(resource.id)), sharedProvenance), ...mark(proposalIndex.resources, proposalProvenance)],
+    diagrams: [...mark(shared.diagrams.filter((resource) => !proposalIds.has(resource.id)), sharedProvenance), ...mark(proposalIndex.diagrams, proposalProvenance)],
+    eventFlows: [...mark(shared.eventFlows.filter((resource) => !proposalIds.has(resource.id)), sharedProvenance), ...mark(proposalIndex.eventFlows, proposalProvenance)],
+    documents: [...mark(shared.documents.filter((resource) => !proposalIds.has(resource.id)), sharedProvenance), ...mark(proposalIndex.documents, proposalProvenance)],
+    participants: [...shared.participants.filter((entry) => !proposalIds.has(entry.resourceId)), ...proposalIndex.participants],
+    usages: [...shared.usages.filter((entry) => !proposalIds.has(entry.resourceId)), ...proposalIndex.usages],
+    references: [...shared.references.filter((entry) => !proposalIds.has(entry.from)), ...proposalIndex.references],
+    semanticMessages: [...(shared.semanticMessages ?? []), ...(proposalIndex.semanticMessages ?? []).filter((message) => !(shared.semanticMessages ?? []).some((existing) => existing.id === message.id))],
+    semanticOccurrences: [...(shared.semanticOccurrences ?? []).filter((entry) => !proposalIds.has(entry.resourceId)), ...(proposalIndex.semanticOccurrences ?? [])],
+    eventFlowMessages: [...(shared.eventFlowMessages ?? []).filter((entry) => !proposalIds.has(entry.resourceId)), ...(proposalIndex.eventFlowMessages ?? [])],
+    eventFlowCausality: [...(shared.eventFlowCausality ?? []).filter((entry) => !proposalIds.has(entry.resourceId)), ...(proposalIndex.eventFlowCausality ?? [])],
+    diagnostics: [...shared.diagnostics.filter((entry) => !proposalIds.has(entry.resourceId)), ...proposalIndex.diagnostics],
   };
 }
 
@@ -149,7 +178,9 @@ function traceSide(context: AnalysisContext, start: TraceQueryStart, options: An
   if (!trace) return { ...emptySide, resolution: result.resolution.status };
   const provenance = context.knowledgeContext.kind === "private-work"
     ? { kind: "private-work" as const, id: context.knowledgeContext.id, label: context.knowledgeContext.name }
-    : { kind: context.knowledgeContext.kind, id: context.knowledgeContext.id };
+    : context.knowledgeContext.kind === "proposal"
+      ? { kind: "proposal" as const, id: context.knowledgeContext.id, label: context.knowledgeContext.title }
+      : { kind: context.knowledgeContext.kind, id: context.knowledgeContext.id };
   for (const node of trace.nodes) if (node.source && !node.source.provenance) node.source.provenance = provenance;
   for (const edge of trace.edges) if (edge.source && !edge.source.provenance) edge.source.provenance = provenance;
   const documentedMessageIds = [...new Set(trace.nodes.flatMap((node) => {
@@ -170,9 +201,9 @@ function traceSide(context: AnalysisContext, start: TraceQueryStart, options: An
 }
 
 function contextLabel(context: AnalysisContext): string {
-  return context.knowledgeContext.kind === "private-work"
-    ? `MY WORK · ${context.knowledgeContext.name}`
-    : context.knowledgeContext.kind.toUpperCase();
+  if (context.knowledgeContext.kind === "private-work") return `MY WORK · ${context.knowledgeContext.name}`;
+  if (context.knowledgeContext.kind === "proposal") return `PROPOSAL · ${context.knowledgeContext.title}`;
+  return context.knowledgeContext.kind.toUpperCase();
 }
 
 function scopeToResource(index: ProjectIndex, resourceId: string): ProjectIndex {

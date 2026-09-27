@@ -17,6 +17,7 @@ import {
 import { createProjectCatalog } from "../../src/application/project-catalog";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
+import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import type { McpConfig } from "./config";
 import { createMcpAuthenticator, type McpAuthenticator } from "./auth/bearer";
 import { ProcessRateLimiter, type RateLimiter } from "./rate-limit";
@@ -50,6 +51,7 @@ export interface McpService {
   runtime: ServerRuntime;
   catalog: ReturnType<typeof createProjectCatalog>;
   proposals: ReturnType<typeof createChangeProposalService>;
+  architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   authenticator: McpAuthenticator;
   limiter: RateLimiter;
   observability: Observability;
@@ -99,11 +101,19 @@ export async function createMcpService(
     storage: runtime.storageForContext,
     mutations: runtime.mutations,
     knowledgeContexts: runtime.knowledgeContexts,
+    architecturalProposals: runtime.architecturalProposals,
   });
   const proposals = createChangeProposalService({
     proposals: runtime.proposals,
     projects: runtime.projects,
     mutations: runtime.mutations,
+  });
+  const architecturalProposals = createArchitecturalProposalService({
+    proposals: runtime.architecturalProposals,
+    projects: runtime.projects,
+    knowledgeContexts: runtime.knowledgeContexts,
+    audit: runtime.audit,
+    storage: runtime.storageFor,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
 
@@ -111,6 +121,7 @@ export async function createMcpService(
     config,
     catalog,
     proposals,
+    architecturalProposals,
     trajectory,
     authenticator: createMcpAuthenticator({
       credentials: runtime.credentials,
@@ -146,6 +157,7 @@ export async function createMcpService(
     ownsRuntime,
     catalog,
     proposals,
+    architecturalProposals,
     authenticator: deps.authenticator,
     limiter: deps.limiter,
     observability,

@@ -573,6 +573,36 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/projects/:projectId/architectural-proposals", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      return json(200, { proposals: await dependencies.architecturalProposals.list(context, params.projectId) });
+    }),
+  );
+
+  router.post("/api/projects/:projectId/architectural-proposals", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      const proposal = await dependencies.architecturalProposals.submit(context, {
+        projectId: params.projectId,
+        sourcePrivateContextId: requireBodyString(body, "sourcePrivateContextId"),
+        resourceIds: Array.isArray(body.resourceIds) && body.resourceIds.every((id) => typeof id === "string") ? body.resourceIds as string[] : [],
+        title: requireBodyString(body, "title"),
+        ...(typeof body.description === "string" ? { description: body.description } : {}),
+      });
+      return json(201, { proposal });
+    }),
+  );
+
+  router.get("/api/architectural-proposals/:proposalId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      return json(200, { proposal: await dependencies.architecturalProposals.get(context, projectId, params.proposalId) });
+    }),
+  );
+
   // ---- Membership -----------------------------------------------------------
 
   router.put(

@@ -37,6 +37,7 @@ import type { ApplicationContext } from "../../../src/application/context";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
+import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
 import { credentialGrants } from "../../../src/application/authorization";
 import { forbidden, invalid } from "../../../src/application/errors";
 import packageJson from "../../../package.json";
@@ -78,6 +79,8 @@ Work in this order:
 7. After changing a diagram, call validate_project to see problems.
 8. New resources normally include a concise architectural description and useful evidence-backed tags; details and notes are selective, not filler. Preserve conditions, uncertainty, constraints, rationale, external boundaries, transformations, idempotency/delivery/retry facts, and other information the diagram cannot carry. Do not invent metadata. For complementary projections, call list_resource_relationships before authoring and create_resource_relationship when the typed relationship is absent. Prose such as "complements X" in a description is not a replacement for a typed relationship. For semantic tracing, use list_semantic_messages, list_semantic_occurrences, find_semantic_message_candidates and get_semantic_message before mutating; create_semantic_message takes only name and kind, returns the server-generated identity id, and bind_semantic_message/unbind_semantic_message edit source through resource revisions. The workflow is discover -> create or select identity -> receive or reuse id -> bind exact occurrences. Never invent a UUID. In Sequence source, author evidence-backed architectural messages with \`semantic event|command publish|consume|dispatch Name [messageRef ID]\`; names are candidates only, never identity. Bind an Event Flow event with \`event Name messageRef ID\` only when evidence establishes the same architectural message. Publish, consume and dispatch describe occurrences; event or command belongs to the shared identity. Do not create complementary-view relationships merely because two resources share a message. Preserve unknown origins and consumers rather than inventing them. When improving legacy resources, inspect and report unstructured candidates, unbound occurrences, missing metadata, and retry/failure enrichment opportunities before applying targeted evidenced changes.
 
+MY WORK is private exploration. An Architectural Proposal is created only by explicit submission of selected MY WORK resources. Before submission, validate and trace where practical, report the selected resources and deterministic dependency closure, preserve unknowns, and confirm the user intends to make the snapshot team-visible. A Proposal is immutable submitted knowledge with PROPOSAL provenance; it is not accepted architecture, does not mutate SHARED, and never exposes the remaining source MY WORK. Do not claim merge conflicts or added/removed/modified changes. If the SHARED resource-revision base has advanced, report "base has advanced" and do not rebase or mutate the Proposal.
+
 Sequence and Event Flow are orthogonal projections, not mutually exclusive classifications. A Sequence may preserve ordered component collaboration that includes asynchronous messages; add an Event Flow when the same evidence exposes a meaningful causal chain with message provenance, handler responsibility, caused messages, and effects. Do not mechanically duplicate every Sequence. Event Flow represents asynchronous/event-driven causal behavior. HTTP requests, synchronous calls, reverse-proxy routing, cron invocation, logs/telemetry, and infrastructure topology do not establish an Event Flow by themselves. A project may legitimately contain no Event Flow documentation. Do not force synchronous or structural behavior into Event Flow. When real asynchronous behavior exists, use Event -> Handler -> Effects -> Resulting Events as an investigation heuristic, not a mandatory shape. You may conclude: "No asynchronous event context was observed."
 
 Event Flow causal authoring is explicit: declare "event Name", declare "handler Handler [in Service]", connect inputs with "Event handled by Handler", record outputs with "Handler causes ResultingMessage", and record non-message consequences with "effect effect-id on Handler [kind kind]: Description". Event metadata belongs inside the event block, including evidence-supported "provenance: external|internal|unknown"; cross-cutting rules and context belong in Markdown. Conceptual and Database knowledge remains an unsupported representation gap, not an automatic Markdown conversion; use Markdown only when the knowledge is genuinely a useful cross-cutting Note.
@@ -95,6 +98,7 @@ export interface McpServerForPrincipalOptions {
   context: ApplicationContext;
   catalog: ProjectCatalog;
   proposals: ChangeProposalService;
+  architecturalProposals: ArchitecturalProposalService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   observability: Observability;
@@ -172,7 +176,7 @@ function withDeadline(
 export function createMcpServerForPrincipal(
   options: McpServerForPrincipalOptions,
 ): McpServerForPrincipal {
-  const { context, catalog, proposals, trajectory, config, observability } = options;
+  const { context, catalog, proposals, architecturalProposals, trajectory, config, observability } = options;
   const server = new McpServer(
     {
       name: MCP_SERVER_NAME,
@@ -227,6 +231,7 @@ export function createMcpServerForPrincipal(
             context,
              catalog,
              proposals,
+             architecturalProposals,
              trajectory,
             config,
             signal,

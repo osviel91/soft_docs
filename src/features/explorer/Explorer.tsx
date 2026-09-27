@@ -111,6 +111,9 @@ export interface ExplorerProps {
   switcher?: ReactNode;
   /** Private server-side work contexts owned by the current user. */
   privateWorkContexts?: Array<{ id: string; name: string; lifecycle: "active" | "archived" }>;
+  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string }>;
+  onOpenArchitecturalProposal?: (proposalId: string) => void;
+  onSubmitArchitecturalProposal?: (contextId: string) => void;
   serverMode?: boolean;
 }
 
@@ -177,6 +180,9 @@ export default function Explorer({
   folderSupported = false,
   switcher,
   privateWorkContexts = [],
+  architecturalProposals = [],
+  onOpenArchitecturalProposal,
+  onSubmitArchitecturalProposal,
   serverMode = false,
 }: ExplorerProps) {
   const [pendingName, setPendingName] = useState<string>("");
@@ -536,7 +542,15 @@ export default function Explorer({
                     <section className="explorer__private-work" data-testid="explorer-private-work">
                       <h3 className="explorer__context-label">MY WORK · private, tentative</h3>
                       <ul className="explorer__notes">
-                        {privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context">{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</li>)}
+                        {privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context">{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}{work.lifecycle === "active" ? <button type="button" onClick={() => onSubmitArchitecturalProposal?.(work.id)}>Submit</button> : null}</li>)}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {serverMode && project.id === selectedProjectId && architecturalProposals.length > 0 ? (
+                    <section className="explorer__private-work" data-testid="explorer-proposals">
+                      <h3 className="explorer__context-label">PROPOSALS · team-visible</h3>
+                      <ul className="explorer__notes">
+                        {architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button> · {proposal.status}{proposal.staleBase ? " · base advanced" : ""}</li>)}
                       </ul>
                     </section>
                   ) : null}

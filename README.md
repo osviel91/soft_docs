@@ -84,6 +84,13 @@ inside that project. MY WORK may read SHARED; SHARED never implicitly reads MY
 WORK. The server and MCP enforce this boundary, not Explorer filtering. Existing
 server resources without an explicit context remain SHARED.
 
+Architectural Proposals are the explicit transition from MY WORK to team-visible
+review: selected private resources are captured as an immutable, non-authoritative
+snapshot. The source context remains private and may continue changing. A proposal
+records the SHARED resource-revision vector used as its base; resource history is
+recoverable, but relationship and manifest history are not historical snapshots in
+this phase. Proposals do not accept, reject, merge, promote, or classify changes.
+
 The browser uses the same editor for local and server projects. The remote MCP
 service is a separately deployable, authenticated service over the shared
 application layer. It does not call the HTTP API over the network.

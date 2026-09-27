@@ -40,6 +40,7 @@ import type { ApplicationContext } from "../../../src/application/context";
 import type { Permission } from "../../../src/domain/access/permissions";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
+import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ResourceRecord } from "../../../src/application/ports/project-repository";
 import { invalid, notFound } from "../../../src/application/errors";
@@ -86,6 +87,7 @@ export interface ToolContext {
   context: ApplicationContext;
   catalog: ProjectCatalog;
   proposals: ChangeProposalService;
+  architecturalProposals: ArchitecturalProposalService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   /** Aborted when the client disconnects or the tool deadline elapses. */
@@ -867,6 +869,79 @@ export function createMcpTools(): McpTool[] {
         const resource = await resolveResource(toolContext, project, stringArg(args, "resource"));
         const result = await toolContext.trajectory.getResourceTrajectory(toolContext.context, project, resource.id, { limit: numberArg(args, "limit"), cursor: numberArg(args, "cursor") });
         return { text: `${result.entries.length} trajectory entries.`, structured: result };
+      },
+    },
+    {
+      name: "list_architectural_proposals",
+      title: "List architectural proposals",
+      description: "List submitted, team-visible Architectural Proposals without exposing private work contexts.",
+      inputSchema: { projectId: projectId() },
+      annotations: { ...READ_ONLY, title: "List architectural proposals" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const proposals = await toolContext.architecturalProposals.list(toolContext.context, stringArg(args, "projectId"));
+        return { text: proposals.map((proposal) => `${proposal.title} (${proposal.status})`).join("\n") || "No architectural proposals.", structured: { proposals } };
+      },
+    },
+    {
+      name: "get_architectural_proposal",
+      title: "Get architectural proposal",
+      description: "Inspect submitted proposal knowledge, base status, semantic dependencies and relationships.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
+      annotations: { ...READ_ONLY, title: "Get architectural proposal" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const proposal = await toolContext.architecturalProposals.get(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
+        return { text: `${proposal.title}: ${proposal.resources.length} submitted resources.`, structured: { proposal } };
+      },
+    },
+    {
+      name: "validate_architectural_proposal",
+      title: "Validate architectural proposal",
+      description: "Validate a proposal against effective SHARED plus its submitted snapshot, preserving proposal diagnostics.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
+      annotations: { ...READ_ONLY, title: "Validate architectural proposal" },
+      requiredPermissions: ["project:validate"],
+      async run(args, toolContext) {
+        const result = await toolContext.architecturalProposals.validate(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
+        return { text: `${result.diagnostics.length} proposal diagnostics.`, structured: { diagnostics: result.diagnostics } };
+      },
+    },
+    {
+      name: "trace_architectural_proposal",
+      title: "Trace architectural proposal",
+      description: "Trace a bounded semantic message through effective SHARED plus proposal knowledge.",
+      inputSchema: {
+        projectId: projectId(), proposalId: z.string().uuid(), messageId: z.string().uuid(),
+        direction: z.enum(["upstream", "downstream", "both"]).default("both"), maxDepth: z.number().int().min(0).max(50).default(12), maxNodes: z.number().int().min(1).max(500).default(100),
+        includeCandidates: z.boolean().default(true), includeRecovery: z.boolean().default(true),
+      },
+      annotations: { ...READ_ONLY, title: "Trace architectural proposal" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const result = await toolContext.architecturalProposals.trace(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"), {
+          messageId: stringArg(args, "messageId"), direction: (args.direction ?? "both") as "upstream" | "downstream" | "both", maxDepth: numberArg(args, "maxDepth") ?? 12, maxNodes: numberArg(args, "maxNodes") ?? 100, includeCandidates: args.includeCandidates !== false, includeRecovery: args.includeRecovery !== false,
+        });
+        return { text: result.trace ? `Proposal trace contains ${result.trace.nodes.length} nodes.` : "No proposal trace found.", structured: result as unknown as Record<string, unknown> };
+      },
+    },
+    {
+      name: "submit_architectural_proposal",
+      title: "Submit architectural proposal",
+      description: "Explicitly submit selected MY WORK resources as an immutable, non-authoritative team-visible proposal. This never changes SHARED.",
+      inputSchema: {
+        projectId: projectId(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()).min(1),
+        title: z.string().min(1), description: z.string().optional(),
+      },
+      annotations: { ...WRITE, title: "Submit architectural proposal" },
+      requiredPermissions: ["resource:read", "resource:update"],
+      async run(args, toolContext) {
+        const proposal = await toolContext.architecturalProposals.submit(toolContext.context, {
+          projectId: stringArg(args, "projectId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"),
+          resourceIds: args.resourceIds as string[], title: stringArg(args, "title"),
+          ...(typeof args.description === "string" ? { description: args.description } : {}),
+        });
+        return { text: `Submitted ${proposal.title} as ${proposal.id}; SHARED was not changed.`, structured: { proposal } };
       },
     },
     {

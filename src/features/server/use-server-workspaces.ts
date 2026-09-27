@@ -22,6 +22,7 @@ import type {
   ServerApiClient,
   ServerProject,
   ServerPrivateWorkContext,
+  ServerArchitecturalProposal,
 } from "../../workspace/server/api-client";
 import {
   createServerWorkspaceRepository,
@@ -53,6 +54,7 @@ export interface ServerWorkspacesHook {
   createProject(name: string): Promise<void>;
   close(): void;
   privateWorkContexts: ServerPrivateWorkContext[];
+  architecturalProposals: ServerArchitecturalProposal[];
 }
 
 /** The permission a writable repository requires. */
@@ -77,6 +79,7 @@ export function useServerWorkspaces(
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const [privateWorkContexts, setPrivateWorkContexts] = useState<ServerPrivateWorkContext[]>([]);
+  const [architecturalProposals, setArchitecturalProposals] = useState<ServerArchitecturalProposal[]>([]);
   // A repository is bound to a project *and* to the session that opened it; a
   // second open must not be overwritten by the first one's slower answer.
   const openTicket = useRef(0);
@@ -149,10 +152,12 @@ export function useServerWorkspaces(
           }),
         });
         try {
-          setPrivateWorkContexts(await client.listPrivateWorkContexts(project.id));
+           setPrivateWorkContexts(await client.listPrivateWorkContexts(project.id));
+           setArchitecturalProposals(await client.listArchitecturalProposals(project.id));
         } catch {
           // Older API clients may not expose private work yet; opening SHARED must remain independent.
           setPrivateWorkContexts([]);
+          setArchitecturalProposals([]);
         }
       } catch (error) {
         if (openTicket.current !== ticket) return;
@@ -193,6 +198,7 @@ export function useServerWorkspaces(
     setActive(null);
     setOpenError(null);
     setPrivateWorkContexts([]);
+    setArchitecturalProposals([]);
   }, []);
 
   return {
@@ -207,5 +213,6 @@ export function useServerWorkspaces(
     createProject,
     close,
     privateWorkContexts,
+    architecturalProposals,
   };
 }

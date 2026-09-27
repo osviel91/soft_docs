@@ -117,6 +117,25 @@ export interface ServerPrivateWorkContext {
   updatedAt: string;
 }
 
+export interface ServerArchitecturalProposal {
+  id: string;
+  projectId: string;
+  authorUserId: string;
+  sourcePrivateContextId?: string;
+  title: string;
+  description?: string;
+  status: "open";
+  baseSharedRevision: string;
+  baseSharedResourceRevisions: Record<string, number>;
+  currentSharedRevision?: string;
+  staleBase?: boolean;
+  createdAt: string;
+  submittedAt: string;
+  resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string }>;
+  semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
+  relationships: ResourceRelationship[];
+}
+
 /** An agent identity, as `/api/agents` renders it. */
 export interface ServerAgent {
   id: string;
@@ -457,6 +476,21 @@ export class ServerApiClient {
   async listPrivateWorkContexts(projectId: string): Promise<ServerPrivateWorkContext[]> {
     const body = await this.request<{ contexts: ServerPrivateWorkContext[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/private-work`);
     return body.contexts ?? [];
+  }
+
+  async listArchitecturalProposals(projectId: string): Promise<ServerArchitecturalProposal[]> {
+    const body = await this.request<{ proposals: ServerArchitecturalProposal[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`);
+    return body.proposals ?? [];
+  }
+
+  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+    const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`, input);
+    return body.proposal;
+  }
+
+  async getArchitecturalProposal(projectId: string, proposalId: string): Promise<ServerArchitecturalProposal> {
+    const body = await this.request<{ proposal: ServerArchitecturalProposal }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}?projectId=${encodeURIComponent(projectId)}`);
+    return body.proposal;
   }
 
   async createPrivateWorkContext(projectId: string, input: { name: string; description?: string }): Promise<ServerPrivateWorkContext> {

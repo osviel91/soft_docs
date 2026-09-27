@@ -24,6 +24,7 @@ import { createWorkspaceService } from "../../src/application/workspace-service"
 import { createAgentService } from "../../src/application/agent-service";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
+import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createCredentialMint } from "./auth/agent-credential";
 import type { ServerConfig } from "./config";
 
@@ -55,6 +56,7 @@ export interface AppDependencies {
   catalog: ReturnType<typeof createProjectCatalog>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
   proposals: ReturnType<typeof createChangeProposalService>;
+  architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   trajectory: ReturnType<typeof createResourceTrajectoryService>;
   /** Where a project's files live. Never derived from a request. */
   storageFor: ServerRuntime["storageFor"];
@@ -161,12 +163,20 @@ export async function createApp(
       storage: runtime.storageForContext,
       mutations: runtime.mutations,
       knowledgeContexts: runtime.knowledgeContexts,
+      architecturalProposals: runtime.architecturalProposals,
     }),
     workspaceService: createWorkspaceService(runtime.workspaces),
     proposals: createChangeProposalService({
       proposals: runtime.proposals,
       projects: runtime.projects,
       mutations: runtime.mutations,
+    }),
+    architecturalProposals: createArchitecturalProposalService({
+      proposals: runtime.architecturalProposals,
+      projects: runtime.projects,
+      knowledgeContexts: runtime.knowledgeContexts,
+      audit: runtime.audit,
+      storage: runtime.storageFor,
     }),
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
     storageFor: runtime.storageFor,

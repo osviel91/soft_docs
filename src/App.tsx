@@ -190,6 +190,8 @@ import { supportsForcedWrite } from "./workspace/server/server-workspace-reposit
 import ResourceMetadataEditor from "./features/resource/ResourceMetadataEditor";
 import ComplementaryViews from "./features/resource/ComplementaryViews";
 import { ProposalReviewPanel } from "./features/proposals/ProposalReview";
+import { ArchitecturalProposalDetail } from "./features/proposals/ArchitecturalProposalDetail";
+import { ArchitecturalProposalSubmit } from "./features/proposals/ArchitecturalProposalSubmit";
 import ChangesInbox from "./features/proposals/ChangesInbox";
 import {
   useProjectProposalCount,
@@ -279,6 +281,8 @@ export default function App() {
     selectedServerWorkspaceId,
   );
   const [adminUsers, setAdminUsers] = useState<ServerAdminUser[]>([]);
+  const [architecturalProposalId, setArchitecturalProposalId] = useState<string | null>(null);
+  const [architecturalProposalContextId, setArchitecturalProposalContextId] = useState<string | null>(null);
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspace[]>(
     [],
   );
@@ -2707,6 +2711,9 @@ export default function App() {
                   diagrams={diagrams}
                   notes={notes}
                   privateWorkContexts={server.privateWorkContexts}
+                  architecturalProposals={server.architecturalProposals}
+                  onOpenArchitecturalProposal={setArchitecturalProposalId}
+                  onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
                   serverMode={workspaceMode === "server"}
                   allDiagrams={allDiagrams}
                   allNotes={allNotes}
@@ -2809,7 +2816,11 @@ export default function App() {
                 editorWidth === null ? undefined : { flexBasis: editorWidth }
               }
             >
-              {proposalReviewOpen && canReviewProjectProposals ? (
+              {architecturalProposalContextId && server.active ? (
+                <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} onCancel={() => setArchitecturalProposalContextId(null)} onDone={() => setArchitecturalProposalContextId(null)} />
+              ) : architecturalProposalId && server.active ? (
+                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} />
+              ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}
                   projectId={selectedProjectId}
