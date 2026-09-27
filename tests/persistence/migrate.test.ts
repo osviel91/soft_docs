@@ -90,6 +90,17 @@ describe("migrate", () => {
          WHERE table_name = 'resources' AND column_name = 'metadata'`,
       );
       expect(resourceColumns.rows).toHaveLength(1);
+      const proposalManifestColumn = await client.query(
+        `SELECT column_name, is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_name = 'architectural_proposals'
+           AND column_name = 'base_manifest_revision'`,
+      );
+      expect(proposalManifestColumn.rows[0]).toMatchObject({
+        column_name: "base_manifest_revision",
+        is_nullable: "NO",
+        column_default: "0",
+      });
     } finally {
       await client.close();
     }
@@ -170,6 +181,42 @@ describe("migrate", () => {
          WHERE table_name = 'users' AND column_name IN ('identity_issuer', 'identity_subject')`,
       );
       expect(columns.rows).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("adds the proposal manifest revision during an upgrade from migration 0022", async () => {
+    const client = await createPgliteClient();
+    try {
+      await migrate(client, MIGRATIONS.slice(0, 22));
+      const before = await client.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'architectural_proposals'
+           AND column_name = 'base_manifest_revision'`,
+      );
+      expect(before.rows).toHaveLength(0);
+
+      expect(await migrate(client, MIGRATIONS.filter(({ version }) => version === 23))).toMatchObject({ applied: [23] });
+      const afterProposalMigration = await client.query(
+        `SELECT column_name, is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_name = 'architectural_proposals'
+           AND column_name = 'base_manifest_revision'`,
+      );
+      expect(afterProposalMigration.rows[0]).toMatchObject({
+        column_name: "base_manifest_revision",
+        is_nullable: "NO",
+        column_default: "0",
+      });
+
+      expect(await migrate(client, MIGRATIONS.filter(({ version }) => version === 24))).toMatchObject({ applied: [24] });
+      const afterPathMigration = await client.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'architectural_proposal_resources'
+           AND column_name = 'base_path'`,
+      );
+      expect(afterPathMigration.rows).toHaveLength(1);
     } finally {
       await client.close();
     }

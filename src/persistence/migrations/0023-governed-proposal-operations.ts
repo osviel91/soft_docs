@@ -1,5 +1,7 @@
 /** Migration 0023: explicit relationship and semantic manifest operations. */
 export const up = String.raw`
+ALTER TABLE architectural_proposals
+  ADD COLUMN IF NOT EXISTS base_manifest_revision integer NOT NULL DEFAULT 0;
 ALTER TABLE architectural_proposal_messages
   ADD COLUMN IF NOT EXISTS operation text NOT NULL DEFAULT 'ADD',
   ADD COLUMN IF NOT EXISTS base_name text,

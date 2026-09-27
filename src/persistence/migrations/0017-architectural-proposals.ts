@@ -10,7 +10,6 @@ CREATE TABLE architectural_proposals (
   status text NOT NULL DEFAULT 'open',
   base_shared_revision text NOT NULL,
   base_shared_resource_revisions jsonb NOT NULL DEFAULT '{}'::jsonb,
-  base_manifest_revision integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   submitted_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT architectural_proposals_title_not_blank CHECK (length(btrim(title)) > 0),
@@ -36,9 +35,6 @@ CREATE TABLE architectural_proposal_messages (
   name text NOT NULL,
   kind text NOT NULL,
   source_context_id uuid NOT NULL,
-  operation text NOT NULL DEFAULT 'ADD',
-  base_name text,
-  base_kind text,
   PRIMARY KEY (proposal_id, message_id)
 );
 
@@ -50,8 +46,6 @@ CREATE TABLE architectural_proposal_relationships (
   source_role text,
   target_role text,
   source_context_id uuid NOT NULL,
-  operation text NOT NULL DEFAULT 'ADD',
-  base_fingerprint text,
   PRIMARY KEY (proposal_id, source_id, target_id),
   CONSTRAINT architectural_proposal_relationships_not_self CHECK (source_id <> target_id)
 );
