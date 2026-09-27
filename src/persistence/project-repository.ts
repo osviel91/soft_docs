@@ -65,6 +65,7 @@ function toResourceRecord(row: Record<string, unknown>): ResourceRecord {
   return {
     id: text(row, "id"),
     projectId: text(row, "project_id"),
+    ...(row.knowledge_context_id == null ? {} : { contextId: text(row, "knowledge_context_id") }),
     path: text(row, "path"),
     type: toResourceType(row.type),
     ...(metadata === undefined ? {} : { metadata }),
@@ -142,10 +143,11 @@ export function createProjectRepository(
   const findResource = async (
     projectId: string,
     resourceId: string,
+    contextId: string | null = null,
   ): Promise<ResourceRecord | null> => {
     const result = await client.query(
-      "SELECT * FROM resources WHERE project_id = $1 AND id = $2",
-      [projectId, resourceId],
+      "SELECT * FROM resources WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+      [projectId, resourceId, contextId],
     );
     const row = result.rows[0];
     return row ? toResourceRecord(row) : null;
@@ -211,7 +213,7 @@ export function createProjectRepository(
     async listForUser(userId, workspaceId = userId) {
       const result = await client.query(
         `SELECT p.*, m.role,
-                (SELECT count(*)::int FROM resources r WHERE r.project_id = p.id) AS resource_count
+                (SELECT count(*)::int FROM resources r WHERE r.project_id = p.id AND r.knowledge_context_id IS NULL) AS resource_count
            FROM projects p
            JOIN project_members m ON m.project_id = p.id
            WHERE m.user_id = $1 AND p.workspace_id = $2
@@ -300,10 +302,10 @@ export function createProjectRepository(
       }));
     },
 
-    async listResources(projectId) {
+    async listResources(projectId, contextId = null) {
       const result = await client.query(
-        "SELECT * FROM resources WHERE project_id = $1 ORDER BY path ASC",
-        [projectId],
+        "SELECT * FROM resources WHERE project_id = $1 AND knowledge_context_id IS NOT DISTINCT FROM $2 ORDER BY path ASC",
+        [projectId, contextId],
       );
       return result.rows.map(toResourceRecord);
     },
@@ -319,11 +321,11 @@ export function createProjectRepository(
       return row ? toResourceRecord(row) : null;
     },
 
-    async findResourceByPath(projectId, path) {
+    async findResourceByPath(projectId, path, contextId = null) {
       const normalized = normalizeResourcePath(path);
       const result = await client.query(
-        "SELECT * FROM resources WHERE project_id = $1 AND path = $2",
-        [projectId, normalized],
+        "SELECT * FROM resources WHERE project_id = $1 AND path = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+        [projectId, normalized, contextId],
       );
       const row = result.rows[0];
       return row ? toResourceRecord(row) : null;
@@ -335,8 +337,8 @@ export function createProjectRepository(
         ? normalizeResourceMetadata(resource.metadata)
         : undefined;
       const result = await client.query(
-        `INSERT INTO resources (id, project_id, path, type, metadata)
-         VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
+        `INSERT INTO resources (id, project_id, path, type, metadata, knowledge_context_id)
+         VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb), $6)
          RETURNING *`,
         [
           resource.id ?? newId(),
@@ -344,6 +346,7 @@ export function createProjectRepository(
           path,
           resource.type,
           metadata === undefined ? null : JSON.stringify(metadata),
+          resource.contextId ?? null,
         ],
       );
       return toResourceRecord(result.rows[0]);
@@ -387,10 +390,10 @@ export function createProjectRepository(
       );
     },
 
-    async listResourceRelationships(projectId) {
+    async listResourceRelationships(projectId, contextId = null) {
       const result = await client.query(
-        "SELECT source_id, target_id, kind, source_role, target_role FROM resource_relationships WHERE project_id = $1 ORDER BY source_id, target_id",
-        [projectId],
+        "SELECT source_id, target_id, kind, source_role, target_role, knowledge_context_id FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id IS NOT DISTINCT FROM $2 ORDER BY source_id, target_id",
+        [projectId, contextId],
       );
       return result.rows.map((row) => ({
         kind: row.kind as ResourceRelationship["kind"],
@@ -398,16 +401,17 @@ export function createProjectRepository(
         targetId: text(row, "target_id"),
         ...(row.source_role ? { sourceRole: row.source_role as ResourceRelationship["sourceRole"] } : {}),
         ...(row.target_role ? { targetRole: row.target_role as ResourceRelationship["targetRole"] } : {}),
+        ...(row.knowledge_context_id ? { contextId: text(row, "knowledge_context_id") } : {}),
       }));
     },
 
     async createResourceRelationship(projectId, relationship) {
       const result = await client.query(
-        `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (project_id, source_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, source_role = EXCLUDED.source_role, target_role = EXCLUDED.target_role
-         RETURNING source_id, target_id, kind, source_role, target_role`,
-        [projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+        `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role, knowledge_context_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (project_id, (COALESCE(knowledge_context_id, '00000000-0000-0000-0000-000000000000'::uuid)), source_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, source_role = EXCLUDED.source_role, target_role = EXCLUDED.target_role
+          RETURNING source_id, target_id, kind, source_role, target_role, knowledge_context_id`,
+        [projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, relationship.contextId ?? null],
       );
       const row = result.rows[0];
       return {
@@ -415,8 +419,9 @@ export function createProjectRepository(
         sourceId: text(row, "source_id"),
         targetId: text(row, "target_id"),
         ...(row.source_role ? { sourceRole: row.source_role as ResourceRelationship["sourceRole"] } : {}),
-        ...(row.target_role ? { targetRole: row.target_role as ResourceRelationship["targetRole"] } : {}),
-      };
+         ...(row.target_role ? { targetRole: row.target_role as ResourceRelationship["targetRole"] } : {}),
+         ...(row.knowledge_context_id ? { contextId: text(row, "knowledge_context_id") } : {}),
+       };
     },
 
     async listRevisions(resourceId) {

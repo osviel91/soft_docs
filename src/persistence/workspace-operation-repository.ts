@@ -101,6 +101,7 @@ export function toWorkspaceOperation(
   return {
     id: text(row, "id"),
     projectId: text(row, "project_id"),
+    contextId: optionalText(row, "knowledge_context_id"),
     resourceId: optionalText(row, "resource_id"),
     operation: text(row, "operation") as WorkspaceOperationKind,
     status: text(row, "status") as WorkspaceOperationStatus,
@@ -144,17 +145,18 @@ export function createWorkspaceOperationRepository(
     try {
       const result = await tx.query(
         `INSERT INTO workspace_operations
-           (id, project_id, resource_id, operation, status, source_path,
+           (id, project_id, knowledge_context_id, resource_id, operation, status, source_path,
             target_path, staged_path, content_hash, expected_revision,
             resulting_revision, actor_type, actor_id, credential_id, request_id,
             idempotency_key)
-         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9, $10, $11, $12,
-                 $13, $14, $15)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13,
+                  $14, $15, $16)
          RETURNING *`,
         [
-          intent.operationId,
-          intent.projectId,
-          intent.resourceId,
+           intent.operationId,
+           intent.projectId,
+           intent.contextId ?? null,
+           intent.resourceId,
           intent.operation,
           intent.sourcePath ?? null,
           intent.targetPath,
@@ -241,13 +243,14 @@ export function createWorkspaceOperationRepository(
     tx: SqlClient,
     projectId: string,
     resourceId: string,
+    contextId: string | null,
     expectedRevision: number | null,
   ): Promise<Record<string, unknown>> {
     const locked = await tx.query(
       `SELECT * FROM resources
-        WHERE project_id = $1 AND id = $2
+        WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3
         FOR UPDATE`,
-      [projectId, resourceId],
+      [projectId, resourceId, contextId],
     );
     const row = locked.rows[0];
     if (!row) throw notFound(`No resource with id ${resourceId}.`);
@@ -273,16 +276,15 @@ export function createWorkspaceOperationRepository(
           case "create": {
             try {
               await tx.query(
-                `INSERT INTO resources (id, project_id, path, type, metadata)
-                 VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))`,
+         `INSERT INTO resources (id, project_id, path, type, metadata, knowledge_context_id)
+                  VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb), $6)`,
                 [
                   intent.resourceId,
                   intent.projectId,
                   intent.targetPath,
                   intent.resourceType as ResourceType,
-                  intent.metadata === undefined
-                    ? null
-                    : JSON.stringify(intent.metadata),
+                   intent.metadata === undefined ? null : JSON.stringify(intent.metadata),
+                   intent.contextId ?? null,
                 ],
               );
             } catch (error) {
@@ -301,9 +303,10 @@ export function createWorkspaceOperationRepository(
           case "update": {
             const row = await requireRow(
               tx,
-              intent.projectId,
-              intent.resourceId,
-              intent.expectedRevision,
+               intent.projectId,
+               intent.resourceId,
+               intent.contextId ?? null,
+               intent.expectedRevision,
             );
             resultingRevision = Number(row.revision) + 1;
             await tx.query(
@@ -311,13 +314,14 @@ export function createWorkspaceOperationRepository(
                   SET revision = revision + 1,
                       metadata = COALESCE($3::jsonb, metadata),
                       updated_at = now()
-                WHERE project_id = $1 AND id = $2`,
+                WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $4`,
               [
                 intent.projectId,
                 intent.resourceId,
                 intent.metadata === undefined
                   ? null
                   : JSON.stringify(intent.metadata),
+                intent.contextId ?? null,
               ],
             );
             break;
@@ -326,14 +330,16 @@ export function createWorkspaceOperationRepository(
           case "move": {
             const row = await requireRow(
               tx,
-              intent.projectId,
-              intent.resourceId,
-              intent.expectedRevision,
+               intent.projectId,
+               intent.resourceId,
+               intent.contextId ?? null,
+               intent.expectedRevision,
             );
             const occupant = await tx.query(
               `SELECT id FROM resources
-                WHERE project_id = $1 AND path = $2 AND id <> $3`,
-              [intent.projectId, intent.targetPath, intent.resourceId],
+                WHERE project_id = $1 AND path = $2 AND id <> $3
+                  AND knowledge_context_id IS NOT DISTINCT FROM $4`,
+              [intent.projectId, intent.targetPath, intent.resourceId, intent.contextId ?? null],
             );
             if (occupant.rows[0]) {
               throw conflict(
@@ -346,8 +352,8 @@ export function createWorkspaceOperationRepository(
               await tx.query(
                 `UPDATE resources
                     SET path = $3, revision = revision + 1, updated_at = now()
-                  WHERE project_id = $1 AND id = $2`,
-                [intent.projectId, intent.resourceId, intent.targetPath],
+                  WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $4`,
+                [intent.projectId, intent.resourceId, intent.targetPath, intent.contextId ?? null],
               );
             } catch (error) {
               if (isUniqueViolation(error)) {
@@ -364,13 +370,14 @@ export function createWorkspaceOperationRepository(
           case "delete": {
             await requireRow(
               tx,
-              intent.projectId,
-              intent.resourceId,
-              intent.expectedRevision,
+               intent.projectId,
+               intent.resourceId,
+               intent.contextId ?? null,
+               intent.expectedRevision,
             );
             await tx.query(
-              "DELETE FROM resources WHERE project_id = $1 AND id = $2",
-              [intent.projectId, intent.resourceId],
+              "DELETE FROM resources WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+              [intent.projectId, intent.resourceId, intent.contextId ?? null],
             );
             break;
           }
@@ -400,9 +407,9 @@ export function createWorkspaceOperationRepository(
             intent.metadata ?? parseResourceMetadata(resourceRow?.metadata),
           );
           await tx.query(
-            `INSERT INTO resource_revisions
-              (resource_id, revision, content, type, metadata, authorship)
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+             `INSERT INTO resource_revisions
+              (resource_id, revision, content, type, metadata, authorship, knowledge_context_id)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)`,
             [
               intent.resourceId,
               resultingRevision,
@@ -410,6 +417,7 @@ export function createWorkspaceOperationRepository(
               String(intent.resourceType ?? resourceRow?.type),
               JSON.stringify(metadata),
               JSON.stringify(intent.authorship ?? { kind: "system" }),
+              intent.contextId ?? null,
             ],
           );
         }

@@ -72,8 +72,27 @@ resource revisions, and agent-facing discovery and mutation surfaces. The
 Analysis Workspace direction extends this foundation toward simultaneous
 inspection of two architectural contexts, cross-resource and multi-perspective
 analysis, semantic discovery, evolution analysis, and proposed-versus-shared
-review. Full semantic architecture comparison and private architectural
-resources are future intent, not current capabilities.
+review. Server projects now also have explicit **MY WORK** contexts: private,
+tentative knowledge owned by one user inside the project. This is distinct from
+LOCAL machine knowledge and SHARED authoritative project knowledge. MY WORK may
+read SHARED, but SHARED never implicitly reads MY WORK; every private fact keeps
+its context provenance. Full semantic architecture comparison and promotion are
+not implemented here.
+
+## Knowledge Contexts
+
+```text
+LOCAL   = local machine knowledge
+SHARED  = authoritative server-side project knowledge
+MY WORK = private, tentative server-side knowledge owned by one user
+```
+
+The server and MCP enforce this boundary. Explorer grouping is presentation,
+not authorization. Existing resources without an explicit context resolve to
+SHARED, and private context metadata is not stored in the shared project
+manifest. A private context can consume readable SHARED resources, while a
+SHARED query excludes private resources, identities, relationships, indexes,
+and traces.
 
 ## Representation Selection
 

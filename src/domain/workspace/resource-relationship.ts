@@ -9,6 +9,8 @@ export interface ResourceRelationship {
   targetId: string;
   sourceRole?: ResourceViewRole;
   targetRole?: ResourceViewRole;
+  /** Private relationship provenance; absent means SHARED. */
+  contextId?: string;
 }
 
 export interface RelationshipResource {

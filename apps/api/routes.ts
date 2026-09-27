@@ -535,6 +535,44 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/projects/:projectId/private-work", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      return json(200, { contexts: await catalog.listPrivateWorkContexts(context, params.projectId) });
+    }),
+  );
+
+  router.post("/api/projects/:projectId/private-work", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request); const body = parseJsonBody(request.body);
+      const work = await catalog.createPrivateWorkContext(context, params.projectId, {
+        name: requireBodyString(body, "name"),
+        ...(typeof body.description === "string" ? { description: body.description } : {}),
+      });
+      return json(201, { context: contextView(work) });
+    }),
+  );
+
+  router.patch("/api/projects/:projectId/private-work/:contextId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request); const body = parseJsonBody(request.body);
+      const work = await catalog.updatePrivateWorkContext(context, params.projectId, params.contextId, {
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.description === "string" ? { description: body.description } : {}),
+        ...(body.lifecycle === "active" || body.lifecycle === "archived" ? { lifecycle: body.lifecycle } : {}),
+      });
+      return json(200, { context: contextView(work) });
+    }),
+  );
+
+  router.delete("/api/projects/:projectId/private-work/:contextId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      await catalog.deletePrivateWorkContext(context, params.projectId, params.contextId);
+      return json(204, null);
+    }),
+  );
+
   // ---- Membership -----------------------------------------------------------
 
   router.put(
@@ -571,7 +609,8 @@ export function createRouter(dependencies: AppDependencies): Router {
   router.get("/api/projects/:projectId/resources", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-      const resources = await catalog.listResources(context, params.projectId);
+       const contextId = request.query.contextId ?? null;
+       const resources = await catalog.listResources(context, params.projectId, contextId);
       return json(200, { resources: resources.map(resourceView) });
     }),
   );
@@ -579,7 +618,7 @@ export function createRouter(dependencies: AppDependencies): Router {
   router.get("/api/projects/:projectId/semantic-messages", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-      return json(200, { messages: await catalog.listSemanticMessages(context, params.projectId) });
+       return json(200, { messages: await catalog.listSemanticMessages(context, params.projectId, request.query.contextId ?? null) });
     }),
   );
 
@@ -589,7 +628,7 @@ export function createRouter(dependencies: AppDependencies): Router {
       const body = parseJsonBody(request.body);
       if (typeof body.name !== "string" || body.name.trim() === "") return errorResponse(422, "invalid", "name must be a non-empty string.");
       if (body.kind !== "event" && body.kind !== "command") return errorResponse(422, "invalid", "kind must be event or command.");
-      return json(201, await catalog.createSemanticMessage(context, params.projectId, { name: body.name, kind: body.kind }));
+       return json(201, await catalog.createSemanticMessage(context, params.projectId, { name: body.name, kind: body.kind }, typeof body.contextId === "string" ? body.contextId : null));
     }),
   );
 
@@ -612,7 +651,7 @@ export function createRouter(dependencies: AppDependencies): Router {
   router.get("/api/projects/:projectId/relationships", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-      return json(200, { relationships: await catalog.listResourceRelationships(context, params.projectId) });
+       return json(200, { relationships: await catalog.listResourceRelationships(context, params.projectId, request.query.contextId ?? null) });
     }),
   );
 
@@ -626,8 +665,8 @@ export function createRouter(dependencies: AppDependencies): Router {
         targetId: requireBodyString(body, "targetId"),
         ...(typeof body.sourceRole === "string" ? { sourceRole: body.sourceRole as "execution" | "causal" | "other" } : {}),
         ...(typeof body.targetRole === "string" ? { targetRole: body.targetRole as "execution" | "causal" | "other" } : {}),
-      });
-      return json(201, { relationship });
+      }, typeof body.contextId === "string" ? body.contextId : null);
+       return json(201, { relationship });
     }),
   );
 
@@ -651,6 +690,7 @@ export function createRouter(dependencies: AppDependencies): Router {
         path: requireBodyString(body, "path"),
         type,
         content: typeof body.content === "string" ? body.content : "",
+        ...(typeof body.contextId === "string" ? { contextId: body.contextId } : {}),
         ...(body.metadata === undefined
           ? {}
           : { metadata: resourceMetadata(body.metadata) }),
@@ -668,6 +708,7 @@ export function createRouter(dependencies: AppDependencies): Router {
           context,
           params.projectId,
           params.resourceId,
+          typeof request.query.contextId === "string" ? request.query.contextId : null,
         );
         return json(200, { resource: resourceView(resource), content });
       }),
@@ -693,6 +734,7 @@ export function createRouter(dependencies: AppDependencies): Router {
           {
             content: typeof body.content === "string" ? body.content : "",
             expectedRevision: requireExpectedRevision(body),
+            ...(typeof body.contextId === "string" ? { contextId: body.contextId } : {}),
             ...(body.metadata === undefined
               ? {}
               : { metadata: resourceMetadata(body.metadata) }),
@@ -715,6 +757,7 @@ export function createRouter(dependencies: AppDependencies): Router {
           {
             path: requireBodyString(body, "path"),
             expectedRevision: requireExpectedRevision(body),
+            ...(typeof body.contextId === "string" ? { contextId: body.contextId } : {}),
           },
         );
         return json(200, { resource: resourceView(resource) });
@@ -730,6 +773,7 @@ export function createRouter(dependencies: AppDependencies): Router {
           context,
           params.projectId,
           params.resourceId,
+          { ...(typeof request.query.contextId === "string" ? { contextId: request.query.contextId } : {}) },
         );
         return json(204, null);
       }),
@@ -868,6 +912,7 @@ function projectFieldsView(project: {
 function resourceView(resource: {
   id: string;
   projectId: string;
+  contextId?: string;
   path: string;
   type: string;
   revision: number;
@@ -876,10 +921,22 @@ function resourceView(resource: {
   return {
     id: resource.id,
     projectId: resource.projectId,
+    ...(resource.contextId === undefined ? {} : { contextId: resource.contextId }),
     path: resource.path,
     type: resource.type,
     revision: resource.revision,
     ...(resource.metadata === undefined ? {} : { metadata: resource.metadata }),
+  };
+}
+
+function contextView(context: {
+  id: string; projectId: string; ownerUserId: string; name: string;
+  description?: string; lifecycle: string; createdAt: Date; updatedAt: Date;
+}): Record<string, unknown> {
+  return {
+    id: context.id, projectId: context.projectId, ownerUserId: context.ownerUserId,
+    name: context.name, ...(context.description === undefined ? {} : { description: context.description }),
+    lifecycle: context.lifecycle, createdAt: context.createdAt.toISOString(), updatedAt: context.updatedAt.toISOString(),
   };
 }
 

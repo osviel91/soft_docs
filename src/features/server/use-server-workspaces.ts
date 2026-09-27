@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ServerApiClient,
   ServerProject,
+  ServerPrivateWorkContext,
 } from "../../workspace/server/api-client";
 import {
   createServerWorkspaceRepository,
@@ -51,6 +52,7 @@ export interface ServerWorkspacesHook {
   openProject(project: ServerProject): Promise<void>;
   createProject(name: string): Promise<void>;
   close(): void;
+  privateWorkContexts: ServerPrivateWorkContext[];
 }
 
 /** The permission a writable repository requires. */
@@ -74,6 +76,7 @@ export function useServerWorkspaces(
   const [active, setActive] = useState<ActiveServerWorkspace | null>(null);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [privateWorkContexts, setPrivateWorkContexts] = useState<ServerPrivateWorkContext[]>([]);
   // A repository is bound to a project *and* to the session that opened it; a
   // second open must not be overwritten by the first one's slower answer.
   const openTicket = useRef(0);
@@ -145,6 +148,12 @@ export function useServerWorkspaces(
             writable,
           }),
         });
+        try {
+          setPrivateWorkContexts(await client.listPrivateWorkContexts(project.id));
+        } catch {
+          // Older API clients may not expose private work yet; opening SHARED must remain independent.
+          setPrivateWorkContexts([]);
+        }
       } catch (error) {
         if (openTicket.current !== ticket) return;
         setActive(null);
@@ -183,6 +192,7 @@ export function useServerWorkspaces(
     openTicket.current += 1;
     setActive(null);
     setOpenError(null);
+    setPrivateWorkContexts([]);
   }, []);
 
   return {
@@ -196,5 +206,6 @@ export function useServerWorkspaces(
     openProject,
     createProject,
     close,
+    privateWorkContexts,
   };
 }

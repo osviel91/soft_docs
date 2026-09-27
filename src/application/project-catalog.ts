@@ -59,6 +59,8 @@ import {
 import { validateResourceRelationship } from "../domain/workspace/resource-relationship";
 import { isOk } from "../shared/result/result";
 import { defaultIdFactory } from "../shared/ids/ids";
+import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
+import type { PrivateWorkContext } from "../domain/workspace/knowledge-context";
 
 /**
  * A resource as the API and MCP surface it: identity, path, type, revision.
@@ -76,7 +78,7 @@ export type CatalogResource = ResourceView;
  * the factory decides where that project lives (a volume today, an object store
  * later). No caller can pass a path in.
  */
-export type ProjectStorageFactory = (projectId: string) => ProjectStorage;
+export type ProjectStorageFactory = (projectId: string, contextId?: string | null) => ProjectStorage;
 
 /** What the catalog needs to run. */
 export interface ProjectCatalogOptions {
@@ -96,6 +98,7 @@ export interface ProjectCatalogOptions {
   operations?: WorkspaceOperationRepository;
   /** A pre-built mutation service, for a host that shares one with its provider. */
   mutations?: WorkspaceMutationService;
+  knowledgeContexts?: KnowledgeContextRepository;
   /** Content digest for the journal's staging verification. */
   hashContent?: (content: string) => string;
   /**
@@ -216,25 +219,35 @@ export interface ProjectCatalog {
   listResources(
     context: ApplicationContext,
     projectId: string,
+    contextId?: string | null,
   ): Promise<CatalogResource[]>;
+  listEffectiveResources(context: ApplicationContext, projectId: string, contextId: string): Promise<CatalogResource[]>;
+  listPrivateWorkContexts(context: ApplicationContext, projectId: string): Promise<PrivateWorkContext[]>;
+  createPrivateWorkContext(context: ApplicationContext, projectId: string, input: { name: string; description?: string }): Promise<PrivateWorkContext>;
+  updatePrivateWorkContext(context: ApplicationContext, projectId: string, contextId: string, input: { name?: string; description?: string; lifecycle?: "active" | "archived" }): Promise<PrivateWorkContext>;
+  deletePrivateWorkContext(context: ApplicationContext, projectId: string, contextId: string): Promise<void>;
   listResourceRelationships(
     context: ApplicationContext,
     projectId: string,
+    contextId?: string | null,
   ): Promise<ResourceRelationship[]>;
   createResourceRelationship(
     context: ApplicationContext,
     projectId: string,
     relationship: ResourceRelationship,
+    contextId?: string | null,
   ): Promise<ResourceRelationship>;
 
   listSemanticMessages(
     context: ApplicationContext,
     projectId: string,
+    contextId?: string | null,
   ): Promise<SemanticMessageIdentity[]>;
   createSemanticMessage(
     context: ApplicationContext,
     projectId: string,
     input: { name: string; kind: "event" | "command" },
+    contextId?: string | null,
   ): Promise<{ message: SemanticMessageIdentity; manifestRevision: number }>;
   updateSemanticMessages(
     context: ApplicationContext,
@@ -248,6 +261,7 @@ export interface ProjectCatalog {
     context: ApplicationContext,
     projectId: string,
     resourceId: string,
+    contextId?: string | null,
   ): Promise<CatalogResource>;
 
   /** Read a resource's text. */
@@ -255,6 +269,7 @@ export interface ProjectCatalog {
     context: ApplicationContext,
     projectId: string,
     resourceId: string,
+    contextId?: string | null,
   ): Promise<{ resource: CatalogResource; content: string }>;
 
   /**
@@ -272,6 +287,7 @@ export interface ProjectCatalog {
       type: ResourceRecord["type"];
       content: string;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<CatalogResource>;
@@ -290,6 +306,7 @@ export interface ProjectCatalog {
       content: string;
       expectedRevision: number;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<CatalogResource>;
@@ -302,6 +319,7 @@ export interface ProjectCatalog {
     input: {
       path: string;
       expectedRevision: number;
+      contextId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<CatalogResource>;
@@ -311,7 +329,7 @@ export interface ProjectCatalog {
     context: ApplicationContext,
     projectId: string,
     resourceId: string,
-    input?: { expectedRevision?: number; idempotencyKey?: string },
+    input?: { expectedRevision?: number; contextId?: string | null; idempotencyKey?: string },
   ): Promise<void>;
 }
 
@@ -358,6 +376,7 @@ export function createProjectCatalog(
   options: ProjectCatalogOptions,
 ): ProjectCatalog {
   const { projects, workspaces, storage, audit } = options;
+  const knowledgeContexts = options.knowledgeContexts;
   const policy =
     options.policy ?? createAuthorizationPolicy<ServerProject>(projects);
 
@@ -432,6 +451,14 @@ export function createProjectCatalog(
       context.principal.subjectUserId,
     );
     if (role === null) throw notFound(`No workspace with id ${workspaceId}.`);
+  };
+
+  const requirePrivateContext = async (context: ApplicationContext, projectId: string, contextId: string): Promise<PrivateWorkContext> => {
+    await requirePermission(context, projectId, "project:read");
+    if (!knowledgeContexts) throw new ApplicationError("internal", "Private work contexts are unavailable.");
+    const found = await knowledgeContexts.findPrivate(projectId, contextId, context.principal.subjectUserId);
+    if (!found) throw notFound(`No private work context with id ${contextId}.`);
+    return found;
   };
 
   const readManifest = async (
@@ -635,24 +662,65 @@ export function createProjectCatalog(
       });
     },
 
-    async listResources(context, projectId) {
+    async listResources(context, projectId, contextId = null) {
       await requirePermission(context, projectId, "resource:read");
-      const records = await projects.listResources(projectId);
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      const records = await projects.listResources(projectId, contextId);
       return records.map(toCatalogResource);
     },
 
-    async listResourceRelationships(context, projectId) {
-      await requirePermission(context, projectId, "resource:read");
-      return projects.listResourceRelationships(projectId);
+    async listEffectiveResources(context, projectId, contextId) {
+      await requirePrivateContext(context, projectId, contextId);
+      const [shared, privateResources] = await Promise.all([
+        projects.listResources(projectId, null),
+        projects.listResources(projectId, contextId),
+      ]);
+      return [...shared, ...privateResources].map(toCatalogResource);
     },
 
-    async createResourceRelationship(context, projectId, relationship) {
+    async listPrivateWorkContexts(context, projectId) {
+      await requirePermission(context, projectId, "project:read");
+      if (!knowledgeContexts) throw new ApplicationError("internal", "Private work contexts are unavailable.");
+      return knowledgeContexts.listPrivate(projectId, context.principal.subjectUserId);
+    },
+
+    async createPrivateWorkContext(context, projectId, input) {
+      await requirePermission(context, projectId, "project:read");
+      if (!knowledgeContexts) throw new ApplicationError("internal", "Private work contexts are unavailable.");
+      const created = await knowledgeContexts.createPrivate({ projectId, ownerUserId: context.principal.subjectUserId, ...input });
+      await storage(projectId, created.id).list();
+      return created;
+    },
+
+    async updatePrivateWorkContext(context, projectId, contextId, input) {
+      await requirePrivateContext(context, projectId, contextId);
+      return knowledgeContexts!.updatePrivate(contextId, context.principal.subjectUserId, input);
+    },
+
+    async deletePrivateWorkContext(context, projectId, contextId) {
+      await requirePrivateContext(context, projectId, contextId);
+      const store = storage(projectId, contextId);
+      const listed = await store.list();
+      if (listed.ok) for (const resource of listed.value) await store.remove(resource.path);
+      await knowledgeContexts!.deletePrivate(contextId, context.principal.subjectUserId);
+    },
+
+    async listResourceRelationships(context, projectId, contextId = null) {
+      await requirePermission(context, projectId, "resource:read");
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      return projects.listResourceRelationships(projectId, contextId);
+    },
+
+    async createResourceRelationship(context, projectId, relationship, contextId = null) {
       await requirePermission(context, projectId, "resource:update");
-      const resources = await projects.listResources(projectId);
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      const resources = contextId === null
+        ? await projects.listResources(projectId, null)
+        : [...await projects.listResources(projectId, null), ...await projects.listResources(projectId, contextId)];
       try {
         return await projects.createResourceRelationship(
           projectId,
-          validateResourceRelationship(relationship, resources),
+          validateResourceRelationship({ ...relationship, ...(contextId === null ? {} : { contextId }) }, resources),
         );
       } catch (error) {
         if (error instanceof Error && error.message === "Both relationship resources must exist.") {
@@ -662,14 +730,26 @@ export function createProjectCatalog(
       }
       },
 
-    async listSemanticMessages(context, projectId) {
+    async listSemanticMessages(context, projectId, contextId = null) {
       await requirePermission(context, projectId, "project:read");
+      if (contextId !== null) {
+        await requirePrivateContext(context, projectId, contextId);
+        return knowledgeContexts!.listPrivateMessages(projectId, contextId);
+      }
       const metadata = await readManifest(projectId);
       return metadata.semanticMessages ?? [];
     },
 
-    async createSemanticMessage(context, projectId, input) {
+    async createSemanticMessage(context, projectId, input, contextId = null) {
       await requirePermission(context, projectId, "project:update");
+      if (contextId !== null) {
+        await requirePrivateContext(context, projectId, contextId);
+        let id = defaultIdFactory();
+        const existing = await knowledgeContexts!.listPrivateMessages(projectId, contextId);
+        while (existing.some((message) => message.id === id)) id = defaultIdFactory();
+        const message = await knowledgeContexts!.createPrivateMessage({ projectId, contextId, id, ...input });
+        return { message, manifestRevision: 0 };
+      }
       const current = await readManifest(projectId);
       const revision = current.manifestRevision ?? 0;
       const existing = current.semanticMessages ?? [];
@@ -714,18 +794,20 @@ export function createProjectCatalog(
       return { messages, manifestRevision: nextRevision };
     },
 
-    async getResource(context, projectId, resourceId) {
+    async getResource(context, projectId, resourceId, contextId = null) {
       await requirePermission(context, projectId, "resource:read");
-      const record = await projects.findResource(projectId, resourceId);
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      const record = await projects.findResource(projectId, resourceId, contextId);
       if (!record) throw notFound(`No resource with id ${resourceId}.`);
       return toCatalogResource(record);
     },
 
-    async readResource(context, projectId, resourceId) {
+    async readResource(context, projectId, resourceId, contextId = null) {
       await requirePermission(context, projectId, "resource:read");
-      const record = await projects.findResource(projectId, resourceId);
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      const record = await projects.findResource(projectId, resourceId, contextId);
       if (!record) throw notFound(`No resource with id ${resourceId}.`);
-      const read = await storage(projectId).read(record.path);
+      const read = await storage(projectId, contextId).read(record.path);
       if (!read.ok) throw read.error;
       if (read.value === null) {
         throw notFound(
@@ -748,10 +830,14 @@ export function createProjectCatalog(
      * sequence rather than three near-copies of it.
      */
     createResource(context, projectId, input) {
+      if (input.contextId !== undefined && input.contextId !== null) {
+        return requirePrivateContext(context, projectId, input.contextId).then(() => requireMutations().createResource(context, projectId, input));
+      }
       return requireMutations().createResource(context, projectId, input);
     },
 
-    updateResource(context, projectId, resourceId, input) {
+    async updateResource(context, projectId, resourceId, input) {
+      if (input.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().updateResource(
         context,
         projectId,
@@ -760,7 +846,8 @@ export function createProjectCatalog(
       );
     },
 
-    moveResource(context, projectId, resourceId, input) {
+    async moveResource(context, projectId, resourceId, input) {
+      if (input.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().moveResource(
         context,
         projectId,
@@ -769,7 +856,8 @@ export function createProjectCatalog(
       );
     },
 
-    deleteResource(context, projectId, resourceId, input) {
+    async deleteResource(context, projectId, resourceId, input) {
+      if (input?.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().deleteResource(
         context,
         projectId,

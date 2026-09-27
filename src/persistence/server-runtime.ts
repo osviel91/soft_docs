@@ -46,6 +46,7 @@ import {
 import type { SqlClient } from "./sql-client";
 import { backfillResourceRevisionBaselines } from "./resource-revisions";
 import { createChangeProposalRepository } from "./change-proposal-repository";
+import { createKnowledgeContextRepository } from "./knowledge-context-repository";
 
 /** The configuration the shared runtime needs. */
 export interface ServerRuntimeConfig {
@@ -83,12 +84,14 @@ export interface ServerRuntime {
   credentials: ReturnType<typeof createAgentCredentialRepository>;
   operations: WorkspaceOperationRepository;
   proposals: ReturnType<typeof createChangeProposalRepository>;
+  knowledgeContexts: ReturnType<typeof createKnowledgeContextRepository>;
   /** The one authoritative resource-mutation path. */
   mutations: WorkspaceMutationService;
   /** The HMAC pepper credential digests are keyed with. Never sent anywhere. */
   tokenPepper: string;
   /** A project's content store. The id must already be authorized. */
   storageFor: (projectId: string) => ReturnType<typeof createFsProjectStorage>;
+  storageForContext: (projectId: string, contextId?: string | null) => ReturnType<typeof createFsProjectStorage>;
   /** A project's store and root directory together, for a provider. */
   locationFor: (projectId: string) => {
     storage: ReturnType<typeof createFsProjectStorage>;
@@ -139,12 +142,18 @@ export async function createServerRuntime(
     createFsProjectStorage({
       root: path.join(config.projectVolume, projectId),
     });
+  const storageForContext = (projectId: string, contextId?: string | null) =>
+    createFsProjectStorage({
+      root: contextId === undefined || contextId === null
+        ? path.join(config.projectVolume, projectId)
+        : path.join(config.projectVolume, projectId, ".private", contextId),
+    });
   await backfillResourceRevisionBaselines(sql, storageFor);
   const operations = createWorkspaceOperationRepository(sql);
   const proposals = createChangeProposalRepository(sql);
   const mutations = createWorkspaceMutationService({
     projects,
-    storage: storageFor,
+    storage: storageForContext,
     operations,
     hashContent: hashWorkspaceContent,
     ...(config.onMutationFailure === undefined
@@ -166,9 +175,11 @@ export async function createServerRuntime(
     credentials: createAgentCredentialRepository(sql),
     operations,
     proposals,
+    knowledgeContexts: createKnowledgeContextRepository(sql),
     mutations,
     tokenPepper: config.tokenPepper,
     storageFor,
+    storageForContext,
     locationFor: (projectId: string) => ({
       storage: storageFor(projectId),
       root: path.join(config.projectVolume, projectId),

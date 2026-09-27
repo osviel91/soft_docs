@@ -109,6 +109,9 @@ export interface ExplorerProps {
    * source that is active.
    */
   switcher?: ReactNode;
+  /** Private server-side work contexts owned by the current user. */
+  privateWorkContexts?: Array<{ id: string; name: string; lifecycle: "active" | "archived" }>;
+  serverMode?: boolean;
 }
 
 /** Navigation nodes are organizational only; containment is not architecture. */
@@ -173,6 +176,8 @@ export default function Explorer({
   workspaceLabel,
   folderSupported = false,
   switcher,
+  privateWorkContexts = [],
+  serverMode = false,
 }: ExplorerProps) {
   const [pendingName, setPendingName] = useState<string>("");
   // The search filters files by name across all projects. It is local UI state:
@@ -422,6 +427,7 @@ export default function Explorer({
                     className="explorer__diagrams"
                     data-testid="explorer-diagrams"
                   >
+                    {serverMode ? <li className="explorer__context-label" data-testid="explorer-shared-label">SHARED · authoritative</li> : null}
                     {projectDiagrams.length === 0 &&
                     query === "" &&
                     selectedProjectId === project.id ? (
@@ -526,7 +532,16 @@ export default function Explorer({
                     )}
                   </ul>
 
-                <ul className="explorer__notes" data-testid="explorer-notes">
+                  {serverMode && project.id === selectedProjectId && privateWorkContexts.length > 0 ? (
+                    <section className="explorer__private-work" data-testid="explorer-private-work">
+                      <h3 className="explorer__context-label">MY WORK · private, tentative</h3>
+                      <ul className="explorer__notes">
+                        {privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context">{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</li>)}
+                      </ul>
+                    </section>
+                  ) : null}
+
+                 <ul className="explorer__notes" data-testid="explorer-notes">
                     {projectNotes.length === 0 &&
                     query === "" &&
                     selectedProjectId === project.id ? (

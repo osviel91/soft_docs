@@ -32,6 +32,8 @@ import type { ResourceRelationship } from "../../domain/workspace/resource-relat
 export interface ResourceRecord {
   id: string;
   projectId: string;
+  /** Null is the backward-compatible SHARED context. */
+  contextId?: string;
   /** A validated, project-relative, `/`-separated path. */
   path: string;
   type: ResourceType;
@@ -49,6 +51,7 @@ export interface NewResource {
   metadata?: ResourceMetadata;
   /** The id to use; omitted means "mint one". */
   id?: string;
+  contextId?: string;
 }
 
 /** How a write may fail on a stale revision. */
@@ -104,12 +107,13 @@ export interface ProjectRepository {
   listMembers(projectId: string): Promise<ProjectMember[]>;
 
   /** Every resource a project records, in path order. */
-  listResources(projectId: string): Promise<ResourceRecord[]>;
+  listResources(projectId: string, contextId?: string | null): Promise<ResourceRecord[]>;
 
   /** One resource by id, scoped to its project. */
   findResource(
     projectId: string,
     resourceId: string,
+    contextId?: string | null,
   ): Promise<ResourceRecord | null>;
 
   /** One resource by its globally unique id. */
@@ -119,6 +123,7 @@ export interface ProjectRepository {
   findResourceByPath(
     projectId: string,
     path: string,
+    contextId?: string | null,
   ): Promise<ResourceRecord | null>;
 
   /** Record a new resource at revision 1. */
@@ -150,7 +155,7 @@ export interface ProjectRepository {
   /** Forget a resource. Its file is removed by the caller. */
   deleteResource(projectId: string, resourceId: string): Promise<void>;
 
-  listResourceRelationships(projectId: string): Promise<ResourceRelationship[]>;
+  listResourceRelationships(projectId: string, contextId?: string | null): Promise<ResourceRelationship[]>;
   createResourceRelationship(
     projectId: string,
     relationship: ResourceRelationship,

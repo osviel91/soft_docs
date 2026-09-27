@@ -75,8 +75,14 @@ Server mode adds authenticated shared projects. The API stores project identity,
 memberships, resource metadata, revisions, sessions, and audit events in
 PostgreSQL; resource content remains in the project storage volume. Workspace
 membership scopes which projects are visible and accessible, and project roles
-control permissions within an accessible project. Server writes use optimistic
-revisions so stale edits are rejected instead of silently overwriting changes.
+ control permissions within an accessible project. Server writes use optimistic
+ revisions so stale edits are rejected instead of silently overwriting changes.
+
+Server knowledge has two explicit contexts: **SHARED** is authoritative project
+knowledge, while **MY WORK** is private, tentative knowledge owned by one user
+inside that project. MY WORK may read SHARED; SHARED never implicitly reads MY
+WORK. The server and MCP enforce this boundary, not Explorer filtering. Existing
+server resources without an explicit context remain SHARED.
 
 The browser uses the same editor for local and server projects. The remote MCP
 service is a separately deployable, authenticated service over the shared

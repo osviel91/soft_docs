@@ -28,6 +28,7 @@ import { up as mergeSchemaRepair } from "./migrations/0013-merge-schema-repair";
 import { repairMergeSchema } from "./migrations/0013-merge-schema-repair";
 import { up as mergedStatusConstraint } from "./migrations/0014-merged-status-constraint";
 import { up as resourceRelationships } from "./migrations/0015-resource-relationships";
+import { up as privateWorkContexts } from "./migrations/0016-private-work-contexts";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -56,6 +57,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 13, name: "merge-schema-repair", sql: mergeSchemaRepair },
   { version: 14, name: "merged-status-constraint", sql: mergedStatusConstraint },
   { version: 15, name: "resource-relationships", sql: resourceRelationships },
+  { version: 16, name: "private-work-contexts", sql: privateWorkContexts },
 ];
 
 /**

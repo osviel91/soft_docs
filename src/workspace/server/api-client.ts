@@ -92,6 +92,7 @@ export type ServerResourceType =
 export interface ServerResource {
   id: string;
   projectId: string;
+  contextId?: string;
   path: string;
   type: ServerResourceType;
   revision: number;
@@ -103,6 +104,17 @@ export interface ServerProjectAccess {
   projectId: string;
   role: string;
   permissions: readonly string[];
+}
+
+export interface ServerPrivateWorkContext {
+  id: string;
+  projectId: string;
+  ownerUserId: string;
+  name: string;
+  description?: string;
+  lifecycle: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** An agent identity, as `/api/agents` renders it. */
@@ -433,12 +445,32 @@ export class ServerApiClient {
   }
 
   /** Every resource a project records. */
-  async listResources(projectId: string): Promise<ServerResource[]> {
+  async listResources(projectId: string, contextId?: string | null): Promise<ServerResource[]> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
     const body = await this.request<{ resources: ServerResource[] }>(
       "GET",
-      `/api/projects/${encodeURIComponent(projectId)}/resources`,
+      `/api/projects/${encodeURIComponent(projectId)}/resources${query}`,
     );
     return body.resources ?? [];
+  }
+
+  async listPrivateWorkContexts(projectId: string): Promise<ServerPrivateWorkContext[]> {
+    const body = await this.request<{ contexts: ServerPrivateWorkContext[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/private-work`);
+    return body.contexts ?? [];
+  }
+
+  async createPrivateWorkContext(projectId: string, input: { name: string; description?: string }): Promise<ServerPrivateWorkContext> {
+    const body = await this.request<{ context: ServerPrivateWorkContext }>("POST", `/api/projects/${encodeURIComponent(projectId)}/private-work`, input);
+    return body.context;
+  }
+
+  async updatePrivateWorkContext(projectId: string, contextId: string, input: { name?: string; description?: string; lifecycle?: "active" | "archived" }): Promise<ServerPrivateWorkContext> {
+    const body = await this.request<{ context: ServerPrivateWorkContext }>("PATCH", `/api/projects/${encodeURIComponent(projectId)}/private-work/${encodeURIComponent(contextId)}`, input);
+    return body.context;
+  }
+
+  async deletePrivateWorkContext(projectId: string, contextId: string): Promise<void> {
+    await this.request<unknown>("DELETE", `/api/projects/${encodeURIComponent(projectId)}/private-work/${encodeURIComponent(contextId)}`);
   }
 
   async listSemanticMessages(projectId: string): Promise<SemanticMessageIdentity[]> {
@@ -475,10 +507,12 @@ export class ServerApiClient {
   async readResource(
     projectId: string,
     resourceId: string,
+    contextId?: string | null,
   ): Promise<ServerResourceRead> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
     return this.request<ServerResourceRead>(
       "GET",
-      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}`,
+      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}${query}`,
     );
   }
 
@@ -549,6 +583,7 @@ export class ServerApiClient {
       type: ServerResourceType;
       content: string;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
     },
   ): Promise<ServerResource> {
     const body = await this.request<{ resource: ServerResource }>(
@@ -572,6 +607,7 @@ export class ServerApiClient {
       content: string;
       expectedRevision: number;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
     },
   ): Promise<ServerResource> {
     const body = await this.request<{ resource: ServerResource }>(
@@ -586,7 +622,7 @@ export class ServerApiClient {
   async moveResource(
     projectId: string,
     resourceId: string,
-    input: { path: string; expectedRevision: number },
+    input: { path: string; expectedRevision: number; contextId?: string | null },
   ): Promise<ServerResource> {
     const body = await this.request<{ resource: ServerResource }>(
       "POST",
@@ -597,10 +633,11 @@ export class ServerApiClient {
   }
 
   /** Delete a resource. */
-  async deleteResource(projectId: string, resourceId: string): Promise<void> {
+  async deleteResource(projectId: string, resourceId: string, contextId?: string | null): Promise<void> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
     await this.request<unknown>(
       "DELETE",
-      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}`,
+      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}${query}`,
     );
   }
 

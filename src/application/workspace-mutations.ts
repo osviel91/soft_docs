@@ -69,6 +69,7 @@ import type { JsonValue } from "../shared/json/json-value";
 export interface ResourceView {
   id: string;
   projectId: string;
+  contextId?: string;
   path: string;
   type: ResourceType;
   revision: number;
@@ -79,7 +80,7 @@ export interface ResourceView {
 export const STAGING_DIRECTORY = ".sdd-staging";
 
 /** Where a project's files live. */
-export type MutationStorageFactory = (projectId: string) => ProjectStorage;
+export type MutationStorageFactory = (projectId: string, contextId?: string | null) => ProjectStorage;
 
 /** What recovering unfinished operations did. */
 export interface RecoveryReport {
@@ -130,6 +131,7 @@ export interface WorkspaceMutationService {
       type: ResourceType;
       content: string;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<ResourceView>;
@@ -142,6 +144,7 @@ export interface WorkspaceMutationService {
       content: string;
       expectedRevision: number;
       metadata?: ResourceMetadata;
+      contextId?: string | null;
       idempotencyKey?: string;
       proposalMerge?: WorkspaceMutationIntent["proposalMerge"];
     },
@@ -154,6 +157,7 @@ export interface WorkspaceMutationService {
     input: {
       path: string;
       expectedRevision: number;
+      contextId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<ResourceView>;
@@ -162,7 +166,7 @@ export interface WorkspaceMutationService {
     context: ApplicationContext,
     projectId: string,
     resourceId: string,
-    input?: { expectedRevision?: number; idempotencyKey?: string },
+    input?: { expectedRevision?: number; contextId?: string | null; idempotencyKey?: string },
   ): Promise<void>;
 
   /** Drive every unfinished operation to completion, failure or compensation. */
@@ -191,6 +195,7 @@ function toView(record: ResourceRecord): ResourceView {
   return {
     id: record.id,
     projectId: record.projectId,
+    ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
     path: record.path,
     type: record.type,
     revision: record.revision,
@@ -219,6 +224,7 @@ function viewFromResult(
       typeof value.projectId === "string"
         ? value.projectId
         : fallback.projectId,
+    ...(typeof value.contextId === "string" ? { contextId: value.contextId } : {}),
     path: value.path,
     type: (typeof value.type === "string"
       ? value.type
@@ -426,6 +432,7 @@ export function createWorkspaceMutationService(
   const run = async (params: {
     context: ApplicationContext;
     projectId: string;
+    contextId?: string | null;
     operation: WorkspaceMutationIntent["operation"];
     resourceId: string;
     sourcePath?: string | null;
@@ -446,7 +453,7 @@ export function createWorkspaceMutationService(
       operation: WorkspaceOperationRecord,
     ) => ResourceView;
   }): Promise<ResourceView> => {
-    const store = storage(params.projectId);
+    const store = storage(params.projectId, params.contextId);
     const operationId = newId();
     let staged: StoredResource | null = null;
 
@@ -459,6 +466,7 @@ export function createWorkspaceMutationService(
       claim = await operations.claim({
         operationId,
         projectId: params.projectId,
+        contextId: params.contextId ?? null,
         resourceId: params.resourceId,
         operation: params.operation,
         sourcePath: params.sourcePath ?? null,
@@ -524,10 +532,7 @@ export function createWorkspaceMutationService(
       );
     }
 
-    const record = await projects.findResource(
-      params.projectId,
-      params.resourceId,
-    );
+    const record = await projects.findResource(params.projectId, params.resourceId, params.contextId ?? null);
     const view: ResourceView =
       record === null
         ? {
@@ -580,7 +585,7 @@ export function createWorkspaceMutationService(
       // check, which is exactly the retry the key exists to make safe.
       if (input.idempotencyKey === undefined) {
         const existing = await withPath(() =>
-          projects.findResourceByPath(projectId, input.path),
+          projects.findResourceByPath(projectId, input.path, input.contextId ?? null),
         );
         if (existing) {
           throw conflict(
@@ -593,6 +598,7 @@ export function createWorkspaceMutationService(
       return run({
         context,
         projectId,
+        contextId: input.contextId,
         operation: "create",
         resourceId,
         targetPath: input.path,
@@ -611,11 +617,12 @@ export function createWorkspaceMutationService(
 
     async updateResource(context, projectId, resourceId, input) {
       await require(context, projectId, "resource:update");
-      const record = await projects.findResource(projectId, resourceId);
+      const record = await projects.findResource(projectId, resourceId, input.contextId ?? null);
       if (!record) throw notFound(`No resource with id ${resourceId}.`);
       return run({
         context,
         projectId,
+        contextId: input.contextId,
         operation: "update",
         resourceId,
         sourcePath: record.path,
@@ -646,7 +653,7 @@ export function createWorkspaceMutationService(
 
     async moveResource(context, projectId, resourceId, input) {
       await require(context, projectId, "resource:move");
-      const record = await projects.findResource(projectId, resourceId);
+      const record = await projects.findResource(projectId, resourceId, input.contextId ?? null);
       if (!record) throw notFound(`No resource with id ${resourceId}.`);
       // A stale caller is refused before anything is staged or claimed; the
       // journal's conditional update is still the authority for the race.
@@ -660,7 +667,7 @@ export function createWorkspaceMutationService(
         );
       }
       const occupant = await withPath(() =>
-        projects.findResourceByPath(projectId, input.path),
+        projects.findResourceByPath(projectId, input.path, record.contextId ?? null),
       );
       if (occupant && occupant.id !== resourceId) {
         throw conflict(
@@ -671,6 +678,7 @@ export function createWorkspaceMutationService(
       return run({
         context,
         projectId,
+        contextId: record.contextId,
         operation: "move",
         resourceId,
         sourcePath: record.path,
@@ -689,13 +697,14 @@ export function createWorkspaceMutationService(
 
     async deleteResource(context, projectId, resourceId, input = {}) {
       await require(context, projectId, "resource:delete");
-      const record = await projects.findResource(projectId, resourceId);
+      const record = await projects.findResource(projectId, resourceId, input.contextId ?? null);
       if (!record) throw notFound(`No resource with id ${resourceId}.`);
-      const store = storage(projectId);
+      const store = storage(projectId, record.contextId);
       const operationId = newId();
       const claim = await operations.claim({
         operationId,
         projectId,
+        contextId: record.contextId,
         resourceId,
         operation: "delete",
         sourcePath: record.path,
@@ -741,7 +750,7 @@ export function createWorkspaceMutationService(
         try {
           await operations.markProcessing(listed.id);
           const operation = (await operations.find(listed.id)) ?? listed;
-          const store = storage(operation.projectId);
+          const store = storage(operation.projectId, operation.contextId);
           const done = await runFilesystemStep(store, operation);
           if (done) {
             await finalize(operation, await replayResultFor(operation));

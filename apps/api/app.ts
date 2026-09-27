@@ -158,8 +158,9 @@ export async function createApp(
       projects: runtime.projects,
       workspaces: runtime.workspaces,
       audit: runtime.audit,
-      storage: runtime.storageFor,
+      storage: runtime.storageForContext,
       mutations: runtime.mutations,
+      knowledgeContexts: runtime.knowledgeContexts,
     }),
     workspaceService: createWorkspaceService(runtime.workspaces),
     proposals: createChangeProposalService({

@@ -96,8 +96,9 @@ export async function createMcpService(
     projects: runtime.projects,
     workspaces: runtime.workspaces,
     audit: runtime.audit,
-    storage: runtime.storageFor,
+    storage: runtime.storageForContext,
     mutations: runtime.mutations,
+    knowledgeContexts: runtime.knowledgeContexts,
   });
   const proposals = createChangeProposalService({
     proposals: runtime.proposals,

@@ -46,6 +46,7 @@ export type WorkspaceOperationStatus =
 export interface WorkspaceOperationRecord {
   id: string;
   projectId: string;
+  contextId: string | null;
   resourceId: string | null;
   operation: WorkspaceOperationKind;
   status: WorkspaceOperationStatus;
@@ -74,6 +75,8 @@ export interface WorkspaceOperationRecord {
 export interface WorkspaceMutationIntent {
   operationId: string;
   projectId: string;
+  /** Null is SHARED; private mutations must carry their context id. */
+  contextId?: string | null;
   resourceId: string;
   operation: WorkspaceOperationKind;
   /** The path before the mutation (move/delete). */

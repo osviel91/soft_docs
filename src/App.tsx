@@ -2706,6 +2706,8 @@ export default function App() {
                   projects={projects}
                   diagrams={diagrams}
                   notes={notes}
+                  privateWorkContexts={server.privateWorkContexts}
+                  serverMode={workspaceMode === "server"}
                   allDiagrams={allDiagrams}
                   allNotes={allNotes}
                   selectedProjectId={selectedProjectId}
