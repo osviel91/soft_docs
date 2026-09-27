@@ -48,13 +48,15 @@ export interface ServerWorkspaceProviderOptions {
    * window and keeps the catalog and repository on one mutation path.
    */
   mutations: WorkspaceMutationService;
+  /** Explicit MY WORK context for a writable documentation workspace. */
+  contextId?: string | null;
   /**
    * Where a project's files live.
    *
    * The provider asks this for a project it has already authorized, so the
    * factory never sees untrusted input.
    */
-  location: (projectId: string) => ProjectStorageLocation;
+  location: (projectId: string, contextId?: string | null) => ProjectStorageLocation;
 }
 
 /** Map a server project onto the shared domain shape. */
@@ -88,17 +90,14 @@ export function createServerWorkspaceProvider(
       } catch {
         return null;
       }
-      const { storage, root } = location(listing.project.id);
+       const contextId = options.contextId ?? null;
+       const { storage, root } = location(listing.project.id, contextId);
       // The same policy the catalog enforces decides whether the repository this
       // provider hands out may write at all. A viewer — or a read-only agent
       // token — gets a genuinely read-only repository, so a write cannot slip
       // past authorization by arriving through the shared documentation service
       // instead of a catalog use case.
-      const writable = await catalog.can(
-        context,
-        listing.project.id,
-        "resource:update",
-      );
+       const writable = contextId !== null;
       return {
         project: toDomainProject(listing.project),
         repo: createServerWorkspaceRepository({
@@ -106,8 +105,9 @@ export function createServerWorkspaceProvider(
           storage,
           resources: projects,
           context,
-          mutations,
-          writable,
+           mutations,
+           contextId,
+           writable,
         }),
         root,
       };

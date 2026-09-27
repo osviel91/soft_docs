@@ -86,6 +86,19 @@ function fakeApi(options: FakeOptions = {}) {
         permissions: options.permissions ?? ["project:read", "resource:update"],
       });
     }
+    if (url.pathname === "/api/projects/p1/private-work" && (init?.method ?? "GET") === "GET") {
+      return reply(200, {
+        contexts: [{
+          id: "work-1",
+          projectId: "p1",
+          ownerUserId: "u1",
+          name: "Retry work",
+          lifecycle: "active",
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        }],
+      });
+    }
     if (url.pathname === "/auth/logout") return reply(204);
     return reply(404, { error: { code: "not_found" } });
   };
@@ -188,7 +201,7 @@ describe("useServerWorkspaces", () => {
     expect(result.current.projects).toHaveLength(0);
   });
 
-  it("opens a project into a writable repository when the role allows it", async () => {
+  it("opens SHARED as read-only even when the role allows writes", async () => {
     const api = fakeApi({ signedIn: true, permissions: ["resource:update"] });
     const client = new ServerApiClient({ fetch: api.fetch });
     const { result } = renderHook(() =>
@@ -201,7 +214,7 @@ describe("useServerWorkspaces", () => {
     });
 
     expect(result.current.active?.project.id).toBe("p1");
-    expect(result.current.active?.writable).toBe(true);
+    expect(result.current.active?.writable).toBe(false);
     expect(supportsForcedWrite(result.current.active!.repository)).toBe(true);
   });
 
@@ -222,6 +235,23 @@ describe("useServerWorkspaces", () => {
     const refused =
       await result.current.active!.repository.createEmptyDiagram("p1");
     expect(refused.ok).toBe(false);
+  });
+
+  it("switches the active repository to an explicit private context", async () => {
+    const api = fakeApi({ signedIn: true });
+    const client = new ServerApiClient({ fetch: api.fetch });
+    const { result } = renderHook(() =>
+      useServerWorkspaces(client, signedIn, "w1"),
+    );
+    await waitFor(() => expect(result.current.projects).toHaveLength(1));
+    await act(async () => {
+      await result.current.openProject(PROJECT);
+    });
+    await act(async () => {
+      await result.current.openPrivateWork("work-1");
+    });
+
+    expect(result.current.active?.contextId).toBe("work-1");
   });
 
   it("creates a project and opens it", async () => {

@@ -18,12 +18,14 @@ import { startHarness, type McpHarness } from "./harness";
 let harness: McpHarness;
 let ownerId: string;
 let projectId: string;
+let contextId: string;
 let token: string;
 
 beforeAll(async () => {
   harness = await startHarness();
   ownerId = await harness.aUser();
   projectId = await harness.aProject(ownerId);
+  contextId = await harness.aPrivateWork(projectId, ownerId);
   token = (await harness.aToken(ownerId, [
     "project:read",
     "project:search",
@@ -49,8 +51,18 @@ async function connect(bearer: string | null): Promise<Client> {
       },
     }),
   );
+  const callTool = client.callTool.bind(client);
+  client.callTool = ((params: { name: string; arguments?: Record<string, unknown> }) =>
+    callTool({
+      ...params,
+      ...(privateTools.has(params.name)
+        ? { arguments: { ...(params.arguments ?? {}), contextId } }
+        : {}),
+    })) as typeof client.callTool;
   return client;
 }
+
+const privateTools = new Set(["upsert_event_flow", "upsert_sequence_diagram", "upsert_documentation", "create_resource", "update_resource", "move_resource", "delete_resource", "create_resource_relationship", "create_semantic_message", "update_semantic_message", "delete_semantic_message", "bind_semantic_message", "unbind_semantic_message", "list_resources", "get_resource", "read_resource", "list_resource_relationships", "list_semantic_messages", "get_semantic_message", "find_semantic_message_candidates", "find_retry_behavior", "validate_project", "search_project"]);
 
 /** The structured content of a successful tool call. */
 function structured(result: unknown): Record<string, any> {
@@ -634,6 +646,7 @@ describe("the remote MCP service over Streamable HTTP", () => {
   });
 
   it("reads project content as MCP resources, not public URLs", async () => {
+    await harness.aSharedResource(projectId, "shared-resource.seq", "participant A\n");
     const client = await connect(token);
     const listed = await client.listResources();
     expect(listed.resources.length).toBeGreaterThan(0);

@@ -1,6 +1,7 @@
 import type { ResourceRelationship } from "./resource-relationship";
 import type { ResourceType } from "./resource-id";
 import type { ResourceAuthorship } from "./resource-revision";
+import type { SemanticMessageIdentity } from "./metadata";
 
 export type PromotionOperation = "CREATE" | "UPDATE" | "RETIRE";
 
@@ -11,6 +12,7 @@ export interface PromotionEntry {
   path: string;
   type: ResourceType;
   baseResourceId?: string;
+  basePath?: string;
   baseRevision?: number;
   resultingResourceId: string;
   resultingRevision: number;
@@ -18,8 +20,16 @@ export interface PromotionEntry {
 }
 
 export interface PromotionRelationshipChange {
-  operation: "ADD" | "REMOVE";
+  operation: "ADD" | "UPDATE" | "REMOVE";
   relationship: ResourceRelationship;
+  baseFingerprint?: string;
+}
+
+export interface PromotionSemanticMessageChange {
+  operation: "ADD" | "UPDATE" | "RETIRE";
+  message: SemanticMessageIdentity;
+  baseName?: string;
+  baseKind?: "event" | "command";
 }
 
 export interface Promotion {
@@ -29,9 +39,11 @@ export interface Promotion {
   actor: ResourceAuthorship;
   createdAt: Date;
   baseSharedRevision: string;
+  baseManifestRevision: number;
   resultingSharedRevision: string;
   entries: PromotionEntry[];
   relationships: PromotionRelationshipChange[];
+  semanticMessages: PromotionSemanticMessageChange[];
   status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED";
   completedAt?: Date;
 }
@@ -50,5 +62,6 @@ export interface PromotionPreview {
   retires: PromotionEntry[];
   semanticIdentityAdditions: string[];
   semanticIdentityReuses: string[];
+  semanticChanges: PromotionSemanticMessageChange[];
   relationships: PromotionRelationshipChange[];
 }

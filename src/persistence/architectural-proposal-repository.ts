@@ -25,6 +25,7 @@ function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSna
     sourcePrivateContextId: String(row.source_private_context_id), title: String(row.title),
     ...(row.description == null ? {} : { description: String(row.description) }), status: "open",
     baseSharedRevision: String(row.base_shared_revision), baseSharedResourceRevisions: revisions,
+    baseManifestRevision: Number(row.base_manifest_revision ?? 0),
     createdAt: date(row.created_at), submittedAt: date(row.submitted_at), resources, semanticMessages: messages, relationships,
   };
 }
@@ -48,14 +49,17 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
       sourceResourceId: String(row.source_resource_id), path: String(row.path), type: row.type as ResourceType,
       sourceRevision: Number(row.source_revision), content: String(row.content), ...(metadata(row.metadata) ? { metadata: metadata(row.metadata) } : {}),
       ...(row.operation == null ? {} : { operation: row.operation as ProposalResourceSnapshot["operation"] }),
-      ...(row.base_resource_id == null ? {} : { baseResourceId: String(row.base_resource_id) }),
-      ...(row.base_revision == null ? {} : { baseRevision: Number(row.base_revision) }),
+       ...(row.base_resource_id == null ? {} : { baseResourceId: String(row.base_resource_id) }),
+       ...(row.base_path == null ? {} : { basePath: String(row.base_path) }),
+       ...(row.base_revision == null ? {} : { baseRevision: Number(row.base_revision) }),
     }));
-    const messages = messageRows.rows.map((row): ProposalSemanticMessageSnapshot => ({ id: String(row.message_id), name: String(row.name), kind: row.kind as "event" | "command", sourceContextId: String(row.source_context_id) }));
+    const messages = messageRows.rows.map((row): ProposalSemanticMessageSnapshot => ({ id: String(row.message_id), name: String(row.name), kind: row.kind as "event" | "command", sourceContextId: String(row.source_context_id), operation: row.operation as ProposalSemanticMessageSnapshot["operation"], ...(row.base_name == null ? {} : { baseName: String(row.base_name) }), ...(row.base_kind == null ? {} : { baseKind: row.base_kind as "event" | "command" }) }));
     const relationships = relationshipRows.rows.map((row): ProposalRelationshipSnapshot => ({
       kind: row.kind as ProposalRelationshipSnapshot["kind"], sourceId: String(row.source_id), targetId: String(row.target_id), sourceContextId: String(row.source_context_id),
       ...(row.source_role ? { sourceRole: row.source_role as ProposalRelationshipSnapshot["sourceRole"] } : {}),
       ...(row.target_role ? { targetRole: row.target_role as ProposalRelationshipSnapshot["targetRole"] } : {}),
+      operation: row.operation as ProposalRelationshipSnapshot["operation"],
+      ...(row.base_fingerprint == null ? {} : { baseFingerprint: String(row.base_fingerprint) }),
       contextId: String(row.source_context_id),
     }));
     return { resources, messages, relationships };
@@ -90,39 +94,53 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
          }
         const proposalId = newId();
         const inserted = await tx.query(
-          `INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, description, base_shared_revision, base_shared_resource_revisions)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
-          [proposalId, input.projectId, input.authorUserId, input.sourcePrivateContextId, title, input.description ?? null, input.baseSharedRevision, JSON.stringify(input.baseSharedResourceRevisions)],
+           `INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, description, base_shared_revision, base_shared_resource_revisions, base_manifest_revision)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) RETURNING *`,
+           [proposalId, input.projectId, input.authorUserId, input.sourcePrivateContextId, title, input.description ?? null, input.baseSharedRevision, JSON.stringify(input.baseSharedResourceRevisions), input.baseManifestRevision],
         );
         for (const row of selected.rows) {
           await tx.query(
-             `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_revision)
-              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
-             [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), undefined, null, null],
+             `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision)
+              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)`,
+             [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), undefined, null, null, null],
            );
          }
-         const sharedByPath = await tx.query("SELECT id, path, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE'", [input.projectId]);
-         for (const row of selected.rows) {
-           const base = sharedByPath.rows.find((candidate) => String(candidate.path) === String(row.path));
-           await tx.query(
-             `UPDATE architectural_proposal_resources SET operation = $3, base_resource_id = $4, base_revision = $5 WHERE proposal_id = $1 AND source_resource_id = $2`,
-             [proposalId, String(row.id), base ? "UPDATE" : "CREATE", base ? String(base.id) : null, base ? Number(base.revision) : null],
-           );
+          const sharedByPath = await tx.query("SELECT id, path, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE'", [input.projectId]);
+          for (const row of selected.rows) {
+            const selection = input.selections.find((candidate) => candidate.resourceId === String(row.id))!;
+            const base = selection.baseResourceId
+              ? sharedByPath.rows.find((candidate) => String(candidate.id) === selection.baseResourceId)
+              : sharedByPath.rows.find((candidate) => String(candidate.path) === String(row.path));
+            const operation = selection.operation ?? (base ? "UPDATE" : "CREATE");
+            await tx.query(
+              `UPDATE architectural_proposal_resources SET path = $3, operation = $4, base_resource_id = $5, base_path = $6, base_revision = $7 WHERE proposal_id = $1 AND source_resource_id = $2`,
+              [proposalId, String(row.id), selection.path ?? String(row.path), operation, base ? String(base.id) : null, base ? String(base.path) : null, selection.baseRevision ?? (base ? Number(base.revision) : null)],
+            );
          }
          for (const row of retired.rows) {
            await tx.query(
-             `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_revision)
-              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'RETIRE', $2, $5)`,
+              `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'RETIRE', $2, $3, $5)`,
              [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {})],
            );
          }
-        if (input.privateMessageIds.length > 0) {
-          const messages = await tx.query("SELECT id, name, kind FROM private_semantic_messages WHERE project_id = $1 AND knowledge_context_id = $2 AND id = ANY($3::uuid[]) ORDER BY id", [input.projectId, input.sourcePrivateContextId, input.privateMessageIds]);
-          if (messages.rows.length !== input.privateMessageIds.length) throw new Error("A private semantic identity dependency is no longer available.");
-          for (const row of messages.rows) await tx.query("INSERT INTO architectural_proposal_messages (proposal_id, message_id, name, kind, source_context_id) VALUES ($1, $2, $3, $4, $5)", [proposalId, String(row.id), String(row.name), String(row.kind), input.sourcePrivateContextId]);
-        }
-        const relationships = await tx.query("SELECT source_id, target_id, kind, source_role, target_role FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id = $2 AND source_id = ANY($3::uuid[]) AND target_id = ANY($3::uuid[]) ORDER BY source_id, target_id", [input.projectId, input.sourcePrivateContextId, ids]);
-        for (const row of relationships.rows) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id) VALUES ($1, $2, $3, $4, $5, $6, $7)", [proposalId, String(row.source_id), String(row.target_id), String(row.kind), row.source_role == null ? null : String(row.source_role), row.target_role == null ? null : String(row.target_role), input.sourcePrivateContextId]);
+         if ((input.semanticMessages?.length ?? 0) > 0 || input.privateMessageIds.length > 0) {
+           const requested: Array<{ id: string; name?: string; kind?: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }> = input.semanticMessages ?? input.privateMessageIds.map((id) => ({ id, operation: "ADD" as const }));
+            const privateRequested = requested.filter((message) => message.operation !== "RETIRE");
+           const requestedIds = privateRequested.map((message) => message.id);
+           const messages = privateRequested.length === 0 ? { rows: [] } : await tx.query("SELECT id, name, kind FROM private_semantic_messages WHERE project_id = $1 AND knowledge_context_id = $2 AND id = ANY($3::uuid[]) ORDER BY id", [input.projectId, input.sourcePrivateContextId, requestedIds]);
+            for (const requestedMessage of privateRequested) {
+              const row = messages.rows.find((candidate) => String(candidate.id) === requestedMessage.id);
+              const name = row ? String(row.name) : requestedMessage.name;
+              const kind = row ? String(row.kind) : requestedMessage.kind;
+              if (!name || !kind) throw new Error(`Semantic identity ${requestedMessage.id} is not available in private work.`);
+              await tx.query("INSERT INTO architectural_proposal_messages (proposal_id, message_id, name, kind, source_context_id, operation, base_name, base_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [proposalId, requestedMessage.id, name, kind, input.sourcePrivateContextId, requestedMessage.operation ?? "ADD", requestedMessage.baseName ?? null, requestedMessage.baseKind ?? null]);
+            }
+           for (const message of requested.filter((entry) => entry.operation === "RETIRE")) await tx.query("INSERT INTO architectural_proposal_messages (proposal_id, message_id, name, kind, source_context_id, operation, base_name, base_kind) VALUES ($1, $2, $3, $4, $5, 'RETIRE', $6, $7)", [proposalId, message.id, message.name ?? message.baseName ?? message.id, message.kind ?? message.baseKind ?? "event", input.sourcePrivateContextId, message.baseName ?? message.name ?? message.id, message.baseKind ?? message.kind ?? "event"]);
+         }
+         const relationships = await tx.query("SELECT source_id, target_id, kind, source_role, target_role FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id = $2 AND source_id = ANY($3::uuid[]) AND target_id = ANY($3::uuid[]) ORDER BY source_id, target_id", [input.projectId, input.sourcePrivateContextId, ids]);
+         const requestedRelationships: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }> = input.relationships ?? relationships.rows.map((row) => ({ sourceId: String(row.source_id), targetId: String(row.target_id), kind: row.kind as "complementary-view", ...(row.source_role == null ? {} : { sourceRole: row.source_role as "execution" | "causal" | "other" }), ...(row.target_role == null ? {} : { targetRole: row.target_role as "execution" | "causal" | "other" }) }));
+         for (const relationship of requestedRelationships) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
         const storedChildren = await children(tx, proposalId);
         return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
       });

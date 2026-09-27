@@ -64,5 +64,12 @@ export function createKnowledgeContextRepository(client: SqlClient, options: { n
       const row = result.rows[0];
       return { id: String(row.id), name: String(row.name), kind: row.kind as "event" | "command" };
     },
+    async updatePrivateMessages(projectId, contextId, messages) {
+      await client.transaction(async (tx) => {
+        await tx.query("DELETE FROM private_semantic_messages WHERE project_id = $1 AND knowledge_context_id = $2", [projectId, contextId]);
+        for (const message of messages) await tx.query("INSERT INTO private_semantic_messages (id, project_id, knowledge_context_id, name, kind) VALUES ($1, $2, $3, $4, $5)", [message.id, projectId, contextId, message.name, message.kind]);
+      });
+      return messages;
+    },
   };
 }

@@ -3,7 +3,7 @@ import type { ResourceAuthorship } from "../../domain/workspace/resource-revisio
 import type { ResourceMetadata } from "../../domain/workspace/resource-metadata";
 import type { ResourceType } from "../../domain/workspace/resource-id";
 import type { WorkspaceOperationRecord } from "./workspace-operation-repository";
-import type { PromotionEntry, PromotionRelationshipChange } from "../../domain/workspace/promotion";
+import type { PromotionEntry, PromotionRelationshipChange, PromotionSemanticMessageChange } from "../../domain/workspace/promotion";
 
 export type AuthoritativeBatchOperation =
   | {
@@ -18,6 +18,7 @@ export type AuthoritativeBatchOperation =
   | {
       operation: "update";
       resourceId: string;
+      sourcePath?: string;
       path: string;
       expectedRevision: number;
       content: string;
@@ -40,7 +41,8 @@ export interface AuthoritativeBatchIntent {
   idempotencyKey?: string;
   manifest?: { expectedRevision: number; expectedContent: string | null; content: string; stagedPath?: string };
   relationshipChanges?: PromotionRelationshipChange[];
-  promotion?: { id: string; proposalId: string; baseSharedRevision: string; entries: PromotionEntry[]; relationships: PromotionRelationshipChange[] };
+  semanticChanges?: PromotionSemanticMessageChange[];
+  promotion?: { id: string; proposalId: string; baseSharedRevision: string; baseManifestRevision?: number; entries: PromotionEntry[]; relationships: PromotionRelationshipChange[]; semanticMessages?: PromotionSemanticMessageChange[] };
 }
 
 export interface AuthoritativeBatchRecord {

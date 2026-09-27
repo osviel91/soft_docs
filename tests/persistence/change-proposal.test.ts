@@ -12,21 +12,19 @@ import { createWorkspaceRepository } from "../../src/persistence/workspace-repos
 import { createChangeProposalRepository } from "../../src/persistence/change-proposal-repository";
 import type { SqlClient } from "../../src/persistence/sql-client";
 import { closeTestDatabase, openTestDatabase } from "./test-database";
-import { createWorkspaceOperationRepository } from "../../src/persistence/workspace-operation-repository";
-import { createWorkspaceMutationService } from "../../src/application/workspace-mutations";
-import { createFsProjectStorage } from "../../src/persistence/fs-project-storage";
-import { hashWorkspaceContent } from "../../src/persistence/server-runtime";
-import { migrate } from "../../src/persistence/migrate";
+import { createKnowledgeContextRepository } from "../../src/persistence/knowledge-context-repository";
 
 let client: SqlClient;
 let projects: ReturnType<typeof createProjectRepository>;
 let proposals: ReturnType<typeof createChangeProposalRepository>;
 let volume: string;
+let knowledgeContexts: ReturnType<typeof createKnowledgeContextRepository>;
 
 beforeAll(async () => {
   client = await openTestDatabase();
   projects = createProjectRepository(client);
   proposals = createChangeProposalRepository(client);
+  knowledgeContexts = createKnowledgeContextRepository(client);
   volume = await mkdtemp(path.join(tmpdir(), "sd-proposals-"));
 });
 
@@ -52,6 +50,7 @@ async function fixture(): Promise<{
   projectId: string;
   resourceId: string;
   otherResourceId: string;
+  privateContextId: string;
 }> {
   const user = await client.query(
     `INSERT INTO users (id, display_name, status)
@@ -76,6 +75,7 @@ async function fixture(): Promise<{
     path: "two.md",
     type: "markdown-document",
   });
+  const privateWork = await knowledgeContexts.createPrivate({ projectId: project.id, ownerUserId: userId, name: "proposal-test-work" });
   for (const resource of [first, second]) {
     await client.query(
       `INSERT INTO resource_revisions
@@ -95,22 +95,16 @@ async function fixture(): Promise<{
     projectId: project.id,
     resourceId: first.id,
     otherResourceId: second.id,
+    privateContextId: privateWork.id,
   };
 }
 
 describe("change proposals", () => {
-  it("merges a fresh proposal through one canonical revision", async () => {
+  it("analyzes a fresh proposal without publishing it", async () => {
     const { context, projectId, resourceId } = await fixture();
-    const mutations = createWorkspaceMutationService({
-      projects,
-      storage: (id) => createFsProjectStorage({ root: path.join(volume, id) }),
-      operations: createWorkspaceOperationRepository(client),
-      hashContent: hashWorkspaceContent,
-    });
     const service = createChangeProposalService({
       proposals,
       projects,
-      mutations,
     });
     const proposal = await service.create(context, projectId, resourceId, {
       title: "Merge me",
@@ -120,58 +114,21 @@ describe("change proposals", () => {
       expectedVersion: open.version,
       proposedContent: "merged content",
     });
-    await client.query(
-      "ALTER TABLE change_proposals DROP CONSTRAINT IF EXISTS change_proposals_status_known",
-    );
-    await client.query(
-      "ALTER TABLE change_proposals ADD CONSTRAINT change_proposals_status_known CHECK (status IN ('draft', 'open', 'closed'))",
-    );
-    await client.query("DELETE FROM schema_migrations WHERE version = 14");
-    expect((await migrate(client)).applied).toEqual([14]);
-    const result = await service.merge(context, proposal.id);
-
-    expect(result.resource.revision).toBe(2);
-    expect(result.proposal.status).toBe("merged");
-    expect(result.proposal.mergedRevision).toBe(2);
-    expect(result.proposal.mergedAt).toBeTruthy();
-    expect(result.proposal.mergeActor).toEqual({
-      kind: "user",
-      userId: context.principal.subjectUserId,
-      subjectUserId: context.principal.subjectUserId,
+    const result = await service.analyzeMerge(context, proposal.id);
+    expect(result.autoMergeable).toBe(true);
+    expect(result.candidateState?.content).toBe("merged content");
+    expect((await projects.listRevisions(resourceId)).map((r) => r.revision)).toEqual([1]);
+    await expect(service.merge(context, proposal.id)).rejects.toMatchObject({
+      code: "invalid",
+      details: { reason: "legacy_publication" },
     });
-    expect(
-      (await projects.listRevisions(resourceId)).map((r) => r.revision),
-    ).toEqual([1, 2]);
-    const revisions = await client.query(
-      "SELECT revision FROM resource_revisions WHERE resource_id = $1 AND revision = 2",
-      [resourceId],
-    );
-    expect(revisions.rows).toHaveLength(1);
-    const operations = await client.query(
-      "SELECT resource_id FROM workspace_operations WHERE resource_id = $1",
-      [resourceId],
-    );
-    expect(operations.rows).toHaveLength(1);
-    const audits = await client.query(
-      "SELECT resource_id FROM audit_events WHERE resource_id = $1",
-      [resourceId],
-    );
-    expect(audits.rows.length).toBeGreaterThan(0);
-    expect((await proposals.get(proposal.id))?.author).toEqual(proposal.author);
   });
 
-  it("preserves current content when a stale proposal changes metadata", async () => {
+  it("analyzes a stale proposal without changing the current resource", async () => {
     const { context, projectId, resourceId } = await fixture();
-    const mutations = createWorkspaceMutationService({
-      projects,
-      storage: (id) => createFsProjectStorage({ root: path.join(volume, id) }),
-      operations: createWorkspaceOperationRepository(client),
-      hashContent: hashWorkspaceContent,
-    });
     const service = createChangeProposalService({
       proposals,
       projects,
-      mutations,
     });
     const proposal = await service.create(context, projectId, resourceId, {
       title: "Stale metadata",
@@ -196,28 +153,20 @@ describe("change proposals", () => {
         JSON.stringify({ kind: "system" }),
       ],
     );
-    const result = await service.merge(context, proposal.id);
-    const revision = await projects.getRevision(
-      resourceId,
-      result.resource.revision,
-    );
-
-    expect(revision?.content).toBe("canonical current");
-    expect(revision?.metadata).toEqual({ tags: ["proposal"] });
+    const analysis = await service.analyzeMerge(context, proposal.id);
+    expect(analysis.stale).toBe(true);
+    expect((await projects.findResourceById(resourceId))?.revision).toBe(2);
+    await expect(service.merge(context, proposal.id)).rejects.toMatchObject({
+      code: "invalid",
+      details: { reason: "legacy_publication" },
+    });
   });
 
   it("rejects conflicts without changing canonical state or closing the proposal", async () => {
     const { context, projectId, resourceId } = await fixture();
-    const mutations = createWorkspaceMutationService({
-      projects,
-      storage: (id) => createFsProjectStorage({ root: path.join(volume, id) }),
-      operations: createWorkspaceOperationRepository(client),
-      hashContent: hashWorkspaceContent,
-    });
     const service = createChangeProposalService({
       proposals,
       projects,
-      mutations,
     });
     const proposal = await service.create(context, projectId, resourceId, {
       title: "Conflict",
@@ -243,10 +192,9 @@ describe("change proposals", () => {
       ],
     );
 
-    await expect(service.merge(context, proposal.id)).rejects.toMatchObject({
-      code: "conflict",
-      details: { reason: "merge_analysis" },
-    });
+    const analysis = await service.analyzeMerge(context, proposal.id);
+    expect(analysis.autoMergeable).toBe(false);
+    expect(analysis.conflicts).toHaveLength(1);
     expect((await projects.findResourceById(resourceId))?.revision).toBe(2);
     expect((await proposals.get(proposal.id))?.status).toBe("open");
     expect(

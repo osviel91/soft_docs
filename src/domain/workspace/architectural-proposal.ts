@@ -12,15 +12,21 @@ export interface ProposalResourceSnapshot {
   metadata?: ResourceMetadata;
   operation?: "CREATE" | "UPDATE" | "RETIRE";
   baseResourceId?: string;
+  basePath?: string;
   baseRevision?: number;
 }
 
 export interface ProposalSemanticMessageSnapshot extends SemanticMessageIdentity {
   sourceContextId: string;
+  operation?: "ADD" | "UPDATE" | "RETIRE";
+  baseName?: string;
+  baseKind?: "event" | "command";
 }
 
 export interface ProposalRelationshipSnapshot extends ResourceRelationship {
   sourceContextId: string;
+  operation?: "ADD" | "UPDATE" | "REMOVE";
+  baseFingerprint?: string;
 }
 
 export interface ArchitecturalProposal {
@@ -33,6 +39,7 @@ export interface ArchitecturalProposal {
   status: "open";
   baseSharedRevision: string;
   baseSharedResourceRevisions: Record<string, number>;
+  baseManifestRevision: number;
   createdAt: Date;
   submittedAt: Date;
   resources: ProposalResourceSnapshot[];

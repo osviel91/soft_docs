@@ -95,7 +95,7 @@ function createFakeApi(
       typeof init?.body === "string"
         ? (JSON.parse(init.body) as unknown)
         : null;
-    calls.push({ method, path, body });
+    calls.push({ method, path: `${path}${url.search}`, body });
 
     if (!options.writable && method !== "GET") {
       return failure(403, "forbidden");
@@ -236,8 +236,9 @@ function build(options: { writable?: boolean; seed?: StoredResource[] } = {}) {
   const repository = createServerWorkspaceRepository({
     client,
     projectId: "p1",
-    projectName: "Project A",
-    writable,
+      projectName: "Project A",
+      writable,
+      contextId: "work-1",
   });
   return { api, client, repository };
 }
@@ -256,6 +257,25 @@ function diagram(overrides: Partial<StoredResource> = {}): StoredResource {
 }
 
 describe("ServerWorkspaceRepository", () => {
+  it("keeps a private context on list, create, read, and save requests", async () => {
+    const { api } = build();
+    const privateRepository = createServerWorkspaceRepository({
+      client: new ServerApiClient({ fetch: api.fetch }),
+      projectId: "p1",
+      projectName: "Project A",
+      writable: true,
+      contextId: "work-1",
+    });
+
+    const created = await privateRepository.createEmptyDiagram("p1");
+    expect(isOk(created)).toBe(true);
+    const createCall = api.calls.find((call) => call.method === "POST");
+    expect(createCall?.body).toMatchObject({ contextId: "work-1" });
+
+    await privateRepository.listDiagramFiles("p1");
+    expect(api.calls.some((call) => call.path.includes("contextId=work-1"))).toBe(true);
+  });
+
   it("lists diagrams and notes from the resource rows", async () => {
     const { repository } = build({
       seed: [
@@ -322,6 +342,7 @@ describe("ServerWorkspaceRepository", () => {
     expect(put?.body).toEqual({
       content: "title Checkout v2",
       expectedRevision: 3,
+      contextId: "work-1",
     });
     expect(api.resources.get("r1")?.revision).toBe(4);
   });

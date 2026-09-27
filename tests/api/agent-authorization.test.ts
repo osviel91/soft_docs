@@ -34,6 +34,7 @@ import { createTestProvider, type TestProvider } from "./test-provider";
 let dependencies: AppDependencies;
 let volume: string;
 let provider: TestProvider;
+const privateWorkByProject = new Map<string, string>();
 
 beforeAll(async () => {
   volume = await mkdtemp(path.join(tmpdir(), "sd-agent-authz-"));
@@ -147,14 +148,24 @@ async function aProject(ownerId: string, name = "Payments") {
     sessionContext(ownerId),
     { name, workspaceId: ownerId },
   );
+  const work = await dependencies.catalog.createPrivateWorkContext(sessionContext(ownerId), listing.project.id, { name: "agent-test-work" });
+  privateWorkByProject.set(listing.project.id, work.id);
   return listing.project.id;
+}
+
+function workFor(projectId: string): string {
+  const workId = privateWorkByProject.get(projectId);
+  if (!workId) throw new Error(`Missing private work for ${projectId}`);
+  return workId;
 }
 
 describe("scopes compose with project roles", () => {
   it("lets a writer credential create, update, move and delete a resource", async () => {
     const owner = await aUser();
     const projectId = await aProject(owner, "Writer project");
+    const workId = workFor(projectId);
     const context = await credentialContext(owner, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
@@ -162,7 +173,7 @@ describe("scopes compose with project roles", () => {
     const created = await dependencies.catalog.createResource(
       context,
       projectId,
-      { path: "checkout.seq", type: "sequence-diagram", content: "A -> B: hi" },
+      { path: "checkout.seq", type: "sequence-diagram", content: "A -> B: hi", contextId: workId },
     );
     expect(created.revision).toBe(1);
 
@@ -170,7 +181,7 @@ describe("scopes compose with project roles", () => {
       context,
       projectId,
       created.id,
-      { content: "A -> B: hello", expectedRevision: 1 },
+      { content: "A -> B: hello", expectedRevision: 1, contextId: workId },
     );
     expect(updated.revision).toBe(2);
 
@@ -178,28 +189,30 @@ describe("scopes compose with project roles", () => {
       context,
       projectId,
       created.id,
-      { path: "renamed.seq", expectedRevision: 2 },
+      { path: "renamed.seq", expectedRevision: 2, contextId: workId },
     );
     expect(moved.path).toBe("renamed.seq");
 
-    await dependencies.catalog.deleteResource(context, projectId, created.id);
+    await dependencies.catalog.deleteResource(context, projectId, created.id, { contextId: workId });
     expect(
-      await dependencies.catalog.listResources(context, projectId),
+      await dependencies.catalog.listResources(context, projectId, workId),
     ).toEqual([]);
   });
 
   it("refuses every write to a read-only credential, even in an owned project", async () => {
     const owner = await aUser();
     const projectId = await aProject(owner, "Read-only project");
+    const workId = workFor(projectId);
     const writer = await credentialContext(owner, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
-    const reader = await credentialContext(owner, ["resource:read"]);
+    const reader = await credentialContext(owner, ["project:read", "resource:read"]);
     const resource = await dependencies.catalog.createResource(
       writer,
       projectId,
-      { path: "doc.md", type: "markdown-document", content: "# Hi" },
+      { path: "doc.md", type: "markdown-document", content: "# Hi", contextId: workId },
     );
 
     for (const attempt of [
@@ -208,18 +221,21 @@ describe("scopes compose with project roles", () => {
           path: "new.seq",
           type: "sequence-diagram",
           content: "",
+          contextId: workId,
         }),
       () =>
         dependencies.catalog.updateResource(reader, projectId, resource.id, {
           content: "changed",
           expectedRevision: 1,
+          contextId: workId,
         }),
       () =>
         dependencies.catalog.moveResource(reader, projectId, resource.id, {
           path: "moved.md",
           expectedRevision: 1,
+          contextId: workId,
         }),
-      () => dependencies.catalog.deleteResource(reader, projectId, resource.id),
+      () => dependencies.catalog.deleteResource(reader, projectId, resource.id, { contextId: workId }),
     ]) {
       expect(await refusalOf(attempt)).toBe("forbidden");
     }
@@ -228,6 +244,7 @@ describe("scopes compose with project roles", () => {
       reader,
       projectId,
       resource.id,
+      workId,
     );
     expect(read.content).toBe("# Hi");
   });
@@ -236,9 +253,11 @@ describe("scopes compose with project roles", () => {
     const owner = await aUser();
     const viewer = await aUser();
     const projectId = await aProject(owner, "Viewer project");
+    const workId = workFor(projectId);
     await dependencies.projects.setMember(projectId, viewer, "VIEWER");
     await dependencies.workspaces.setMember(owner, viewer, "VIEWER");
     const context = await credentialContext(viewer, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
@@ -254,6 +273,7 @@ describe("scopes compose with project roles", () => {
           path: "sneaky.seq",
           type: "sequence-diagram",
           content: "",
+          contextId: workId,
         }),
       ),
     ).toBe("forbidden");
@@ -285,7 +305,9 @@ describe("project isolation through a credential", () => {
     const owner = await aUser();
     const stranger = await aUser();
     const projectId = await aProject(owner, "Private project");
+    const workId = workFor(projectId);
     const context = await credentialContext(stranger, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
@@ -304,6 +326,7 @@ describe("project isolation through a credential", () => {
           path: "intruder.seq",
           type: "sequence-diagram",
           content: "",
+          contextId: workId,
         }),
       ),
     ).toBe("not_found");
@@ -335,11 +358,14 @@ describe("project isolation through a credential", () => {
     const owner = await aUser();
     const first = await aProject(owner, "First");
     const second = await aProject(owner, "Second");
+    const firstWorkId = workFor(first);
     const context = await credentialContext(owner, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
     const resource = await dependencies.catalog.createResource(context, first, {
+      contextId: firstWorkId,
       path: "doc.md",
       type: "markdown-document",
       content: "# One",
@@ -355,6 +381,7 @@ describe("project isolation through a credential", () => {
         dependencies.catalog.updateResource(context, second, resource.id, {
           content: "stolen",
           expectedRevision: 1,
+          contextId: workFor(second),
         }),
       ),
     ).toBe("not_found");
@@ -365,7 +392,9 @@ describe("malformed input and credential handling", () => {
   it("refuses a traversing resource path as an invalid path", async () => {
     const owner = await aUser();
     const projectId = await aProject(owner, "Paths");
+    const workId = workFor(projectId);
     const context = await credentialContext(owner, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
@@ -381,6 +410,7 @@ describe("malformed input and credential handling", () => {
           path: bad,
           type: "sequence-diagram",
           content: "",
+          contextId: workId,
         });
         throw new Error(`Expected "${bad}" to be refused.`);
       } catch (error) {
@@ -394,7 +424,7 @@ describe("malformed input and credential handling", () => {
 
   it("never writes a presented credential to stderr", async () => {
     const owner = await aUser();
-    const context = await credentialContext(owner, ["resource:read"]);
+    const context = await credentialContext(owner, ["project:read", "resource:read"]);
     expect(context.principal.actor.kind).toBe("agent");
 
     const agentId =
@@ -429,7 +459,9 @@ describe("audit distinguishes an agent write from a session write", () => {
   it("records the agent as actor, the owner as subject and the credential", async () => {
     const owner = await aUser();
     const projectId = await aProject(owner, "Audited project");
+    const workId = workFor(projectId);
     const context = await credentialContext(owner, [
+      "project:read",
       "resource:read",
       "resource:write",
     ]);
@@ -438,6 +470,7 @@ describe("audit distinguishes an agent write from a session write", () => {
       path: "doc.md",
       type: "markdown-document",
       content: "# One",
+      contextId: workId,
     });
 
     const events = await dependencies.audit.listForUser(owner, 50);
@@ -457,6 +490,7 @@ describe("audit distinguishes an agent write from a session write", () => {
         path: "by-hand.md",
         type: "markdown-document",
         content: "# Two",
+        contextId: workId,
       },
     );
     const after = await dependencies.audit.listForUser(owner, 50);

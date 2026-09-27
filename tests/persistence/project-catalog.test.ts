@@ -19,6 +19,7 @@ import { createProjectRepository } from "../../src/persistence/project-repositor
 import { createWorkspaceRepository } from "../../src/persistence/workspace-repository";
 import { createUserRepository } from "../../src/persistence/user-repository";
 import { createAuditRepository } from "../../src/persistence/audit-repository";
+import { createKnowledgeContextRepository } from "../../src/persistence/knowledge-context-repository";
 import { ApplicationError } from "../../src/application/errors";
 import type { ApplicationContext } from "../../src/application/context";
 import {
@@ -42,10 +43,12 @@ beforeAll(async () => {
   users = createUserRepository(client);
   workspaces = createWorkspaceRepository(client);
   audit = createAuditRepository(client);
+  const knowledgeContexts = createKnowledgeContextRepository(client);
   catalog = createProjectCatalog({
     projects,
     workspaces,
     audit,
+    knowledgeContexts,
     // Phase 6: resource mutations run through the durable operation journal.
     operations: createWorkspaceOperationRepository(client),
     // The factory is the only thing that decides where a project lives, and it
@@ -100,6 +103,10 @@ async function aProject(name = "Payments") {
     workspaceId: ownerId,
   });
   return { ownerId, context, project: listing.project };
+}
+
+async function aWork(context: ApplicationContext, projectId: string, name = "test-work") {
+  return catalog.createPrivateWorkContext(context, projectId, { name });
 }
 
 /** The `ApplicationError` a call rejects with. */
@@ -182,7 +189,9 @@ describe("project lifecycle", () => {
 
   it("removes a project's files when it is deleted", async () => {
     const { context, project } = await aProject("Doomed");
+    const work = await aWork(context, project.id);
     await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "diagrams/a.seq",
       type: "sequence-diagram",
       content: "participant A",
@@ -194,27 +203,30 @@ describe("project lifecycle", () => {
 });
 
 describe("authorization by role", () => {
-  it("lets a viewer read but not write", async () => {
+  it("keeps a viewer out of another user's private work", async () => {
     const { ownerId, context, project } = await aProject("Shared read");
+    const work = await aWork(context, project.id);
     const viewerId = await aUser("Viewer");
     await catalog.setMember(context, project.id, viewerId, "VIEWER");
     await workspaces.setMember(ownerId, viewerId, "VIEWER");
     const viewer = contextFor(viewerId, { scopes: ALL_SCOPES });
 
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "diagrams/a.seq",
       type: "sequence-diagram",
       content: "participant A",
     });
 
-    const read = await catalog.readResource(viewer, project.id, created.id);
+    const read = await catalog.readResource(context, project.id, created.id, work.id);
     expect(read.content).toBe("participant A");
-    expect((await catalog.listResources(viewer, project.id)).length).toBe(1);
+    expect((await catalog.listResources(context, project.id, work.id)).length).toBe(1);
 
     const failure = await failureOf(
       catalog.updateResource(viewer, project.id, created.id, {
         content: "changed",
         expectedRevision: 1,
+        contextId: work.id,
       }),
     );
     expect(failure.code).toBe("forbidden");
@@ -258,8 +270,10 @@ describe("authorization by role", () => {
       "EDITOR",
     );
     const editor = contextFor(editorId, { scopes: ALL_SCOPES });
+    const work = await aWork(editor, project.id);
 
     const created = await catalog.createResource(editor, project.id, {
+      contextId: work.id,
       path: "diagrams/a.seq",
       type: "sequence-diagram",
       content: "one",
@@ -271,6 +285,7 @@ describe("authorization by role", () => {
       {
         content: "two",
         expectedRevision: created.revision,
+        contextId: work.id,
       },
     );
     expect(updated.revision).toBe(2);
@@ -308,6 +323,7 @@ describe("authorization by role", () => {
       catalog.getProject(other, project.id),
       catalog.listResources(other, project.id),
       catalog.createResource(other, project.id, {
+        contextId: "00000000-0000-0000-0000-000000000000",
         path: "a.seq",
         type: "sequence-diagram",
         content: "x",
@@ -364,74 +380,55 @@ describe("authorization by role", () => {
 });
 
 describe("resources and optimistic concurrency", () => {
-  it("retires SHARED resources without destroying revisions or relationships", async () => {
+  it("rejects ordinary attempts to retire SHARED resources", async () => {
     const { context, project } = await aProject("Retirement");
-    const sequence = await catalog.createResource(context, project.id, {
-      path: "retirement.seq",
-      type: "sequence-diagram",
-      content: "title Before\n",
-    });
-    const flow = await catalog.createResource(context, project.id, {
-      path: "retirement.eventseq",
-      type: "event-flow",
-      content: "event Before\n",
-    });
-    await catalog.createResourceRelationship(context, project.id, {
-      sourceId: sequence.id,
-      targetId: flow.id,
-      kind: "complementary-view",
-    });
-    await catalog.updateResource(context, project.id, sequence.id, {
-      content: "title Current\n",
-      expectedRevision: sequence.revision,
-    });
-
-    await catalog.deleteResource(context, project.id, sequence.id);
-
-    expect((await catalog.listResources(context, project.id)).map((item) => item.id)).toEqual([flow.id]);
-    await expect(catalog.getResource(context, project.id, sequence.id)).rejects.toMatchObject({ code: "not_found" });
-    expect((await createProjectRepository(client).listRevisions(sequence.id)).map((item) => item.revision)).toEqual([1, 2]);
-    expect((await client.query("SELECT lifecycle, retired_at FROM resources WHERE id = $1", [sequence.id])).rows[0]).toMatchObject({ lifecycle: "RETIRED" });
-    expect((await client.query("SELECT source_id, target_id FROM resource_relationship_history WHERE source_id = $1", [sequence.id])).rows).toHaveLength(1);
-    expect((await client.query("SELECT source_id FROM resource_relationships WHERE source_id = $1 OR target_id = $1", [sequence.id])).rows).toHaveLength(0);
-    expect((await createProjectRepository(client).listTrajectory(project.id, { resourceId: sequence.id })).entries.some((entry) => entry.kind === "RESOURCE_RETIRED")).toBe(true);
+    await expect(catalog.createResource(context, project.id, { path: "retirement.seq", type: "sequence-diagram", content: "title Before\n" })).rejects.toMatchObject({ code: "invalid", details: { reason: "authoritative_context" } });
+    await expect(catalog.updateResource(context, project.id, "missing", { content: "title Current\n", expectedRevision: 1 })).rejects.toMatchObject({ code: "invalid", details: { reason: "authoritative_context" } });
+    await expect(catalog.moveResource(context, project.id, "missing", { path: "retirement-renamed.seq", expectedRevision: 1 })).rejects.toMatchObject({ code: "invalid", details: { reason: "authoritative_context" } });
+    await expect(catalog.deleteResource(context, project.id, "missing")).rejects.toMatchObject({ code: "invalid", details: { reason: "authoritative_context" } });
   });
 
   it("creates, reads, moves and deletes a resource", async () => {
     const { context, project } = await aProject("CRUD");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "diagrams/checkout.seq",
       type: "sequence-diagram",
       content: "participant A\nA -> B: hi\n",
     });
     expect(created.revision).toBe(1);
 
-    const read = await catalog.readResource(context, project.id, created.id);
+    const read = await catalog.readResource(context, project.id, created.id, work.id);
     expect(read.content).toContain("A -> B: hi");
 
     const moved = await catalog.moveResource(context, project.id, created.id, {
       path: "docs/checkout.seq",
       expectedRevision: 1,
+      contextId: work.id,
     });
     expect(moved.path).toBe("docs/checkout.seq");
     expect(moved.id).toBe(created.id);
 
-    await catalog.deleteResource(context, project.id, created.id);
+    await catalog.deleteResource(context, project.id, created.id, { contextId: work.id });
     const failure = await failureOf(
-      catalog.getResource(context, project.id, created.id),
+      catalog.getResource(context, project.id, created.id, work.id),
     );
     expect(failure.code).toBe("not_found");
   });
 
   it("refuses to create two resources at the same path", async () => {
     const { context, project } = await aProject("Duplicates");
+    const work = await aWork(context, project.id);
     await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "one",
     });
     const failure = await failureOf(
       catalog.createResource(context, project.id, {
+        contextId: work.id,
         path: "a.seq",
         type: "sequence-diagram",
         content: "two",
@@ -442,8 +439,10 @@ describe("resources and optimistic concurrency", () => {
 
   it("rejects a traversal path before it reaches the volume", async () => {
     const { context, project } = await aProject("Traversal");
+    const work = await aWork(context, project.id);
     const failure = await failureOf(
       catalog.createResource(context, project.id, {
+        contextId: work.id,
         path: "../escape.seq",
         type: "sequence-diagram",
         content: "x",
@@ -454,7 +453,9 @@ describe("resources and optimistic concurrency", () => {
 
   it("succeeds when the expected revision is current", async () => {
     const { context, project } = await aProject("Current");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "one",
@@ -466,27 +467,32 @@ describe("resources and optimistic concurrency", () => {
       {
         content: "two",
         expectedRevision: created.revision,
+        contextId: work.id,
       },
     );
     expect(updated.revision).toBe(created.revision + 1);
-    const read = await catalog.readResource(context, project.id, created.id);
+    const read = await catalog.readResource(context, project.id, created.id, work.id);
     expect(read.content).toBe("two");
   });
 
   it("answers 409 for a stale revision and leaves the content untouched", async () => {
     const { context, project } = await aProject("Stale");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "first",
     });
     await catalog.updateResource(context, project.id, created.id, {
+      contextId: work.id,
       content: "second",
       expectedRevision: 1,
     });
 
     const failure = await failureOf(
       catalog.updateResource(context, project.id, created.id, {
+        contextId: work.id,
         content: "third",
         expectedRevision: 1,
       }),
@@ -498,23 +504,27 @@ describe("resources and optimistic concurrency", () => {
       currentRevision: 2,
     });
 
-    const read = await catalog.readResource(context, project.id, created.id);
+    const read = await catalog.readResource(context, project.id, created.id, work.id);
     expect(read.content).toBe("second");
   });
 
   it("lets only one of two concurrent writers win a revision", async () => {
     const { context, project } = await aProject("Concurrent");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "base",
     });
     const results = await Promise.allSettled([
       catalog.updateResource(context, project.id, created.id, {
+        contextId: work.id,
         content: "writer A",
         expectedRevision: 1,
       }),
       catalog.updateResource(context, project.id, created.id, {
+        contextId: work.id,
         content: "writer B",
         expectedRevision: 1,
       }),
@@ -524,23 +534,27 @@ describe("resources and optimistic concurrency", () => {
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect(
-      (await catalog.getResource(context, project.id, created.id)).revision,
+      (await catalog.getResource(context, project.id, created.id, work.id)).revision,
     ).toBe(2);
   });
 
   it("refuses a move whose revision is stale", async () => {
     const { context, project } = await aProject("Stale move");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "x",
     });
     await catalog.updateResource(context, project.id, created.id, {
+      contextId: work.id,
       content: "y",
       expectedRevision: 1,
     });
     const failure = await failureOf(
       catalog.moveResource(context, project.id, created.id, {
+        contextId: work.id,
         path: "b.seq",
         expectedRevision: 1,
       }),
@@ -549,25 +563,29 @@ describe("resources and optimistic concurrency", () => {
     // The refused move must leave the document where it was: a `409` that had
     // already renamed the file would strand it at a path no record names, and
     // the resource would read as missing.
-    const after = await catalog.readResource(context, project.id, created.id);
+    const after = await catalog.readResource(context, project.id, created.id, work.id);
     expect(after.resource.path).toBe("a.seq");
     expect(after.content).toBe("y");
   });
 
   it("refuses a move onto a path another resource holds", async () => {
     const { context, project } = await aProject("Collision");
+    const work = await aWork(context, project.id);
     const first = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "a",
     });
     await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "b.seq",
       type: "sequence-diagram",
       content: "b",
     });
     const failure = await failureOf(
       catalog.moveResource(context, project.id, first.id, {
+        contextId: work.id,
         path: "b.seq",
         expectedRevision: 1,
       }),
@@ -579,12 +597,15 @@ describe("resources and optimistic concurrency", () => {
 describe("the audit trail", () => {
   it("records the mutations a project goes through", async () => {
     const { context, project } = await aProject("Audited");
+    const work = await aWork(context, project.id);
     const created = await catalog.createResource(context, project.id, {
+      contextId: work.id,
       path: "a.seq",
       type: "sequence-diagram",
       content: "one",
     });
     await catalog.updateResource(context, project.id, created.id, {
+      contextId: work.id,
       content: "two",
       expectedRevision: 1,
     });

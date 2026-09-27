@@ -17,7 +17,6 @@ import type {
 import { resourceRepresentationOfType } from "../../domain/workspace/resource-id";
 import type { MergeAnalysis } from "../../domain/diff/merge-analysis";
 import { loadProjectProposals } from "./project-proposals";
-import { ApiError, NetworkError } from "../../workspace/server/api-errors";
 import type { DiagramViewportTransform } from "../preview/DiagramViewport";
 import {
   navigableTargets,
@@ -31,8 +30,9 @@ export interface ProposalReviewProps {
   current: ServerResource;
   currentContent?: string;
   onBack: () => void;
-  canMerge: boolean;
-  onMerge: () => void;
+  canMerge?: boolean;
+  privateContextId?: string | null;
+  onMerge?: () => void;
   readOnly?: boolean;
 }
 
@@ -42,9 +42,7 @@ export function ProposalReviewPanel({
   resourceId,
   initialProposalId,
   onBack,
-  canMerge,
   readOnly = false,
-  onMerged,
 }: {
   client: ServerApiClient;
   projectId: string;
@@ -52,6 +50,7 @@ export function ProposalReviewPanel({
   initialProposalId?: string | null;
   onBack: () => void;
   canMerge: boolean;
+  privateContextId?: string | null;
   readOnly?: boolean;
   onMerged?: () => void;
 }) {
@@ -66,25 +65,6 @@ export function ProposalReviewPanel({
     "loading" | "loaded" | "failed"
   >("loading");
   const [listCollapsed, setListCollapsed] = useState(false);
-
-  const merge = async () => {
-    if (readOnly || !selected || !current || !analysis?.autoMergeable) return;
-    const suffix = analysis.stale
-      ? " Canonical has advanced; compatible canonical changes will be preserved."
-      : "";
-    if (!window.confirm(`Merge proposal ${selected.title}?${suffix}`)) return;
-    try {
-      const result = await client.mergeChangeProposal(selected.id);
-      setSelected(result.proposal);
-      setProposals((items) =>
-        items.filter((item) => item.id !== result.proposal.id),
-      );
-      setCurrent(result.resource);
-      onMerged?.();
-    } catch (caught) {
-      setError(mergeErrorMessage(caught));
-    }
-  };
 
   useEffect(() => {
     let active = true;
@@ -210,9 +190,7 @@ export function ProposalReviewPanel({
             current={current}
             currentContent={currentContent ?? undefined}
             onBack={onBack}
-            canMerge={canMerge}
-            onMerge={() => void merge()}
-            readOnly={readOnly}
+             readOnly={readOnly}
           />
         ) : (
           <p className="proposal-review__loading" role="status">
@@ -227,28 +205,6 @@ export function ProposalReviewPanel({
       </main>
     </div>
   );
-}
-
-function mergeErrorMessage(error: unknown): string {
-  if (error instanceof NetworkError)
-    return "The server could not be reached. Check your connection and try again.";
-  if (error instanceof ApiError) {
-    if (error.code === "unauthorized") return "Sign in to merge this proposal.";
-    if (error.code === "forbidden")
-      return "You are not authorized to merge this proposal.";
-    if (error.code === "not_found")
-      return "This proposal or resource no longer exists.";
-    if (error.code === "invalid") return error.message;
-    if (error.code === "conflict") {
-      if (error.details.reason === "proposal_changed")
-        return "This proposal changed while you were reviewing it. Refresh the analysis.";
-      if ("expectedRevision" in error.details)
-        return "The canonical resource changed while you were reviewing it. Refresh the analysis.";
-      return error.message;
-    }
-    return `The server could not merge this proposal: ${error.message}`;
-  }
-  return "Could not merge this proposal. Refresh the analysis and try again.";
 }
 
 const KIND_LABEL: Record<ChangeKind, string> = {
@@ -416,8 +372,6 @@ export default function ProposalReview({
   current,
   currentContent,
   onBack,
-  canMerge,
-  onMerge,
   readOnly = false,
 }: ProposalReviewProps & { analysis: MergeAnalysis }) {
   const [view, setView] = useState<"changes" | "compare" | "source">("changes");
@@ -626,15 +580,11 @@ export default function ProposalReview({
           className="proposal-review__decision"
           aria-label="Proposal decision"
         >
-          {canMerge && !readOnly && proposal.status === "open" && analysis.autoMergeable ? (
-            <button type="button" className="button" onClick={onMerge}>
-              Merge proposal
-            </button>
-          ) : proposal.status === "open" ? (
+          {proposal.status === "open" ? (
             <span>
               {analysis.conflicts.length > 0
                 ? "Conflicts require attention"
-                : "Not ready to merge"}
+                : "Analysis complete; use ArchitecturalProposal to publish."}
             </span>
           ) : (
             <span>Proposal is {proposal.status}.</span>

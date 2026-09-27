@@ -229,7 +229,7 @@ describe("the API over its routes", () => {
     expect(JSON.parse(response.body)).toEqual({ user: null });
   });
 
-  it("merges a fresh proposal through the real HTTP path", async () => {
+  it("rejects an ordinary resource write without a MY WORK context", async () => {
     const user = await dependencies.users.findOrCreateByExternalIdentity({
       issuer: "https://idp.test",
       subject: "proposal-merge-subject",
@@ -264,64 +264,14 @@ describe("the API over its routes", () => {
         })
       ).body,
     ).project;
-    const resource = JSON.parse(
-      (
-        await call("POST", `/api/projects/${project.id}/resources`, {
-          path: "merge.md",
-          type: "markdown-document",
-          content: "base",
-        })
-      ).body,
-    ).resource;
-    const proposal = JSON.parse(
-      (
-        await call(
-          "POST",
-          `/api/projects/${project.id}/resources/${resource.id}/proposals`,
-          { title: "Merge over HTTP" },
-        )
-      ).body,
-    ).proposal;
-    await call("POST", `/api/change-proposals/${proposal.id}/open`, {
-      expectedVersion: proposal.version,
+    const response = await call("POST", `/api/projects/${project.id}/resources`, {
+      path: "legacy.md",
+      type: "markdown-document",
+      content: "must remain private",
     });
-    const opened = JSON.parse(
-      (
-        await call("PATCH", `/api/change-proposals/${proposal.id}`, {
-          expectedVersion: proposal.version + 1,
-          proposedContent: "merged over HTTP",
-        })
-      ).body,
-    ).proposal;
-    const diff = JSON.parse(
-      (await call("GET", `/api/change-proposals/${proposal.id}/diff`)).body,
-    ).diff;
-    const analysis = JSON.parse(
-      (
-        await call(
-          "GET",
-          `/api/change-proposals/${proposal.id}/merge-analysis`,
-        )
-      ).body,
-    ).analysis;
-    expect(opened.status).toBe("open");
-    expect(diff.baseRevision).toBe(diff.currentRevision);
-    expect(analysis.autoMergeable).toBe(true);
-
-    const mergedResponse = await call(
-      "POST",
-      `/api/change-proposals/${proposal.id}/merge`,
-    );
-    expect(mergedResponse.status).toBe(200);
-    const merged = JSON.parse(mergedResponse.body);
-    expect(merged.proposal.status).toBe("merged");
-    expect(merged.resource.revision).toBe(2);
-    expect(merged.proposal.mergedRevision).toBe(2);
-    expect(
-      (await dependencies.projects.listRevisions(resource.id)).map(
-        ({ revision }) => revision,
-      ),
-    ).toEqual([1, 2]);
+    expect(response.status).toBe(422);
+    expect(JSON.parse(response.body).error.code).toBe("invalid");
+    expect(await dependencies.projects.listResources(project.id)).toEqual([]);
   });
 
   it("answers /api/me from a valid session cookie and never echoes the token", async () => {

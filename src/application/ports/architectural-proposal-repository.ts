@@ -6,6 +6,10 @@ import type {
 export interface ProposalSelection {
   resourceId: string;
   expectedRevision: number;
+  operation?: "CREATE" | "UPDATE";
+  baseResourceId?: string;
+  path?: string;
+  baseRevision?: number;
 }
 
 export interface ProposalRetirementSelection {
@@ -25,6 +29,9 @@ export interface ArchitecturalProposalRepository {
     privateMessageIds: string[];
     baseSharedRevision: string;
     baseSharedResourceRevisions: Record<string, number>;
+    baseManifestRevision: number;
+    semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>;
+    relationships?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>;
   }): Promise<ArchitecturalProposal>;
   list(projectId: string): Promise<ArchitecturalProposalSummary[]>;
   get(projectId: string, proposalId: string): Promise<ArchitecturalProposal | null>;

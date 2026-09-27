@@ -26,6 +26,7 @@ import { createChangeProposalService } from "../../src/application/change-propos
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createPromotionService } from "../../src/application/promotion-service";
+import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
 import { createAuthorizationPolicy } from "../../src/application/authorization";
 import { createCredentialMint } from "./auth/agent-credential";
 import type { ServerConfig } from "./config";
@@ -60,6 +61,7 @@ export interface AppDependencies {
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   promotion: ReturnType<typeof createPromotionService>;
+  bootstrap: ReturnType<typeof createProjectBootstrapService>;
   trajectory: ReturnType<typeof createResourceTrajectoryService>;
   /** Where a project's files live. Never derived from a request. */
   storageFor: ServerRuntime["storageFor"];
@@ -149,6 +151,23 @@ export async function createApp(
   });
   await promotion.recover();
 
+  const catalog = createProjectCatalog({
+    projects: runtime.projects,
+    workspaces: runtime.workspaces,
+    audit: runtime.audit,
+    storage: runtime.storageForContext,
+    mutations: runtime.mutations,
+    knowledgeContexts: runtime.knowledgeContexts,
+    architecturalProposals: runtime.architecturalProposals,
+  });
+  const bootstrap = createProjectBootstrapService({
+    projects: runtime.projects,
+    batches: runtime.authoritativeBatches,
+    storage: runtime.storageFor,
+    createProject: (context, input) => catalog.createProject(context, input),
+    policy: createAuthorizationPolicy(runtime.projects),
+    audit: runtime.audit,
+  });
   return {
     config,
     runtime,
@@ -170,15 +189,7 @@ export async function createApp(
     tokenPepper: config.tokenPepper,
     // The catalog runs resource mutations through the *same* service the MCP
     // host uses, so there is one implementation of "update a resource".
-    catalog: createProjectCatalog({
-      projects: runtime.projects,
-      workspaces: runtime.workspaces,
-      audit: runtime.audit,
-      storage: runtime.storageForContext,
-      mutations: runtime.mutations,
-      knowledgeContexts: runtime.knowledgeContexts,
-      architecturalProposals: runtime.architecturalProposals,
-    }),
+    catalog,
     workspaceService: createWorkspaceService(runtime.workspaces),
     proposals: createChangeProposalService({
       proposals: runtime.proposals,
@@ -194,6 +205,7 @@ export async function createApp(
       storage: runtime.storageFor,
     }),
     promotion,
+    bootstrap,
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
     storageFor: runtime.storageFor,
     locationFor: runtime.locationFor,

@@ -73,6 +73,8 @@ export interface ServerWorkspaceRepositoryOptions {
   projectId: string;
   /** The project's display name, for the `Project` record. */
   projectName: string;
+  /** Explicit server knowledge context; omitted means authoritative SHARED. */
+  contextId?: string | null;
   /**
    * Whether the caller may change this project's resources.
    *
@@ -102,6 +104,7 @@ export class ServerWorkspaceRepository
   private readonly projectId: string;
   private projectName: string;
   private readonly writable: boolean;
+  private readonly contextId: string | null;
   /**
    * The revision this client last saw for each resource id.
    *
@@ -117,11 +120,20 @@ export class ServerWorkspaceRepository
     this.projectId = options.projectId;
     this.projectName = options.projectName;
     this.writable = options.writable ?? false;
+    this.contextId = options.contextId ?? null;
   }
 
   /** The `Project` record this repository stands for. */
   private project(): Project {
     return { id: this.projectId, name: this.projectName, datasetIds: [] };
+  }
+
+  private contextQuery(): string | null {
+    return this.contextId;
+  }
+
+  private withContext<T extends object>(input: T): T & { contextId?: string } {
+    return this.contextId === null ? input : { ...input, contextId: this.contextId };
   }
 
   /** Refuse a write the caller's role does not carry. */
@@ -212,12 +224,12 @@ export class ServerWorkspaceRepository
   ): Promise<Result<ProjectMetadata | null, Error>> {
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     try {
-      const resources = await this.client.listResources(this.projectId);
-      const relationships = await this.client.listResourceRelationships(this.projectId);
+      const resources = await this.client.listResources(this.projectId, this.contextQuery());
+      const relationships = await this.client.listResourceRelationships(this.projectId, this.contextQuery());
       let semanticMessages: SemanticMessageIdentity[] = [];
       if (typeof this.client.listSemanticMessages === "function") {
         try {
-          semanticMessages = await this.client.listSemanticMessages(this.projectId);
+          semanticMessages = await this.client.listSemanticMessages(this.projectId, this.contextQuery());
         } catch (error) {
           if (!(error instanceof ResourceNotFoundError)) throw error;
         }
@@ -535,6 +547,7 @@ export class ServerWorkspaceRepository
       name: resource.path,
       source: content,
       projectId: this.projectId,
+      ...(this.contextId === null ? {} : { contextId: this.contextId }),
       metadata: resource.metadata,
     };
   }
@@ -545,6 +558,7 @@ export class ServerWorkspaceRepository
       name: resource.path,
       markdown: content,
       projectId: this.projectId,
+      ...(this.contextId === null ? {} : { contextId: this.contextId }),
       metadata: resource.metadata,
     };
   }
@@ -562,7 +576,7 @@ export class ServerWorkspaceRepository
   ): Promise<Result<T[], Error>> {
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     try {
-      const resources = await this.client.listResources(this.projectId);
+      const resources = await this.client.listResources(this.projectId, this.contextQuery());
       const wanted = resources.filter((resource) =>
         kind === "note"
           ? resource.type === "markdown-document"
@@ -570,10 +584,7 @@ export class ServerWorkspaceRepository
       );
       const files: T[] = [];
       for (const resource of wanted) {
-        const read = await this.client.readResource(
-          this.projectId,
-          resource.id,
-        );
+        const read = await this.client.readResource(this.projectId, resource.id, this.contextQuery());
         this.remember(read.resource);
         files.push(toDomain(read.resource, read.content));
       }
@@ -592,7 +603,7 @@ export class ServerWorkspaceRepository
   > {
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     try {
-      const read = await this.client.readResource(this.projectId, resourceId);
+      const read = await this.client.readResource(this.projectId, resourceId, this.contextQuery());
       this.remember(read.resource);
       return ok(read);
     } catch (error) {
@@ -606,7 +617,7 @@ export class ServerWorkspaceRepository
     path: string,
   ): Promise<Result<ServerResource | null, Error>> {
     try {
-      const resources = await this.client.listResources(this.projectId);
+      const resources = await this.client.listResources(this.projectId, this.contextQuery());
       return ok(resources.find((resource) => resource.path === path) ?? null);
     } catch (error) {
       return err(toError(error));
@@ -630,16 +641,17 @@ export class ServerWorkspaceRepository
     type: ServerResourceType,
     toDomain: (resource: ServerResource, content: string) => T,
   ): Promise<Result<T, Error>> {
+    if (this.contextId === null) return err(new Error("Authoritative SHARED knowledge is read-only; select MY WORK before editing."));
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     if (!this.writable) return this.refuseWrite();
     try {
       const known = this.revisions.get(id);
       if (known !== undefined) {
-        const updated = await this.client.updateResource(this.projectId, id, {
+        const updated = await this.client.updateResource(this.projectId, id, this.withContext({
           content,
           expectedRevision: known,
           metadata,
-        });
+        }));
         this.remember(updated);
         return ok(toDomain(updated, content));
       }
@@ -650,18 +662,18 @@ export class ServerWorkspaceRepository
         const updated = await this.client.updateResource(
           this.projectId,
           existing.value.id,
-          { content, expectedRevision: existing.value.revision, metadata },
+          this.withContext({ content, expectedRevision: existing.value.revision, metadata }),
         );
         this.remember(updated);
         return ok(toDomain(updated, content));
       }
 
-      const created = await this.client.createResource(this.projectId, {
+      const created = await this.client.createResource(this.projectId, this.withContext({
         path,
         type,
         content,
         metadata,
-      });
+      }));
       this.remember(created);
       return ok(toDomain(created, content));
     } catch (error) {
@@ -686,13 +698,14 @@ export class ServerWorkspaceRepository
     metadata: DiagramFile["metadata"],
     toDomain: (resource: ServerResource, content: string) => T,
   ): Promise<Result<T, Error>> {
+    if (this.contextId === null) return err(new Error("Authoritative SHARED knowledge is read-only; select MY WORK before editing."));
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     if (!this.writable) return this.refuseWrite();
     try {
       const updated = await this.client.updateResource(
         this.projectId,
         resourceId,
-        { content, expectedRevision, metadata },
+        this.withContext({ content, expectedRevision, metadata }),
       );
       this.remember(updated);
       return ok(toDomain(updated, content));
@@ -717,20 +730,21 @@ export class ServerWorkspaceRepository
     toDomain: (resource: ServerResource, content: string) => T,
     sourceName?: string,
   ): Promise<Result<T, Error>> {
+    if (this.contextId === null) return err(new Error("Authoritative SHARED knowledge is read-only; select MY WORK before editing."));
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     if (!this.writable) return this.refuseWrite();
     try {
-      const resources = await this.client.listResources(this.projectId);
+      const resources = await this.client.listResources(this.projectId, this.contextQuery());
       const paths = resources.map((resource) => resource.path);
       const name =
         sourceName === undefined
           ? freeName(wanted, type, paths)
           : uniqueCopyName(sourceName, paths);
-      const created = await this.client.createResource(this.projectId, {
+      const created = await this.client.createResource(this.projectId, this.withContext({
         path: name,
         type,
         content,
-      });
+      }));
       this.remember(created);
       return ok(toDomain(created, content));
     } catch (error) {
@@ -743,10 +757,11 @@ export class ServerWorkspaceRepository
     projectId: ProjectId,
     resourceId: string,
   ): Promise<Result<void, Error>> {
+    if (this.contextId === null) return err(new Error("Authoritative SHARED knowledge is read-only; select MY WORK before editing."));
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     if (!this.writable) return this.refuseWrite();
     try {
-      await this.client.deleteResource(this.projectId, resourceId);
+      await this.client.deleteResource(this.projectId, resourceId, this.contextQuery());
       this.revisions.delete(resourceId);
       return ok(undefined);
     } catch (error) {
@@ -761,17 +776,18 @@ export class ServerWorkspaceRepository
     newName: string,
     toDomain: (resource: ServerResource, content: string) => T,
   ): Promise<Result<T, Error>> {
+    if (this.contextId === null) return err(new Error("Authoritative SHARED knowledge is read-only; select MY WORK before editing."));
     if (projectId !== this.projectId) return this.wrongProject(projectId);
     if (!this.writable) return this.refuseWrite();
     const target = newName.trim();
     if (target === "") return err(new Error("A file name is required."));
     try {
-      const read = await this.client.readResource(this.projectId, resourceId);
+      const read = await this.client.readResource(this.projectId, resourceId, this.contextQuery());
       this.remember(read.resource);
-      const moved = await this.client.moveResource(this.projectId, resourceId, {
+      const moved = await this.client.moveResource(this.projectId, resourceId, this.withContext({
         path: target,
         expectedRevision: read.resource.revision,
-      });
+      }));
       this.remember(moved);
       return ok(toDomain(moved, read.content));
     } catch (error) {

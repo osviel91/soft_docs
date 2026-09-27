@@ -23,23 +23,23 @@ export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePri
 export type PublicArchitecturalProposalSummary = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId">;
 
 function publicProposal(proposal: ArchitecturalProposal): PublicArchitecturalProposal {
-  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
+  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
   return {
-    id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, createdAt, submittedAt, resources,
-    semanticMessages: semanticMessages.map(({ id: messageId, name, kind }) => ({ id: messageId, name, kind })),
-    relationships: relationships.map((relationship) => ({ sourceId: relationship.sourceId, targetId: relationship.targetId, kind: relationship.kind, ...(relationship.sourceRole === undefined ? {} : { sourceRole: relationship.sourceRole }), ...(relationship.targetRole === undefined ? {} : { targetRole: relationship.targetRole }) })),
+    id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources,
+    semanticMessages: semanticMessages.map(({ id: messageId, name, kind, operation, baseName, baseKind }) => ({ id: messageId, name, kind, ...(operation === undefined ? {} : { operation }), ...(baseName === undefined ? {} : { baseName }), ...(baseKind === undefined ? {} : { baseKind }) })),
+    relationships: relationships.map(({ sourceId, targetId, kind, sourceRole, targetRole, operation, baseFingerprint }) => ({ sourceId, targetId, kind, ...(sourceRole === undefined ? {} : { sourceRole }), ...(targetRole === undefined ? {} : { targetRole }), ...(operation === undefined ? {} : { operation }), ...(baseFingerprint === undefined ? {} : { baseFingerprint }) })),
   };
 }
 
 function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitecturalProposalSummary {
-  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, createdAt, submittedAt, staleBase, currentSharedRevision } = summary;
-  return { id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, createdAt, submittedAt, staleBase, currentSharedRevision };
+  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision } = summary;
+  return { id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision };
 }
 
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
   get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string }>;
-  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   validate(context: ApplicationContext, projectId: string, proposalId: string): Promise<{ diagnostics: ProjectDiagnostic[]; index: ProjectIndex }>;
   trace(context: ApplicationContext, projectId: string, proposalId: string, input: { messageId: string; direction: TraceDirection; maxDepth: number; maxNodes: number; includeCandidates: boolean; includeRecovery: boolean }): Promise<{ trace: ArchitectureTrace | null; resolution: unknown }>;
   reviews(context: ApplicationContext, projectId: string, proposalId: string): Promise<ProposalReviewSummary>;
@@ -57,6 +57,7 @@ export function createArchitecturalProposalService(options: {
 }): ArchitecturalProposalService {
   const policy = options.policy ?? createAuthorizationPolicy<ServerProject>(options.projects);
   const requireRead = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "project:read");
+  const requireSubmit = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "resource:update");
   const indexFor = async (proposal: ArchitecturalProposal): Promise<ProjectIndex> => {
     const shared = await options.projects.listResources(proposal.projectId, null);
     const sharedFiles = await Promise.all(shared.map(async (resource) => ({ resource, revision: await options.projects.getRevision(resource.id, resource.revision) })));
@@ -105,7 +106,7 @@ export function createArchitecturalProposalService(options: {
       return { ...publicProposal(proposal), staleBase: proposal.baseSharedRevision !== current.revision, currentSharedRevision: current.revision };
     },
     async submit(context, input) {
-      await requireRead(context, input.projectId);
+      await requireSubmit(context, input.projectId);
       const source = await options.knowledgeContexts.findPrivate(input.projectId, input.sourcePrivateContextId, context.principal.subjectUserId);
       if (!source) throw notFound(`No private work context with id ${input.sourcePrivateContextId}.`);
       if (source.lifecycle !== "active") throw invalid("Archived private work cannot be submitted.");
@@ -121,17 +122,40 @@ export function createArchitecturalProposalService(options: {
       const currentContents = await Promise.all(selected.map(async (resource) => (await options.projects.getRevision(resource.id, resource.revision))?.content ?? ""));
       const privateMessageIds = privateMessages.filter((message) => currentContents.some((content) => content.includes(message.id))).map((message) => message.id);
       const base = await options.proposals.currentSharedRevision(input.projectId);
+      let baseManifestRevision = 0;
+      if (options.storage) {
+        const manifest = await options.storage(input.projectId).read("project.json");
+        if (manifest.ok && manifest.value) {
+          try { baseManifestRevision = parseProjectMetadata(JSON.parse(manifest.value.content))?.manifestRevision ?? 0; } catch { throw invalid("The project manifest is not valid JSON."); }
+        }
+      }
       const shared = await options.projects.listResources(input.projectId, null);
       const retirementTargets = shared.filter((resource) => retireIds.includes(resource.id));
       if (retirementTargets.length !== retireIds.length) throw notFound("One or more retirement targets are not active SHARED resources.");
+      let sharedMetadata: ProjectMetadata = createEmptyMetadata();
+      if (options.storage) {
+        const stored = await options.storage(input.projectId).read("project.json");
+        if (stored.ok && stored.value) sharedMetadata = parseProjectMetadata(JSON.parse(stored.value.content)) ?? sharedMetadata;
+      }
+      const relationshipFingerprint = (relationship: { kind: string; sourceId: string; targetId: string; sourceRole?: string; targetRole?: string }) => JSON.stringify({ kind: relationship.kind, sourceId: relationship.sourceId, targetId: relationship.targetId, sourceRole: relationship.sourceRole ?? null, targetRole: relationship.targetRole ?? null });
+      const semanticMessages = (input.semanticMessages ?? []).map((message) => {
+        const existing = sharedMetadata.semanticMessages?.find((candidate) => candidate.id === message.id);
+        return { ...message, ...(message.operation !== "ADD" && existing && message.baseName === undefined ? { baseName: existing.name, baseKind: existing.kind } : {}) };
+      });
+      const relationships = (input.relationshipOperations ?? []).map((relationship) => {
+        const existing = sharedMetadata.relationships?.find((candidate) => candidate.sourceId === relationship.sourceId && candidate.targetId === relationship.targetId);
+        return { ...relationship, ...(relationship.operation !== "ADD" && existing && relationship.baseFingerprint === undefined ? { baseFingerprint: relationshipFingerprint(existing) } : {}) };
+      });
       let proposal: ArchitecturalProposal;
       try {
         proposal = await options.proposals.submit({
           projectId: input.projectId, authorUserId: context.principal.subjectUserId, sourcePrivateContextId: source.id,
           title, ...(input.description === undefined ? {} : { description: input.description }),
-           selections: selected.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })),
+           selections: selected.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision, ...((input.resourceOperations ?? []).find((operation) => operation.resourceId === resource.id) ?? {}) })),
            retirements: retirementTargets.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })), privateMessageIds,
-          baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources,
+           baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources, baseManifestRevision,
+            ...(input.semanticMessages === undefined ? {} : { semanticMessages }),
+            ...(input.relationshipOperations === undefined ? {} : { relationships }),
         });
       } catch (error) {
         throw conflict(error instanceof Error ? error.message : "Private work changed during proposal submission.");

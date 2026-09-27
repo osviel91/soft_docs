@@ -47,6 +47,7 @@ interface FakeResource {
 /** What the fake API should answer with, per test. */
 interface FakeState {
   signedIn: boolean;
+  contextId: string | null;
   resources: Map<string, FakeResource>;
   /** Every request the shell made, for asserting the wire. */
   calls: Array<{ method: string; path: string; body: unknown }>;
@@ -58,6 +59,7 @@ interface FakeState {
 
 const state: FakeState = {
   signedIn: false,
+  contextId: null,
   resources: new Map(),
   calls: [],
   conflictAt: null,
@@ -150,6 +152,21 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   if (path === "/api/workspaces/w1/members") {
     return Promise.resolve(reply(200, { members: [] }));
   }
+  if (path === "/api/projects/p1/private-work") {
+    if (method === "GET") {
+      return Promise.resolve(
+        reply(200, state.contextId === null ? { contexts: [] } : {
+          contexts: [{ id: state.contextId, name: "Browser work", lifecycle: "active" }],
+        }),
+      );
+    }
+    if (method === "POST") {
+      state.contextId = "work1";
+      return Promise.resolve(
+        reply(201, { context: { id: state.contextId, name: "Browser work", lifecycle: "active" } }),
+      );
+    }
+  }
   if (path === "/api/projects/p1/access") {
     return Promise.resolve(
       reply(200, {
@@ -171,6 +188,11 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   }
   if (path === "/api/projects/p1/relationships") {
     return Promise.resolve(reply(200, { relationships: [] }));
+  }
+  if (path === "/api/projects/p1/resources" && method === "POST") {
+    return Promise.resolve(
+      reply(201, { resource: view(state.resources.get("r1")!) }),
+    );
   }
   const one = /^\/api\/projects\/p1\/resources\/([^/]+)$/.exec(path);
   if (one) {
@@ -234,6 +256,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
 
 beforeEach(() => {
   state.signedIn = false;
+  state.contextId = null;
   state.resources = new Map();
   state.calls = [];
   state.conflictAt = null;
@@ -299,6 +322,15 @@ describe("App — authenticated browser", () => {
     await waitFor(() => {
       expect(screen.getByTestId("dsl-textarea")).toHaveValue(content);
     });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("explorer-my-work-create"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("explorer-my-work-toggle"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("dsl-textarea")).toHaveValue(content);
+    });
   }
 
   it("lists the server projects and opens one into the same editor", async () => {
@@ -352,6 +384,7 @@ describe("App — authenticated browser", () => {
     expect(put.body).toEqual({
       content: "title Checkout\nBrowser -> Gateway: Pay",
       expectedRevision: 3,
+      contextId: "work1",
     });
     // The tab is no longer dirty, so the save really landed.
     await waitFor(() => {
@@ -383,7 +416,7 @@ describe("App — authenticated browser", () => {
     // The name is sent as typed. Local projects name a diagram `Untitled` with no
     // extension either, so the two stores agree; the resource's *id* is what
     // survives the rename, which is the property documentation links rely on.
-    expect(move.body).toEqual({ path: "orders", expectedRevision: 3 });
+    expect(move.body).toEqual({ path: "orders", expectedRevision: 3, contextId: "work1" });
     await waitFor(() => {
       expect(state.resources.get("r1")?.path).toBe("orders");
     });

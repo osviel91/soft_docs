@@ -5,16 +5,12 @@ import { publishProject } from "../../src/workspace/server/publish-project";
 
 describe("publishProject", () => {
   it("copies diagrams and notes into a newly created server project", async () => {
-    const createResource = vi.fn(async () => ({}));
+    const bootstrapProject = vi.fn(async () => ({ id: "server-project", name: "Test" }));
     const client = {
       listWorkspaces: vi.fn(async () => [
         { id: "workspace-1", isDefault: true },
       ]),
-      createProject: vi.fn(async () => ({
-        id: "server-project",
-        name: "Test",
-      })),
-      createResource,
+      bootstrapProject,
     } as unknown as ServerApiClient;
     const source = {
       listDiagramFiles: vi.fn(async () => ({
@@ -48,16 +44,9 @@ describe("publishProject", () => {
       noteIds: ["note-1"],
     });
 
-    expect(client.createProject).toHaveBeenCalledWith("Test", "workspace-1");
-    expect(createResource).toHaveBeenNthCalledWith(1, "server-project", {
-      path: "order.eventseq",
-      type: "event-flow",
-      content: "event OrderCreated",
-    });
-    expect(createResource).toHaveBeenNthCalledWith(2, "server-project", {
-      path: "overview.md",
-      type: "markdown-document",
-      content: "# Overview",
-    });
+    expect(bootstrapProject).toHaveBeenCalledWith("Test", "workspace-1", [
+      { path: "order.eventseq", type: "event-flow", content: "event OrderCreated" },
+      { path: "overview.md", type: "markdown-document", content: "# Overview" },
+    ]);
   });
 });

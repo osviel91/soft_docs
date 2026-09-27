@@ -25,6 +25,8 @@ export interface DiagramFile {
   source: string;
   /** The id of the project this diagram belongs to. Exactly one. */
   projectId: ProjectId;
+  /** Explicit server knowledge context; absent means local or SHARED. */
+  contextId?: string;
   /** Optional semantic metadata; absent in legacy records. */
   metadata?: ResourceMetadata;
 }
@@ -43,6 +45,8 @@ export interface NoteFile {
   markdown: string;
   /** The id of the project this note belongs to. Exactly one. */
   projectId: ProjectId;
+  /** Explicit server knowledge context; absent means local or SHARED. */
+  contextId?: string;
   /** Optional semantic metadata; absent in legacy records. */
   metadata?: ResourceMetadata;
 }

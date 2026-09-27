@@ -1,5 +1,5 @@
 import type { PromotionRepository } from "../application/ports/promotion-repository";
-import type { Promotion, PromotionEntry, PromotionRelationshipChange } from "../domain/workspace/promotion";
+import type { Promotion, PromotionEntry, PromotionRelationshipChange, PromotionSemanticMessageChange } from "../domain/workspace/promotion";
 import type { ResourceAuthorship } from "../domain/workspace/resource-revision";
 import type { SqlClient } from "./sql-client";
 
@@ -15,7 +15,7 @@ export function createPromotionRepository(client: SqlClient): PromotionRepositor
     return {
       id: String(row.id), projectId: String(row.project_id), proposalId: String(row.proposal_id),
       actor: (typeof row.actor === "string" ? JSON.parse(row.actor) : row.actor) as ResourceAuthorship,
-      createdAt: date(row.created_at), baseSharedRevision: String(row.base_shared_revision), resultingSharedRevision: String(row.resulting_shared_revision),
+      createdAt: date(row.created_at), baseSharedRevision: String(row.base_shared_revision), baseManifestRevision: Number(row.base_manifest_revision ?? 0), resultingSharedRevision: String(row.resulting_shared_revision),
       status: row.status as Promotion["status"], ...(row.completed_at == null ? {} : { completedAt: date(row.completed_at) }),
       entries: entries.rows.map((entry): PromotionEntry => ({
         id: String(entry.id), proposalResourceId: String(entry.proposal_resource_id), operation: entry.operation as PromotionEntry["operation"], path: String(entry.path), type: entry.type as PromotionEntry["type"],
@@ -24,8 +24,10 @@ export function createPromotionRepository(client: SqlClient): PromotionRepositor
       })),
       relationships: relationships.rows.map((entry): PromotionRelationshipChange => ({
         operation: entry.operation as PromotionRelationshipChange["operation"],
+        ...(entry.base_fingerprint == null ? {} : { baseFingerprint: String(entry.base_fingerprint) }),
         relationship: { kind: "complementary-view", sourceId: String(entry.source_id), targetId: String(entry.target_id), ...(entry.source_role == null ? {} : { sourceRole: String(entry.source_role) as "execution" | "causal" | "other" }), ...(entry.target_role == null ? {} : { targetRole: String(entry.target_role) as "execution" | "causal" | "other" }) },
       })),
+      semanticMessages: (typeof row.semantic_changes === "string" ? JSON.parse(row.semantic_changes) : row.semantic_changes ?? []) as PromotionSemanticMessageChange[],
     };
   };
   return {

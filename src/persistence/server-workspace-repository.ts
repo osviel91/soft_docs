@@ -62,6 +62,8 @@ export interface ServerWorkspaceRepositoryOptions {
   context: ApplicationContext;
   /** The one authoritative mutation path, shared with the catalog and MCP. */
   mutations: WorkspaceMutationService;
+  /** Null addresses authoritative SHARED; a value addresses MY WORK. */
+  contextId?: string | null;
   /**
    * Whether this caller may change the project's resources.
    *
@@ -104,6 +106,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
   private readonly context: ApplicationContext;
   private readonly mutations: WorkspaceMutationService;
   private readonly writable: boolean;
+  private readonly contextId: string | null;
 
   constructor(options: ServerWorkspaceRepositoryOptions) {
     this.projectId = options.projectId;
@@ -111,6 +114,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     this.resources = options.resources;
     this.context = options.context;
     this.mutations = options.mutations;
+    this.contextId = options.contextId ?? null;
     this.writable = options.writable ?? false;
   }
 
@@ -206,6 +210,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
       const existing = await this.resources.findResourceByPath(
         this.projectId,
         entry.path,
+        this.contextId,
       );
       if (existing) continue;
       // A resource the identity record knows but the database does not is a
@@ -215,6 +220,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
         path: entry.path,
         type,
         content: "",
+        contextId: this.contextId,
         ...(entry.metadata === undefined ? {} : { metadata: entry.metadata }),
       });
     }
@@ -228,7 +234,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     if (projectId !== this.projectId) {
       return missing(`No project with id ${projectId} in this repository.`);
     }
-    const records = await this.resources.listResources(this.projectId);
+      const records = await this.resources.listResources(this.projectId, this.contextId);
     const diagrams: DiagramFile[] = [];
     for (const record of records) {
       if (record.type === "markdown-document") continue;
@@ -254,6 +260,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     const record = await this.resources.findResourceByPath(
       this.projectId,
       nameOfResourceId(diagramId),
+      this.contextId,
     );
     return ok(this.toDiagram(read.value, record?.metadata));
   }
@@ -336,7 +343,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     if (projectId !== this.projectId) {
       return missing(`No project with id ${projectId} in this repository.`);
     }
-    const records = await this.resources.listResources(this.projectId);
+    const records = await this.resources.listResources(this.projectId, this.contextId);
     const notes: NoteFile[] = [];
     for (const record of records) {
       if (record.type !== "markdown-document") continue;
@@ -363,6 +370,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     const record = await this.resources.findResourceByPath(
       this.projectId,
       nameOfResourceId(noteId),
+      this.contextId,
     );
     return ok(this.toNote(read.value, record?.metadata));
   }
@@ -454,6 +462,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     const record = await this.resources.findResourceByPath(
       this.projectId,
       this.storagePathOf(path),
+      this.contextId,
     );
     return ok(record ? record.revision : null);
   }
@@ -470,6 +479,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
     const record = await this.resources.findResourceByPath(
       this.projectId,
       this.storagePathOf(path),
+      this.contextId,
     );
     if (!record) {
       return err(
@@ -569,6 +579,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
       const existing = await this.resources.findResourceByPath(
         this.projectId,
         storagePath,
+        this.contextId,
       );
       const effectiveMetadata = metadata === undefined ? existing?.metadata : metadata;
       const view = existing
@@ -580,6 +591,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
               content,
               expectedRevision: existing.revision,
               ...(metadata === undefined ? {} : { metadata }),
+              contextId: this.contextId,
             },
           )
         : await this.mutations.createResource(this.context, this.projectId, {
@@ -587,6 +599,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
             type: resourceTypeOfName(path),
             content,
             ...(metadata === undefined ? {} : { metadata }),
+            contextId: this.contextId,
           });
       return ok(
         toDomain({ path: view.path, type: view.type, content }, effectiveMetadata),
@@ -637,6 +650,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
       const existing = await this.resources.findResourceByPath(
         this.projectId,
         candidate,
+        this.contextId,
       );
       if (!existing) return candidate;
     }
@@ -657,6 +671,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
       const record = await this.resources.findResourceByPath(
         this.projectId,
         storagePath,
+        this.contextId,
       );
       if (!record) {
         // Nothing is recorded: the file is either absent (a no-op) or an
@@ -668,6 +683,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
         this.context,
         this.projectId,
         record.id,
+        { contextId: this.contextId },
       );
       return ok(undefined);
     } catch (error) {
@@ -694,6 +710,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
       const record = await this.resources.findResourceByPath(
         this.projectId,
         this.storagePathOf(from),
+        this.contextId,
       );
       if (!record) {
         return missing(`No resource is stored at "${from}".`);
@@ -702,7 +719,7 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
         this.context,
         this.projectId,
         record.id,
-        { path: target, expectedRevision: record.revision },
+        { path: target, expectedRevision: record.revision, contextId: this.contextId },
       );
       const read = await this.storage.read(view.path);
       if (!isOk(read)) return read;

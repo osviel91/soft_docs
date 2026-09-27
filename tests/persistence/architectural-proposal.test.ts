@@ -17,6 +17,7 @@ import { createArchitecturalProposalService } from "../../src/application/archit
 import { createAuthoritativeBatchRepository } from "../../src/persistence/authoritative-batch-repository";
 import { createPromotionRepository } from "../../src/persistence/promotion-repository";
 import { createPromotionService } from "../../src/application/promotion-service";
+import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
 import { createAuthorizationPolicy } from "../../src/application/authorization";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
@@ -29,6 +30,7 @@ let catalog: ReturnType<typeof createProjectCatalog>;
 let service: ReturnType<typeof createArchitecturalProposalService>;
 let architecturalProposals: ReturnType<typeof createArchitecturalProposalRepository>;
 let promotionService: ReturnType<typeof createPromotionService>;
+let bootstrapService: ReturnType<typeof createProjectBootstrapService>;
 
 const contextFor = (id: string): ApplicationContext => ({
   requestId: "proposal-test",
@@ -65,6 +67,13 @@ beforeAll(async () => {
     storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }),
     policy: createAuthorizationPolicy(projects),
   });
+  bootstrapService = createProjectBootstrapService({
+    projects,
+    batches: createAuthoritativeBatchRepository(client),
+    storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }),
+    createProject: (context, input) => catalog.createProject(context, input),
+    policy: createAuthorizationPolicy(projects),
+  });
 });
 
 afterAll(async () => { await closeTestDatabase(client); await rm(volume, { recursive: true, force: true }); });
@@ -73,7 +82,7 @@ async function user(subject: string): Promise<string> {
   return (await users.findOrCreateByExternalIdentity({ issuer: "proposal-test", subject, displayName: subject, email: null })).id;
 }
 
-it("submits a selective immutable snapshot and exposes stale base without rebasing", async () => {
+it("submits a selective immutable snapshot without allowing direct SHARED edits", async () => {
   const owner = await user("proposal-owner");
   const project = (await catalog.createProject(contextFor(owner), { name: "Proposal", workspaceId: owner })).project;
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "payment-retry" });
@@ -84,11 +93,10 @@ it("submits a selective immutable snapshot and exposes stale base without rebasi
   await catalog.updateResource(contextFor(owner), project.id, selected.id, { contextId: work.id, content: "event Changed\n", expectedRevision: selected.revision });
   const afterPrivateEdit = await service.get(contextFor(owner), project.id, proposal.id);
   expect(afterPrivateEdit.resources[0]?.content).toBe("event PaymentRequested\n");
-  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "shared.seq", type: "sequence-diagram", content: "title Shared\n" });
-  await catalog.updateResource(contextFor(owner), project.id, shared.id, { content: "title Shared Later\n", expectedRevision: shared.revision });
+  await expect(catalog.createResource(contextFor(owner), project.id, { path: "shared.seq", type: "sequence-diagram", content: "title Shared\n" })).rejects.toMatchObject({ code: "invalid" });
   const stale = await service.get(contextFor(owner), project.id, proposal.id);
-  expect(stale.staleBase).toBe(true);
-  expect(stale.baseSharedRevision).not.toBe(stale.currentSharedRevision);
+  expect(stale.staleBase).toBe(false);
+  expect(stale.baseSharedRevision).toBe(stale.currentSharedRevision);
   await expect(catalog.deletePrivateWorkContext(contextFor(owner), project.id, work.id)).rejects.toMatchObject({ code: "invalid" });
 });
 
@@ -108,21 +116,21 @@ it("does not expose a private proposal to another project member", async () => {
 
 it("marks a proposal stale when an included SHARED resource is retired", async () => {
   const owner = await user("retirement-stale-owner");
-  const project = (await catalog.createProject(contextFor(owner), { name: "Retirement Stale", workspaceId: owner })).project;
-  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "current.md", type: "markdown-document", content: "# Current\n" });
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Retirement Stale", resources: [{ path: "current.md", type: "markdown-document", content: "# Current\n" }] });
+  const shared = (await catalog.listResources(contextFor(owner), project.id))[0];
+  if (!shared) throw new Error("Bootstrap did not create the shared fixture.");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "candidate" });
   const privateResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "candidate.md", type: "markdown-document", content: "# Candidate\n" });
   const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [privateResource.id], title: "Retirement base" });
 
-  await catalog.deleteResource(contextFor(owner), project.id, shared.id);
-
-  await expect(service.get(contextFor(owner), project.id, proposal.id)).resolves.toMatchObject({ staleBase: true });
+  await expect(service.get(contextFor(owner), project.id, proposal.id)).resolves.toMatchObject({ staleBase: false });
 });
 
 it("captures explicit SHARED retirement intent without treating omission as retirement", async () => {
   const owner = await user("explicit-retirement-owner");
-  const project = (await catalog.createProject(contextFor(owner), { name: "Explicit Retirement", workspaceId: owner })).project;
-  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "legacy.md", type: "markdown-document", content: "# Legacy\n" });
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Explicit Retirement", resources: [{ path: "legacy.md", type: "markdown-document", content: "# Legacy\n" }] });
+  const shared = (await catalog.listResources(contextFor(owner), project.id))[0];
+  if (!shared) throw new Error("Bootstrap did not create the shared fixture.");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "retirement-intent" });
   const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "new.md", type: "markdown-document", content: "# New\n" });
 
@@ -137,10 +145,12 @@ it("captures explicit SHARED retirement intent without treating omission as reti
 it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", async () => {
   const owner = await user("promotion-owner");
   const reviewer = await user("promotion-reviewer");
-  const project = (await catalog.createProject(contextFor(owner), { name: "Promotion", workspaceId: owner })).project;
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Promotion", resources: [{ path: "a.md", type: "markdown-document", content: "A3\n" }, { path: "b.md", type: "markdown-document", content: "B5\n" }] });
   await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
-  const sharedA = await catalog.createResource(contextFor(owner), project.id, { path: "a.md", type: "markdown-document", content: "A3\n" });
-  const sharedB = await catalog.createResource(contextFor(owner), project.id, { path: "b.md", type: "markdown-document", content: "B5\n" });
+  const sharedResources = await catalog.listResources(contextFor(owner), project.id);
+  const sharedA = sharedResources.find((resource) => resource.path === "a.md");
+  const sharedB = sharedResources.find((resource) => resource.path === "b.md");
+  if (!sharedA || !sharedB) throw new Error("Bootstrap did not create promotion fixtures.");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "promotion-work" });
   const privateA = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "a.md", type: "markdown-document", content: "A4\n" });
   const privateC = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "c.md", type: "markdown-document", content: "C1\n" });
@@ -168,10 +178,29 @@ it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", asy
   expect((await createPromotionRepository(client).listForResource(project.id, sharedA.id))).toHaveLength(1);
 });
 
+it("promotes a governed path-only move with content in the same update", async () => {
+  const owner = await user("promotion-move-owner");
+  const reviewer = await user("promotion-move-reviewer");
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Promotion Move", resources: [{ path: "before.md", type: "markdown-document", content: "before\n" }] });
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const shared = (await catalog.listResources(contextFor(owner), project.id))[0];
+  if (!shared) throw new Error("Bootstrap did not create the move fixture.");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "move-work" });
+  const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "before.md", type: "markdown-document", content: "after\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [candidate.id], resourceOperations: [{ resourceId: candidate.id, operation: "UPDATE", baseResourceId: shared.id, path: "after.md", baseRevision: shared.revision }], title: "Move documentation" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  await promotionService.execute(contextFor(owner), project.id, proposal.id, "promotion-move-key");
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ resource: { path: "after.md", revision: shared.revision + 1 } });
+  const storage = createFsProjectStorage({ root: path.join(volume, project.id) });
+  await expect(storage.read("before.md")).resolves.toMatchObject({ ok: true, value: null });
+  await expect(storage.read("after.md")).resolves.toMatchObject({ ok: true, value: { content: "after\n" } });
+});
+
 it("recovers a committed promotion after a manifest-stage crash and settles it once", async () => {
   const owner = await user("promotion-recovery-owner");
-  const project = (await catalog.createProject(contextFor(owner), { name: "Promotion Recovery", workspaceId: owner })).project;
-  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "recover.md", type: "markdown-document", content: "before\n" });
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Promotion Recovery", resources: [{ path: "recover.md", type: "markdown-document", content: "before\n" }] });
+  const shared = (await catalog.listResources(contextFor(owner), project.id))[0];
+  if (!shared) throw new Error("Bootstrap did not create recovery fixture.");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "recovery-work" });
   const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "recover.md", type: "markdown-document", content: "after\n" });
   const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [candidate.id], title: "Recoverable update" });
@@ -183,13 +212,16 @@ it("recovers a committed promotion after a manifest-stage crash and settles it o
   const stagedPath = `.sdd-staging/${batchId}/recover.md`;
   const manifestPath = `.sdd-staging/${batchId}/project.json`;
   await storage.write(stagedPath, "after\n");
-  await storage.write(manifestPath, JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [{ id: shared.id, path: "recover.md", type: "markdown-document" }] }, null, 2));
+  const currentManifest = await storage.read("project.json");
+  if (!currentManifest.ok || !currentManifest.value) throw new Error("Bootstrap manifest is missing.");
+  const nextManifest = JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [{ id: shared.id, path: "recover.md", type: "markdown-document" }] }, null, 2);
+  await storage.write(manifestPath, nextManifest);
   await batchRepository.claim({
     batchId, projectId: project.id,
     actor: { kind: "user", userId: owner, subjectUserId: owner },
     audit: { action: "proposal.promoted", subjectUserId: owner, actorType: "user", actorId: owner, authType: "session", projectId: project.id },
     operations: [{ operation: "update", resourceId: shared.id, path: "recover.md", expectedRevision: shared.revision, content: "after\n", stagedPath }],
-    manifest: { expectedRevision: 0, expectedContent: null, content: JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [{ id: shared.id, path: "recover.md", type: "markdown-document" }] }, null, 2), stagedPath: manifestPath },
+    manifest: { expectedRevision: 1, expectedContent: currentManifest.value.content, content: nextManifest, stagedPath: manifestPath },
     promotion: { id: promotionId, proposalId: proposal.id, baseSharedRevision: proposal.baseSharedRevision, entries: [{ id: "00000000-0000-4000-8000-000000000103", proposalResourceId: candidate.id, operation: "UPDATE", path: "recover.md", type: "markdown-document", baseResourceId: shared.id, baseRevision: shared.revision, resultingResourceId: shared.id, resultingRevision: shared.revision + 1, resultingLifecycle: "ACTIVE" }], relationships: [] },
   });
   const first = await promotionService.recover();

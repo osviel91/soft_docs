@@ -34,6 +34,8 @@ import type { AuthState } from "./use-auth";
 export interface ActiveServerWorkspace {
   project: ServerProject;
   repository: ServerWorkspaceRepository;
+  /** The explicit private context being edited, or null for SHARED. */
+  contextId: string | null;
   /** Whether this account may change the project's resources. */
   writable: boolean;
 }
@@ -51,6 +53,7 @@ export interface ServerWorkspacesHook {
   openError: string | null;
   refresh(): Promise<void>;
   openProject(project: ServerProject): Promise<void>;
+  openPrivateWork(contextId: string): Promise<void>;
   createProject(name: string): Promise<void>;
   close(): void;
   privateWorkContexts: ServerPrivateWorkContext[];
@@ -58,8 +61,6 @@ export interface ServerWorkspacesHook {
 }
 
 /** The permission a writable repository requires. */
-const WRITE_PERMISSION = "resource:update";
-
 /**
  * Track the caller's server projects.
  *
@@ -136,14 +137,17 @@ export function useServerWorkspaces(
       setOpening(true);
       setOpenError(null);
       try {
-        const access = await client.access(project.id);
+         await client.access(project.id);
         if (openTicket.current !== ticket) return;
         // One decision, used twice: the UI's read-only affordances and the
         // repository's own refusal must never disagree.
-        const writable = access.permissions.includes(WRITE_PERMISSION);
+         // SHARED is authoritative and is read-only in the ordinary workspace.
+         // Editing requires an explicit MY WORK context.
+         const writable = false;
         setActive({
           project,
           writable,
+          contextId: null,
           repository: createServerWorkspaceRepository({
             client,
             projectId: project.id,
@@ -172,6 +176,29 @@ export function useServerWorkspaces(
       }
     },
     [client],
+  );
+
+  const openPrivateWork = useCallback(
+    async (contextId: string): Promise<void> => {
+      if (!active || active.project.id === "") return;
+      const contexts = privateWorkContexts.length > 0
+        ? privateWorkContexts
+        : await client.listPrivateWorkContexts(active.project.id);
+      if (!contexts.some((context) => context.id === contextId)) return;
+      const access = await client.access(active.project.id);
+      setActive({
+        ...active,
+        contextId,
+        repository: createServerWorkspaceRepository({
+          client,
+          projectId: active.project.id,
+          projectName: active.project.name,
+         writable: access.permissions.includes("resource:update"),
+          contextId,
+        }),
+      });
+    },
+    [active, client, privateWorkContexts],
   );
 
   const createProject = useCallback(
@@ -210,6 +237,7 @@ export function useServerWorkspaces(
     openError,
     refresh,
     openProject,
+    openPrivateWork,
     createProject,
     close,
     privateWorkContexts,

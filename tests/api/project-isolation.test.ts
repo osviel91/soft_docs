@@ -70,6 +70,7 @@ let router: ReturnType<typeof createRouter>;
  * transport between the principal and the answer.
  */
 let policy: AuthorizationPolicy;
+const privateContextByProject = new Map<string, string>();
 
 beforeAll(async () => {
   volume = await mkdtemp(path.join(tmpdir(), "sd-project-isolation-"));
@@ -183,7 +184,15 @@ async function call(
   url: string,
   options: { cookie?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: any }> {
-  const response = await router.handle(request(method, url, options));
+  const projectId = /\/api\/projects\/([^/]+)/.exec(url)?.[1];
+  const contextId = projectId === undefined ? undefined : privateContextByProject.get(projectId);
+  const body = contextId !== undefined && options.body && typeof options.body === "object" && !Array.isArray(options.body)
+    ? { ...(options.body as Record<string, unknown>), contextId }
+    : options.body;
+  const requestUrl = contextId !== undefined && method === "GET" && !url.includes("contextId=")
+    ? `${url}${url.includes("?") ? "&" : "?"}contextId=${contextId}`
+    : url;
+  const response = await router.handle(request(method, requestUrl, { ...options, body }));
   return {
     status: response.status,
     body: response.body === "" ? null : JSON.parse(response.body),
@@ -237,6 +246,11 @@ async function createOwnedProject(
     throw new Error(`Could not create "${name}": ${created.status}`);
   }
   const projectId = created.body.project.id as string;
+  const work = await call("POST", `/api/projects/${projectId}/private-work`, {
+    cookie: owner.cookie,
+    body: { name: "isolation-test-work" },
+  });
+  privateContextByProject.set(projectId, work.body.context.id as string);
   const resource = await call("POST", `/api/projects/${projectId}/resources`, {
     cookie: owner.cookie,
     body: {
@@ -873,19 +887,18 @@ describe("no membership and the wrong role are refused differently", () => {
     ).toBe("VIEWER");
   });
 
-  it("lets a viewer read but refuses every mutation with 403/forbidden", async () => {
+  it("keeps a viewer out of another user's private work", async () => {
     const read = await call(
       "GET",
       `/api/projects/${projectId}/resources/${resourceId}`,
       { cookie: viewer.cookie },
     );
-    expect(read.status).toBe(200);
-    expect(read.body.content).toContain("shared");
+    expect(read.status).toBe(404);
 
     const listed = await call("GET", `/api/projects/${projectId}/resources`, {
       cookie: viewer.cookie,
     });
-    expect(listed.status).toBe(200);
+    expect(listed.status).toBe(404);
 
     const mutations: Array<[string, string, unknown]> = [
       [
@@ -964,7 +977,7 @@ describe("no membership and the wrong role are refused differently", () => {
     expect(after.body.resource.revision).toBe(1);
   });
 
-  it("distinguishes a stranger's 404 from a viewer's 403 on the very same write", async () => {
+  it("keeps both strangers and viewers out of private work", async () => {
     const asStranger = await call(
       "PUT",
       `/api/projects/${projectId}/resources/${resourceId}`,

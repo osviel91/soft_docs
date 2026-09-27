@@ -52,7 +52,6 @@ import type { ResourceRelationship } from "../domain/workspace/resource-relation
 import {
   createEmptyMetadata,
   parseProjectMetadata,
-  serializeProjectMetadata,
   type ProjectMetadata,
   type SemanticMessageIdentity,
 } from "../domain/workspace/metadata";
@@ -257,6 +256,7 @@ export interface ProjectCatalog {
     messages: SemanticMessageIdentity[],
     expectedManifestRevision: number,
   ): Promise<{ messages: SemanticMessageIdentity[]; manifestRevision: number }>;
+  updatePrivateSemanticMessages(context: ApplicationContext, projectId: string, contextId: string, messages: SemanticMessageIdentity[]): Promise<SemanticMessageIdentity[]>;
 
   /** One resource's record. */
   getResource(
@@ -719,14 +719,13 @@ export function createProjectCatalog(
 
     async createResourceRelationship(context, projectId, relationship, contextId = null) {
       await requirePermission(context, projectId, "resource:update");
-      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
-      const resources = contextId === null
-        ? await projects.listResources(projectId, null)
-        : [...await projects.listResources(projectId, null), ...await projects.listResources(projectId, contextId)];
+      if (contextId === null) throw invalid("Authoritative relationships can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, contextId);
+      const resources = [...await projects.listResources(projectId, null), ...await projects.listResources(projectId, contextId)];
       try {
         return await projects.createResourceRelationship(
           projectId,
-          validateResourceRelationship({ ...relationship, ...(contextId === null ? {} : { contextId }) }, resources),
+          validateResourceRelationship({ ...relationship, contextId }, resources),
         );
       } catch (error) {
         if (error instanceof Error && error.message === "Both relationship resources must exist.") {
@@ -748,56 +747,25 @@ export function createProjectCatalog(
 
     async createSemanticMessage(context, projectId, input, contextId = null) {
       await requirePermission(context, projectId, "project:update");
-      if (contextId !== null) {
-        await requirePrivateContext(context, projectId, contextId);
-        let id = defaultIdFactory();
-        const existing = await knowledgeContexts!.listPrivateMessages(projectId, contextId);
-        while (existing.some((message) => message.id === id)) id = defaultIdFactory();
-        const message = await knowledgeContexts!.createPrivateMessage({ projectId, contextId, id, ...input });
-        return { message, manifestRevision: 0 };
-      }
-      const current = await readManifest(projectId);
-      const revision = current.manifestRevision ?? 0;
-      const existing = current.semanticMessages ?? [];
+      if (contextId === null) throw invalid("Authoritative semantic identities can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, contextId);
       let id = defaultIdFactory();
+      const existing = await knowledgeContexts!.listPrivateMessages(projectId, contextId);
       while (existing.some((message) => message.id === id)) id = defaultIdFactory();
-      const message: SemanticMessageIdentity = { id, name: input.name, kind: input.kind };
-      const { raw, ...metadata } = current;
-      const next: ProjectMetadata = {
-        ...metadata,
-        semanticMessages: [...existing, message],
-        manifestRevision: revision + 1,
-      };
-      const store = storage(projectId);
-      if (!store.writeIfUnchanged) throw new ApplicationError("internal", "This deployment cannot safely mutate the project manifest.");
-      const written = await store.writeIfUnchanged("project.json", raw, serializeProjectMetadata(next));
-      if (!isOk(written)) throw new ApplicationError("conflict", written.error.message);
-      await writeAudit(context, { action: "project.updated", projectId, detail: { kind: "semantic-message-created", messageId: id, manifestRevision: revision + 1 } });
-      return { message, manifestRevision: revision + 1 };
+      const message = await knowledgeContexts!.createPrivateMessage({ projectId, contextId, id, ...input });
+      return { message, manifestRevision: 0 };
     },
 
-    async updateSemanticMessages(context, projectId, messages, expectedManifestRevision) {
+    async updateSemanticMessages(context, projectId, _messages, _expectedManifestRevision) {
+      void _messages;
+      void _expectedManifestRevision;
       await requirePermission(context, projectId, "project:update");
-      const current = await readManifest(projectId);
-      const revision = current.manifestRevision ?? 0;
-      if (revision !== expectedManifestRevision) {
-        throw new ApplicationError("conflict", `The project manifest changed; expected revision ${expectedManifestRevision}, current revision ${revision}.`);
-      }
-      const { raw, ...metadata } = current;
-      const next: ProjectMetadata = {
-        ...metadata,
-        semanticMessages: messages,
-        manifestRevision: revision + 1,
-      };
-      const nextRevision = revision + 1;
-      const store = storage(projectId);
-      if (!store.writeIfUnchanged) {
-        throw new ApplicationError("internal", "This deployment cannot safely mutate the project manifest.");
-      }
-      const written = await store.writeIfUnchanged("project.json", raw, serializeProjectMetadata(next));
-      if (!isOk(written)) throw new ApplicationError("conflict", written.error.message);
-      await writeAudit(context, { action: "project.updated", projectId, detail: { kind: "semantic-message-registry", manifestRevision: nextRevision } });
-      return { messages, manifestRevision: nextRevision };
+      throw invalid("The authoritative semantic manifest can only be changed through proposal promotion.", { reason: "authoritative_context" });
+    },
+
+    async updatePrivateSemanticMessages(context, projectId, contextId, messages) {
+      await requirePrivateContext(context, projectId, contextId);
+      return knowledgeContexts!.updatePrivateMessages(projectId, contextId, messages);
     },
 
     async getResource(context, projectId, resourceId, contextId = null) {
@@ -835,15 +803,17 @@ export function createProjectCatalog(
      * the remote MCP tools and the shared documentation service all get the same
      * sequence rather than three near-copies of it.
      */
-    createResource(context, projectId, input) {
-      if (input.contextId !== undefined && input.contextId !== null) {
-        return requirePrivateContext(context, projectId, input.contextId).then(() => requireMutations().createResource(context, projectId, input));
-      }
+    async createResource(context, projectId, input) {
+      await requirePermission(context, projectId, "resource:create");
+      if (input.contextId === undefined || input.contextId === null) throw invalid("Authoritative resources can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().createResource(context, projectId, input);
     },
 
     async updateResource(context, projectId, resourceId, input) {
-      if (input.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
+      await requirePermission(context, projectId, "resource:update");
+      if (input.contextId === undefined || input.contextId === null) throw invalid("Authoritative resources can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().updateResource(
         context,
         projectId,
@@ -853,7 +823,9 @@ export function createProjectCatalog(
     },
 
     async moveResource(context, projectId, resourceId, input) {
-      if (input.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
+      await requirePermission(context, projectId, "resource:update");
+      if (input.contextId === undefined || input.contextId === null) throw invalid("Authoritative resources can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().moveResource(
         context,
         projectId,
@@ -863,7 +835,9 @@ export function createProjectCatalog(
     },
 
     async deleteResource(context, projectId, resourceId, input) {
-      if (input?.contextId !== undefined && input.contextId !== null) await requirePrivateContext(context, projectId, input.contextId);
+      await requirePermission(context, projectId, "resource:delete");
+      if (input?.contextId === undefined || input.contextId === null) throw invalid("Authoritative resources can only be changed through proposal promotion.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, input.contextId);
       return requireMutations().deleteResource(
         context,
         projectId,

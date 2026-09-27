@@ -873,6 +873,40 @@ export default function App() {
     [workspaceMode, server.createProject, createProject],
   );
 
+  /** Create non-authoritative server knowledge through a private context. */
+  const createServerKnowledge = useCallback(
+    async (asProposal: boolean): Promise<void> => {
+      if (workspaceMode !== "server" || !server.active) return;
+      const projectId = server.active.project.id;
+      const suffix = Date.now().toString(36);
+      try {
+        const context = await apiClient.createPrivateWorkContext(projectId, {
+          name: asProposal ? `proposal-${suffix}` : `work-${suffix}`,
+        });
+        const resource = await apiClient.createResource(projectId, {
+          contextId: context.id,
+          path: `untitled-${suffix}.seq`,
+          type: "sequence-diagram",
+          content: "title Untitled\n",
+        });
+        if (asProposal) {
+          await apiClient.submitArchitecturalProposal(projectId, {
+            sourcePrivateContextId: context.id,
+            resourceIds: [resource.id],
+            title: `Proposal ${suffix}`,
+          });
+        }
+        if (asProposal) await server.openProject(server.active.project);
+        else await server.openPrivateWork(context.id);
+      } catch (error) {
+        setTransferError(
+          error instanceof Error ? error.message : "Could not create server knowledge.",
+        );
+      }
+    },
+    [apiClient, server, workspaceMode],
+  );
+
   // The project index: every symbol, reference and problem in the selected
   // project, derived from the files and rebuilt incrementally. Everything below
   // reads it rather than recomputing project facts, and it is built here — before
@@ -1582,10 +1616,12 @@ export default function App() {
 
   const createAndBindSemanticMessage = useCallback(
     async (name: string, kind: "event" | "command", step?: number): Promise<void> => {
-      if (!selectedProjectId) return;
-      try {
-        const created = workspaceMode === "server"
-          ? await apiClient.createSemanticMessage(selectedProjectId, { name, kind })
+       if (!selectedProjectId) return;
+       try {
+         const created = workspaceMode === "server"
+           ? server.active?.contextId
+             ? await apiClient.createSemanticMessage(selectedProjectId, { name, kind, contextId: server.active.contextId })
+             : (() => { throw new Error("Select MY WORK before creating a semantic identity."); })()
           : await (async () => {
               const current = await activeRepo.readProjectMetadata(selectedProjectId);
               if (!isOk(current)) throw current.error;
@@ -1604,7 +1640,7 @@ export default function App() {
         console.error(error);
       }
     },
-    [activeRepo, apiClient, refreshWorkspace, selectedProjectId, updateSemanticOccurrence, workspaceMode],
+    [activeRepo, apiClient, refreshWorkspace, selectedProjectId, server.active?.contextId, updateSemanticOccurrence, workspaceMode],
   );
 
   useEffect(() => {
@@ -2717,8 +2753,11 @@ export default function App() {
                   architecturalProposals={server.architecturalProposals}
                    onOpenArchitecturalProposal={setArchitecturalProposalId}
                    onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
+                   onCreateMyWork={() => { void createServerKnowledge(false); }}
+                   onCreateProposal={() => { void createServerKnowledge(true); }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
+                   activeContextId={server.active?.contextId ?? null}
                   allDiagrams={allDiagrams}
                   allNotes={allNotes}
                   selectedProjectId={selectedProjectId}
@@ -2845,6 +2884,7 @@ export default function App() {
                      setReviewReadOnly(false);
                    }}
                    canMerge={metadataWritable}
+                   privateContextId={server.active?.contextId}
                    readOnly={reviewReadOnly}
                    onMerged={() => {
                      setProposalRefreshKey((key) => key + 1);

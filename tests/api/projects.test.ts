@@ -134,7 +134,12 @@ async function aProject(name = "Payments") {
     cookie: user.cookie,
     body: { name, workspaceId: user.userId },
   });
-  return { ...user, projectId: created.body.project.id as string, created };
+  const projectId = created.body.project.id as string;
+  const work = await call("POST", `/api/projects/${projectId}/private-work`, {
+    cookie: user.cookie,
+    body: { name: "api-test-work" },
+  });
+  return { ...user, projectId, contextId: work.body.context.id as string, created };
 }
 
 async function addWorkspaceMember(
@@ -301,13 +306,14 @@ describe("project routes", () => {
 
 describe("resource routes", () => {
   it("creates, reads, updates, moves and deletes a resource", async () => {
-    const { cookie, projectId } = await aProject("Resources");
+    const { cookie, projectId, contextId } = await aProject("Resources");
     const created = await call("POST", `/api/projects/${projectId}/resources`, {
       cookie,
       body: {
         path: "diagrams/checkout.seq",
         type: "sequence-diagram",
         content: "participant A\nA -> B: hi\n",
+        contextId,
       },
     });
     expect(created.status).toBe(201);
@@ -320,7 +326,7 @@ describe("resource routes", () => {
 
     const read = await call(
       "GET",
-      `/api/projects/${projectId}/resources/${resourceId}`,
+      `/api/projects/${projectId}/resources/${resourceId}?contextId=${contextId}`,
       { cookie },
     );
     expect(read.body.content).toContain("A -> B: hi");
@@ -329,7 +335,7 @@ describe("resource routes", () => {
     const updated = await call(
       "PUT",
       `/api/projects/${projectId}/resources/${resourceId}`,
-      { cookie, body: { content: "participant A\n", expectedRevision: 1 } },
+      { cookie, body: { content: "participant A\n", expectedRevision: 1, contextId } },
     );
     expect(updated.status).toBe(200);
     expect(updated.body.resource.revision).toBe(2);
@@ -337,35 +343,35 @@ describe("resource routes", () => {
     const moved = await call(
       "POST",
       `/api/projects/${projectId}/resources/${resourceId}/move`,
-      { cookie, body: { path: "docs/checkout.seq", expectedRevision: 2 } },
+      { cookie, body: { path: "docs/checkout.seq", expectedRevision: 2, contextId } },
     );
     expect(moved.status).toBe(200);
     expect(moved.body.resource.path).toBe("docs/checkout.seq");
 
     const removed = await call(
       "DELETE",
-      `/api/projects/${projectId}/resources/${resourceId}`,
+      `/api/projects/${projectId}/resources/${resourceId}?contextId=${contextId}`,
       { cookie },
     );
     expect(removed.status).toBe(204);
   });
 
   it("answers 409 for a stale revision and leaves the content alone", async () => {
-    const { cookie, projectId } = await aProject("Conflicts");
+    const { cookie, projectId, contextId } = await aProject("Conflicts");
     const created = await call("POST", `/api/projects/${projectId}/resources`, {
       cookie,
-      body: { path: "a.seq", type: "sequence-diagram", content: "first" },
+      body: { path: "a.seq", type: "sequence-diagram", content: "first", contextId },
     });
     const resourceId = created.body.resource.id;
     await call("PUT", `/api/projects/${projectId}/resources/${resourceId}`, {
       cookie,
-      body: { content: "second", expectedRevision: 1 },
+      body: { content: "second", expectedRevision: 1, contextId },
     });
 
     const stale = await call(
       "PUT",
       `/api/projects/${projectId}/resources/${resourceId}`,
-      { cookie, body: { content: "third", expectedRevision: 1 } },
+      { cookie, body: { content: "third", expectedRevision: 1, contextId } },
     );
     expect(stale.status).toBe(409);
     expect(stale.body.error.code).toBe("conflict");
@@ -376,17 +382,17 @@ describe("resource routes", () => {
 
     const read = await call(
       "GET",
-      `/api/projects/${projectId}/resources/${resourceId}`,
+      `/api/projects/${projectId}/resources/${resourceId}?contextId=${contextId}`,
       { cookie },
     );
     expect(read.body.content).toBe("second");
   });
 
   it("requires expectedRevision on an update and a move", async () => {
-    const { cookie, projectId } = await aProject("Required revision");
+    const { cookie, projectId, contextId } = await aProject("Required revision");
     const created = await call("POST", `/api/projects/${projectId}/resources`, {
       cookie,
-      body: { path: "a.seq", type: "sequence-diagram", content: "x" },
+      body: { path: "a.seq", type: "sequence-diagram", content: "x", contextId },
     });
     const resourceId = created.body.resource.id;
     for (const [method, url] of [
@@ -395,26 +401,26 @@ describe("resource routes", () => {
     ] as const) {
       const response = await call(method, url, {
         cookie,
-        body: { content: "y", path: "b.seq" },
+        body: { content: "y", path: "b.seq", contextId },
       });
       expect(response.status).toBe(422);
     }
   });
 
   it("rejects a traversal path as a request error", async () => {
-    const { cookie, projectId } = await aProject("Traversal API");
+    const { cookie, projectId, contextId } = await aProject("Traversal API");
     const response = await call(
       "POST",
       `/api/projects/${projectId}/resources`,
       {
         cookie,
-        body: { path: "../../etc/passwd", type: "sequence-diagram" },
+        body: { path: "../../etc/passwd", type: "sequence-diagram", contextId },
       },
     );
     expect(response.status).toBe(422);
   });
 
-  it("refuses a viewer's write with 403 and allows a read", async () => {
+  it("keeps a viewer out of another user's private work", async () => {
     const owner = await aProject("Viewer API");
     const viewer = await signIn();
     await addWorkspaceMember(owner, viewer.userId);
@@ -431,34 +437,32 @@ describe("resource routes", () => {
       `/api/projects/${owner.projectId}/resources`,
       {
         cookie: owner.cookie,
-        body: { path: "a.seq", type: "sequence-diagram", content: "x" },
+        body: { path: "a.seq", type: "sequence-diagram", content: "x", contextId: owner.contextId },
       },
     );
 
     const read = await call(
       "GET",
-      `/api/projects/${owner.projectId}/resources`,
+      `/api/projects/${owner.projectId}/resources?contextId=${owner.contextId}`,
       { cookie: viewer.cookie },
     );
-    expect(read.status).toBe(200);
+    expect(read.status).toBe(404);
 
     const write = await call(
       "PUT",
       `/api/projects/${owner.projectId}/resources/${created.body.resource.id}`,
-      { cookie: viewer.cookie, body: { content: "y", expectedRevision: 1 } },
+      { cookie: viewer.cookie, body: { content: "y", expectedRevision: 1, contextId: owner.contextId } },
     );
     expect(write.status).toBe(403);
   });
 
   it("lists a resource's revision so a client can thread it", async () => {
-    const { cookie, projectId } = await aProject("Listing");
+    const { cookie, projectId, contextId } = await aProject("Listing");
     await call("POST", `/api/projects/${projectId}/resources`, {
       cookie,
-      body: { path: "a.seq", type: "sequence-diagram", content: "x" },
+      body: { path: "a.seq", type: "sequence-diagram", content: "x", contextId },
     });
-    const listed = await call("GET", `/api/projects/${projectId}/resources`, {
-      cookie,
-    });
+    const listed = await call("GET", `/api/projects/${projectId}/resources?contextId=${contextId}`, { cookie });
     expect(listed.body.resources[0]).toMatchObject({
       path: "a.seq",
       revision: 1,
@@ -466,7 +470,7 @@ describe("resource routes", () => {
   });
 
   it("exposes normalized metadata and preserves it when omitted", async () => {
-    const { cookie, projectId } = await aProject("Metadata API");
+    const { cookie, projectId, contextId } = await aProject("Metadata API");
     const created = await call("POST", `/api/projects/${projectId}/resources`, {
       cookie,
       body: {
@@ -474,6 +478,7 @@ describe("resource routes", () => {
         type: "sequence-diagram",
         content: "title A\n",
         metadata: { description: "  Checkout flow ", tags: ["Core", " core "] },
+        contextId,
       },
     });
     expect(created.body.resource.metadata).toEqual({
@@ -484,7 +489,7 @@ describe("resource routes", () => {
     const contentOnly = await call(
       "PUT",
       `/api/projects/${projectId}/resources/${created.body.resource.id}`,
-      { cookie, body: { content: "title B\n", expectedRevision: 1 } },
+      { cookie, body: { content: "title B\n", expectedRevision: 1, contextId } },
     );
     expect(contentOnly.body.resource.metadata).toEqual({
       description: "Checkout flow",
@@ -496,7 +501,7 @@ describe("resource routes", () => {
       `/api/projects/${projectId}/resources/${created.body.resource.id}`,
       {
         cookie,
-        body: { content: "title B\n", expectedRevision: 2, metadata: {} },
+        body: { content: "title B\n", expectedRevision: 2, metadata: {}, contextId },
       },
     );
     expect(cleared.body.resource).not.toHaveProperty("metadata");
@@ -565,18 +570,23 @@ describe("the audit trail over HTTP", () => {
       body: { name: "Audited API", workspaceId: user.userId },
     });
     const projectId = created.body.project.id;
+    const work = await call("POST", `/api/projects/${projectId}/private-work`, {
+      cookie: user.cookie,
+      body: { name: "audit-work" },
+    });
+    const contextId = work.body.context.id;
     const resource = await call(
       "POST",
       `/api/projects/${projectId}/resources`,
       {
         cookie: user.cookie,
-        body: { path: "a.seq", type: "sequence-diagram", content: "x" },
+        body: { path: "a.seq", type: "sequence-diagram", content: "x", contextId },
       },
     );
     await call(
       "PUT",
       `/api/projects/${projectId}/resources/${resource.body.resource.id}`,
-      { cookie: user.cookie, body: { content: "y", expectedRevision: 1 } },
+      { cookie: user.cookie, body: { content: "y", expectedRevision: 1, contextId } },
     );
 
     const entries = await dependencies.audit.listForProject(projectId, 50);

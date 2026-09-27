@@ -28,6 +28,7 @@ import { createProjectRepository } from "../../src/persistence/project-repositor
 import { createWorkspaceRepository } from "../../src/persistence/workspace-repository";
 import { createUserRepository } from "../../src/persistence/user-repository";
 import { createAuditRepository } from "../../src/persistence/audit-repository";
+import { createKnowledgeContextRepository } from "../../src/persistence/knowledge-context-repository";
 import { createIdGenerator } from "../../src/shared/ids/uuid";
 import type { AuditRepository } from "../../src/application/ports/audit-repository";
 import type { ApplicationContext } from "../../src/application/context";
@@ -61,8 +62,9 @@ async function owner(audit?: AuditRepository, onAuditFailure?: () => void) {
     workspaces: createWorkspaceRepository(client),
     audit,
     operations: createWorkspaceOperationRepository(client),
-    storage: (projectId) =>
-      createFsProjectStorage({ root: path.join(volume, projectId) }),
+    storage: (projectId, contextId) =>
+      createFsProjectStorage({ root: path.join(volume, projectId, ...(contextId ? [".private", contextId] : [])) }),
+    knowledgeContexts: createKnowledgeContextRepository(client),
     ...(onAuditFailure === undefined ? {} : { onAuditFailure }),
   });
   const user = await users.findOrCreateByExternalIdentity({
@@ -84,7 +86,8 @@ async function owner(audit?: AuditRepository, onAuditFailure?: () => void) {
     name: "Audited",
     workspaceId: user.id,
   });
-  return { catalog, context, projectId: listing.project.id };
+  const work = await catalog.createPrivateWorkContext(context, listing.project.id, { name: "audit work" });
+  return { catalog, context, projectId: listing.project.id, contextId: work.id };
 }
 
 describe("the audit trail's order", () => {
@@ -141,7 +144,7 @@ describe("an audit write that fails", () => {
       listForProject: () => Promise.resolve([]),
       listForUser: () => Promise.resolve([]),
     };
-    const { catalog, context, projectId } = await owner(broken, observer);
+    const { catalog, context, projectId, contextId } = await owner(broken, observer);
 
     // The project creation itself already went through the broken audit store;
     // the resource write is the mutation under test.
@@ -149,11 +152,12 @@ describe("an audit write that fails", () => {
       path: "checkout.seq",
       type: "sequence-diagram",
       content: "title Checkout",
+      contextId,
     });
 
     expect(created.path).toBe("checkout.seq");
     // The mutation is readable afterwards: it really committed.
-    const read = await catalog.readResource(context, projectId, created.id);
+    const read = await catalog.readResource(context, projectId, created.id, contextId);
     expect(read.content).toBe("title Checkout");
     // And the audit failure was reported rather than swallowed.
     expect(observer).toHaveBeenCalled();
@@ -164,26 +168,28 @@ describe("an audit write that fails", () => {
 describe("the audit trail's contents", () => {
   it("records what changed without recording the document or a credential", async () => {
     const audit = createAuditRepository(client);
-    const { catalog, context, projectId } = await owner(audit);
+    const { catalog, context, projectId, contextId } = await owner(audit);
     const secret = "SEKRIT-DOCUMENT-CONTENT";
 
     const created = await catalog.createResource(context, projectId, {
       path: "checkout.seq",
       type: "sequence-diagram",
       content: secret,
+      contextId,
     });
     await catalog.updateResource(context, projectId, created.id, {
       content: `${secret} v2`,
       expectedRevision: created.revision,
+      contextId,
     });
-    await catalog.deleteResource(context, projectId, created.id);
+    await catalog.deleteResource(context, projectId, created.id, { contextId });
 
     const rows = await audit.listForProject(projectId, 50);
     const actions = rows.map((row) => row.action);
     expect(actions).toContain("project.created");
     expect(actions).toContain("resource.created");
     expect(actions).toContain("resource.updated");
-    expect(actions).toContain("resource.retired");
+    expect(actions).toContain("resource.deleted");
 
     // Nothing in the trail may carry the document's bytes, the session token, or
     // the cookie: an audit row outlives the request and is read by operators.

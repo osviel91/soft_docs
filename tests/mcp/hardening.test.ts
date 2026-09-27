@@ -248,10 +248,12 @@ describe("authorization", () => {
       ["project:read", "resource:read", "resource:write"],
       [projectA],
     );
+    const viewerContextId = await harness.aPrivateWork(projectA, viewerId);
     const response = await post(
       harness.origin,
       call("create_resource", {
         projectId: projectA,
+        contextId: viewerContextId,
         path: "viewer.seq",
         type: "sequence-diagram",
         content: "",
@@ -269,6 +271,7 @@ describe("protocol hardening", () => {
   let ownerId: string;
   let projectId: string;
   let token: string;
+  let contextId: string;
 
   beforeAll(async () => {
     harness = await startHarness({
@@ -280,6 +283,7 @@ describe("protocol hardening", () => {
     });
     ownerId = await harness.aUser();
     projectId = await harness.aProject(ownerId);
+    contextId = await harness.aPrivateWork(projectId, ownerId);
     token = (await harness.aToken(ownerId)).token;
   });
 
@@ -325,6 +329,7 @@ describe("protocol hardening", () => {
           name: "create_resource",
           arguments: {
             projectId,
+            contextId,
             path: "big.seq",
             type: "sequence-diagram",
             content: "x".repeat(2000),
@@ -341,6 +346,7 @@ describe("protocol hardening", () => {
       harness.origin,
       call("upsert_documentation", {
         projectId,
+        contextId,
         path: "huge.md",
         content: "y".repeat(5 * 1024 * 1024),
       }),
@@ -423,6 +429,7 @@ describe("statelessness across instances", () => {
   it("serves a workflow that alternates between two instances", async () => {
     const ownerId = await harness.aUser();
     const projectId = await harness.aProject(ownerId);
+    const contextId = await harness.aPrivateWork(projectId, ownerId);
     const { token } = await harness.aToken(ownerId);
     const second = await harness.addInstance();
 
@@ -439,6 +446,7 @@ describe("statelessness across instances", () => {
       body: JSON.stringify(
         call("create_resource", {
           projectId,
+          contextId,
           path: "alternating.seq",
           type: "sequence-diagram",
           content: "title Alternating\n",
@@ -459,7 +467,7 @@ describe("statelessness across instances", () => {
         method: "tools/call",
         params: {
           name: "read_resource",
-          arguments: { projectId, resource: resourceId },
+            arguments: { projectId, contextId, resource: resourceId },
         },
       }),
     });
@@ -476,6 +484,7 @@ describe("statelessness across instances", () => {
       body: JSON.stringify(
         call("update_resource", {
           projectId,
+          contextId,
           resource: resourceId,
           content: "title Alternating v2\n",
           expectedRevision: 1,
@@ -504,11 +513,13 @@ describe("statelessness across instances", () => {
   it("reads and updates resource metadata without replacing content", async () => {
     const ownerId = await harness.aUser();
     const projectId = await harness.aProject(ownerId);
+    const contextId = await harness.aPrivateWork(projectId, ownerId);
     const { token } = await harness.aToken(ownerId);
     const created = await post(
       harness.origin,
       call("create_resource", {
         projectId,
+        contextId,
         path: "metadata.seq",
         type: "sequence-diagram",
         content: "title Metadata\n",
@@ -521,6 +532,7 @@ describe("statelessness across instances", () => {
       harness.origin,
       call("update_resource_metadata", {
         projectId,
+        contextId,
         resource: resourceId,
         metadata: { description: "  A flow ", tags: ["Core", " core "] },
         expectedRevision: 1,
@@ -536,7 +548,7 @@ describe("statelessness across instances", () => {
 
     const read = await post(
       harness.origin,
-      call("read_resource", { projectId, resource: resourceId }),
+      call("read_resource", { projectId, contextId, resource: resourceId }),
       { token },
     );
     expect((await read.json()).result.structuredContent.content).toBe(
@@ -559,12 +571,14 @@ describe("concurrency and retries over the wire", () => {
   it("lets one of two racing writers win and refuses the other", async () => {
     const ownerId = await harness.aUser();
     const projectId = await harness.aProject(ownerId);
+    const contextId = await harness.aPrivateWork(projectId, ownerId);
     const { token } = await harness.aToken(ownerId);
 
     const created = await post(
       harness.origin,
       call("create_resource", {
         projectId,
+        contextId,
         path: "race.seq",
         type: "sequence-diagram",
         content: "title Race\n",
@@ -579,6 +593,7 @@ describe("concurrency and retries over the wire", () => {
         harness.origin,
         call("update_resource", {
           projectId,
+          contextId,
           resource: resourceId,
           content: "title A\n",
           expectedRevision: 1,
@@ -589,6 +604,7 @@ describe("concurrency and retries over the wire", () => {
         harness.origin,
         call("update_resource", {
           projectId,
+          contextId,
           resource: resourceId,
           content: "title B\n",
           expectedRevision: 1,
@@ -610,10 +626,12 @@ describe("concurrency and retries over the wire", () => {
   it("performs a retried mutation once when the idempotency key repeats", async () => {
     const ownerId = await harness.aUser();
     const projectId = await harness.aProject(ownerId);
+    const contextId = await harness.aPrivateWork(projectId, ownerId);
     const { token } = await harness.aToken(ownerId);
 
     const body = call("create_resource", {
       projectId,
+      contextId,
       path: "idempotent.seq",
       type: "sequence-diagram",
       content: "title Once\n",
@@ -626,7 +644,7 @@ describe("concurrency and retries over the wire", () => {
 
     const listed = await post(
       harness.origin,
-      call("list_resources", { projectId }),
+      call("list_resources", { projectId, contextId }),
       { token },
     );
     const resources = ((await listed.json()) as any).result.structuredContent

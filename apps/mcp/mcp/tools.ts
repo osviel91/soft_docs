@@ -439,10 +439,11 @@ async function legacySemanticCandidates(
   toolContext: ToolContext,
   projectIdValue: string,
   resources: Awaited<ReturnType<ProjectCatalog["listResources"]>>,
+  contextId: string | null = null,
 ): Promise<Array<{ resourceId: string; path: string; label: string; evidence: string[] }>> {
   const result: Array<{ resourceId: string; path: string; label: string; evidence: string[] }> = [];
   for (const resource of resources.filter((entry) => entry.type === "sequence-diagram").slice(0, MAX_INDEXED_DOCUMENTS)) {
-    const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id);
+    const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id, contextId);
     const ast = analyze(content).ast;
     for (const statement of ast ? walkStatements(ast.statements) : []) {
       if (statement.type !== "message" || statement.semantics || statement.label.trim() === "") continue;
@@ -580,7 +581,7 @@ export function createMcpTools(): McpTool[] {
       title: "Get a project",
       description:
         "Read one project's identity and what this token may do in it (`role` and the granted `permissions`). Use it to check whether a write is possible before attempting one.",
-      inputSchema: { projectId: projectId() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
       annotations: { ...READ_ONLY, title: "Get a project" },
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
@@ -703,7 +704,7 @@ export function createMcpTools(): McpTool[] {
         "Create a typed complementary-view relationship between two existing resources. Use only when a Sequence and Event Flow are complementary projections of substantially the same behavior and both add materially different information; do not relate merely similar topics or downstream sub-flows. Stable resource ids and optional execution/causal roles are returned.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         source: resourceReference().describe("Stable id or project-relative path of the first resource."),
         target: resourceReference().describe("Stable id or project-relative path of the second resource."),
         sourceRole: z.enum(["execution", "causal", "other"]).optional(),
@@ -743,7 +744,7 @@ export function createMcpTools(): McpTool[] {
         "Return a bounded index of a project: every resource with its id, path and type, plus the sequence diagrams' participant and message counts. Use it to understand a project before reading individual documents.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().optional(),
         limit: limit(100, 500),
         cursor: cursor(),
       },
@@ -797,7 +798,7 @@ export function createMcpTools(): McpTool[] {
         "List a project's resources with stable identity, semantic metadata and current revision. The revision is what a write must present as `expectedRevision`. Paginated.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().optional(),
         limit: limit(100, 500),
         cursor: cursor(),
         type: z
@@ -877,7 +878,7 @@ export function createMcpTools(): McpTool[] {
       name: "list_architectural_proposals",
       title: "List architectural proposals",
       description: "List submitted, team-visible Architectural Proposals without exposing private work contexts.",
-      inputSchema: { projectId: projectId() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
       annotations: { ...READ_ONLY, title: "List architectural proposals" },
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
@@ -999,7 +1000,7 @@ export function createMcpTools(): McpTool[] {
       name: "list_change_proposals",
       title: "List change proposals",
       description: "List isolated change proposals for a resource.",
-      inputSchema: { projectId: projectId(), resource: resourceReference() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), resource: resourceReference() },
       annotations: { ...READ_ONLY, title: "List change proposals" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
@@ -1007,7 +1008,8 @@ export function createMcpTools(): McpTool[] {
         const resource = await resolveResource(
           toolContext,
           project,
-          stringArg(args, "resource"),
+           stringArg(args, "resource"),
+           typeof args.contextId === "string" ? args.contextId : null,
         );
         const proposals = await toolContext.proposals.list(
           toolContext.context,
@@ -1030,7 +1032,7 @@ export function createMcpTools(): McpTool[] {
         "Create a draft proposal initialized from an immutable resource revision.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
         title: z.string().min(1),
         description: z.string().optional(),
@@ -1120,26 +1122,6 @@ export function createMcpTools(): McpTool[] {
               ? `Merge analysis ${analysis.status}.`
               : `${analysis.stale ? "Stale" : "Fresh"}; ${analysis.autoMergeable ? "auto-mergeable" : `${analysis.conflicts.length} conflict(s)`}.`,
           structured: { ...analysis },
-        };
-      },
-    },
-
-    {
-      name: "merge_change_proposal",
-      title: "Merge change proposal",
-      description:
-        "Modify canonical project state by safely merging an open change proposal. Recomputes H17 merge analysis during execution, creates one canonical revision when state changes, and rejects conflicts or invalid candidates.",
-      inputSchema: { proposalId: z.string().uuid() },
-      annotations: { ...WRITE, title: "Merge change proposal" },
-      requiredPermissions: ["resource:update"],
-      async run(args, toolContext) {
-        const result = await toolContext.proposals.merge(
-          toolContext.context,
-          stringArg(args, "proposalId"),
-        );
-        return {
-          text: `Merged proposal ${result.proposal.id} into revision r${result.resource.revision}.`,
-          structured: result,
         };
       },
     },
@@ -1235,7 +1217,7 @@ export function createMcpTools(): McpTool[] {
       title: "Get resource metadata",
       description:
         "Read one resource's identity, path, type, semantic metadata and current revision without its contents.",
-      inputSchema: { projectId: projectId(), resource: resourceReference() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), resource: resourceReference() },
       annotations: { ...READ_ONLY, title: "Get resource metadata" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
@@ -1243,14 +1225,14 @@ export function createMcpTools(): McpTool[] {
         const resolved = await resolveResource(
           toolContext,
           id,
-          stringArg(args, "resource"),
-          typeof args.contextId === "string" ? args.contextId : null,
+           stringArg(args, "resource"),
+            typeof args.contextId === "string" ? args.contextId : null,
         );
         const resource = await toolContext.catalog.getResource(
           toolContext.context,
           id,
-          resolved.id,
-          typeof args.contextId === "string" ? args.contextId : null,
+           resolved.id,
+            typeof args.contextId === "string" ? args.contextId : null,
         );
         return {
           text: describeResource(resource),
@@ -1266,7 +1248,7 @@ export function createMcpTools(): McpTool[] {
         "Replace a resource's semantic description and tags without changing its text. Send the revision you read; an empty metadata object clears both fields. Retries can use an idempotency key.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
         metadata: resourceMetadata(),
         expectedRevision: z
@@ -1289,8 +1271,9 @@ export function createMcpTools(): McpTool[] {
         const current = await toolContext.catalog.readResource(
           toolContext.context,
           id,
-          resolved.id,
-        );
+           resolved.id,
+           typeof args.contextId === "string" ? args.contextId : null,
+         );
         const resource = await toolContext.catalog.updateResource(
           toolContext.context,
           id,
@@ -1321,8 +1304,8 @@ export function createMcpTools(): McpTool[] {
         "Search a project's documents and metadata with bounded snippets — never whole files. Supports plain text plus `tag:payments`, `type:diagram`, and the existing project/kind/participant filters. Paginated.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
-        query: z
+          contextId: z.string().uuid().optional(),
+         query: z
           .string()
           .describe(
             "Plain text or filters such as `tag:payments`, `type:diagram`, `kind:note`, `project:name`, and `participant:Name`.",
@@ -1421,7 +1404,7 @@ export function createMcpTools(): McpTool[] {
         "Create a new document at a project-relative path. Fails if something already exists there: to change an existing document, read it and call update_resource with its revision. Send an `idempotencyKey` to make a retry safe.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         path: z
           .string()
           .min(1)
@@ -1468,7 +1451,7 @@ export function createMcpTools(): McpTool[] {
         "Replace a resource's text. `expectedRevision` must be the revision you last read: a stale value is refused with a conflict instead of overwriting a concurrent edit. On conflict, re-read and retry. Send an `idempotencyKey` to make a retry safe.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+           contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
         content: z.string().describe("The complete new text."),
         expectedRevision: z
@@ -1519,7 +1502,7 @@ export function createMcpTools(): McpTool[] {
         "Move a resource to another project-relative path, keeping its id and revision history. `expectedRevision` is required and a stale value is refused with a conflict.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
         path: z.string().min(1).describe("The new project-relative path."),
         expectedRevision: z
@@ -1546,6 +1529,7 @@ export function createMcpTools(): McpTool[] {
           {
             path: stringArg(args, "path"),
             expectedRevision: numberArg(args, "expectedRevision") ?? 0,
+            ...(typeof args.contextId === "string" ? { contextId: args.contextId } : {}),
             ...(typeof args.idempotencyKey === "string"
               ? { idempotencyKey: args.idempotencyKey }
               : {}),
@@ -1565,6 +1549,7 @@ export function createMcpTools(): McpTool[] {
         "Retire a shared resource from current authoritative knowledge without destroying its revision history. Requires `confirm: true`.",
       inputSchema: {
         projectId: projectId(),
+        contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
         confirm: z.boolean().describe("Must be true to actually delete."),
         idempotencyKey: idempotencyKey(),
@@ -1577,6 +1562,7 @@ export function createMcpTools(): McpTool[] {
           toolContext,
           id,
           stringArg(args, "resource"),
+          typeof args.contextId === "string" ? args.contextId : null,
         );
         const resource = await toolContext.catalog.getResource(
           toolContext.context,
@@ -1594,6 +1580,7 @@ export function createMcpTools(): McpTool[] {
           id,
           resolved.id,
           {
+            ...(typeof args.contextId === "string" ? { contextId: args.contextId } : {}),
             ...(typeof args.idempotencyKey === "string"
               ? { idempotencyKey: args.idempotencyKey }
               : {}),
@@ -1613,7 +1600,7 @@ export function createMcpTools(): McpTool[] {
       title: "Read a sequence diagram",
       description:
         "Read a sequence diagram and return its title, lifelines, message count and any syntax or semantic problems, without making you parse the DSL. Prefer this over read_resource when you want to understand a diagram.",
-      inputSchema: { projectId: projectId(), resource: resourceReference() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), resource: resourceReference() },
       annotations: { ...READ_ONLY, title: "Read a sequence diagram" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
@@ -1621,7 +1608,8 @@ export function createMcpTools(): McpTool[] {
         const resolved = await resolveResource(
           toolContext,
           id,
-          stringArg(args, "resource"),
+           stringArg(args, "resource"),
+           typeof args.contextId === "string" ? args.contextId : null,
         );
         if (resolved.type !== "sequence-diagram") {
           throw invalid(`"${resolved.path}" is not a sequence diagram.`);
@@ -1659,7 +1647,7 @@ export function createMcpTools(): McpTool[] {
         "Create a diagram at `path`, or replace the one already there when `expectedRevision` matches. The text is parsed and validated first: invalid DSL is never written, and the problems are returned instead. Prefer this over create_resource/update_resource for agent workflows; it is idempotent, so a retry is safe.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         path: z
           .string()
           .min(1)
@@ -1723,7 +1711,7 @@ export function createMcpTools(): McpTool[] {
         "Create or replace an event-flow document. Use explicit causal lines: `handler H [in Service]`, `Event handled by H`, `H causes ResultingMessage`, and `effect id on H [kind kind]: Description`; event metadata such as `provenance: external|internal|unknown` belongs inside the event block. The complete text is validated, including causal references, before it is persisted; validation errors include diagnostics and nothing is written. The operation is idempotent.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         path: z
           .string()
           .min(1)
@@ -1780,7 +1768,7 @@ export function createMcpTools(): McpTool[] {
         "Render a stored sequence diagram or event flow to an SVG document string. Bounded by the render deadline; prefer this over asking for the SVG through a browser.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         resource: resourceReference(),
       },
       annotations: { ...READ_ONLY, title: "Render a diagram" },
@@ -1797,8 +1785,9 @@ export function createMcpTools(): McpTool[] {
         const { resource, content } = await toolContext.catalog.readResource(
           toolContext.context,
           id,
-          resolved.id,
-        );
+           resolved.id,
+           typeof args.contextId === "string" ? args.contextId : null,
+         );
         throwIfAborted(toolContext.signal);
         const svg =
           resource.type === "event-flow"
@@ -1812,11 +1801,11 @@ export function createMcpTools(): McpTool[] {
     },
 
     {
-      name: "read_documentation",
+       name: "read_documentation",
       title: "Read a markdown document",
       description:
         "Read a markdown document's text and its heading outline. Prefer this over read_resource for documentation, because it also reports the structure.",
-      inputSchema: { projectId: projectId(), resource: resourceReference() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), resource: resourceReference() },
       annotations: { ...READ_ONLY, title: "Read documentation" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
@@ -1824,7 +1813,8 @@ export function createMcpTools(): McpTool[] {
         const resolved = await resolveResource(
           toolContext,
           id,
-          stringArg(args, "resource"),
+           stringArg(args, "resource"),
+           typeof args.contextId === "string" ? args.contextId : null,
         );
         if (resolved.type !== "markdown-document") {
           throw invalid(`"${resolved.path}" is not a markdown document.`);
@@ -1832,8 +1822,9 @@ export function createMcpTools(): McpTool[] {
         const { resource, content } = await toolContext.catalog.readResource(
           toolContext.context,
           id,
-          resolved.id,
-        );
+           resolved.id,
+           typeof args.contextId === "string" ? args.contextId : null,
+         );
         const headings = content
           .split("\n")
           .filter((line) => /^#{1,6}\s+\S/.test(line))
@@ -1852,7 +1843,7 @@ export function createMcpTools(): McpTool[] {
         "Create or replace a markdown document at `path`. When the document already exists, `expectedRevision` is required and must be the revision you last read. Idempotent, so a retry with the same key is safe.",
       inputSchema: {
         projectId: projectId(),
-        contextId: z.string().uuid().optional().describe("Private MY WORK context id; omit for SHARED."),
+         contextId: z.string().uuid().describe("Private MY WORK context id."),
         path: z
           .string()
           .min(1)
@@ -1900,16 +1891,17 @@ export function createMcpTools(): McpTool[] {
       name: "get_semantic_message",
       title: "Get semantic message trace",
       description: "Inspect one explicit semantic message identity, its authoritative Sequence occurrences, and Event Flow representations. Names are never used as identity.",
-      inputSchema: { projectId: projectId(), messageId: z.string().min(1) },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), messageId: z.string().min(1) },
       annotations: { ...READ_ONLY, title: "Get semantic message trace" },
       requiredPermissions: ["project:search"],
       async run(args, toolContext) {
-        const id = stringArg(args, "projectId");
-        const indexed = await semanticIndex(toolContext, id);
+         const id = stringArg(args, "projectId");
+         const contextId = typeof args.contextId === "string" ? args.contextId : null;
+         const indexed = await semanticIndex(toolContext, id, contextId);
         const trace = traceSemanticMessage(indexed.index, stringArg(args, "messageId"));
         const downstream = [];
         for (const entity of trace.eventFlowEntities) {
-          const resource = await toolContext.catalog.readResource(toolContext.context, id, entity.resourceId);
+           const resource = await toolContext.catalog.readResource(toolContext.context, id, entity.resourceId, contextId);
           const flow = analyzeEventFlow(resource.content).flow;
           for (const handler of handlersFor(flow, entity.name)) {
             downstream.push({ resourceId: entity.resourceId, handler: handler.id, messages: resultingEventsFor(flow, handler.id), effects: effectsFor(flow, handler.id) });
@@ -1963,13 +1955,14 @@ export function createMcpTools(): McpTool[] {
       name: "list_semantic_occurrences",
       title: "List semantic message occurrences",
        description: "List structured Sequence occurrences and Event Flow message entities, including authoritative bindings, plus conservative legacy message-like leads. Candidate leads are evidence for inspection only, never identity.",
-      inputSchema: { projectId: projectId() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
       annotations: { ...READ_ONLY, title: "List semantic message occurrences" },
       requiredPermissions: ["project:search"],
       async run(args, toolContext) {
-        const projectIdValue = stringArg(args, "projectId");
-        const indexed = await semanticIndex(toolContext, projectIdValue);
-        const legacyCandidates = await legacySemanticCandidates(toolContext, projectIdValue, indexed.resources);
+         const projectIdValue = stringArg(args, "projectId");
+         const contextId = typeof args.contextId === "string" ? args.contextId : null;
+         const indexed = await semanticIndex(toolContext, projectIdValue, contextId);
+         const legacyCandidates = await legacySemanticCandidates(toolContext, projectIdValue, indexed.resources, contextId);
         const { index } = indexed;
         const occurrences = index.semanticOccurrences ?? [];
         const eventFlowMessages = index.eventFlowMessages ?? [];
@@ -1980,11 +1973,12 @@ export function createMcpTools(): McpTool[] {
       name: "find_semantic_message_candidates",
       title: "Find semantic message candidates",
       description: "Find normalized exact-name candidate matches across Sequence and Event Flow resources without mutating bindings or treating candidates as authoritative.",
-      inputSchema: { projectId: projectId() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
       annotations: { ...READ_ONLY, title: "Find semantic message candidates" },
       requiredPermissions: ["project:search"],
       async run(args, toolContext) {
-        const candidates = semanticMessageCandidates((await semanticIndex(toolContext, stringArg(args, "projectId"))).index);
+         const contextId = typeof args.contextId === "string" ? args.contextId : null;
+         const candidates = semanticMessageCandidates((await semanticIndex(toolContext, stringArg(args, "projectId"), contextId)).index);
         return { text: JSON.stringify(candidates), structured: { candidates } };
       },
     },
@@ -1992,7 +1986,7 @@ export function createMcpTools(): McpTool[] {
       name: "create_semantic_message",
       title: "Create semantic message identity",
       description: "Create an explicit project-scoped event or command identity. The server generates the stable id and returns it; callers must never invent an id. This operation never infers bindings from equal names.",
-       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), name: z.string().min(1), kind: z.enum(["event", "command"]) },
+         inputSchema: { projectId: projectId(), contextId: z.string().uuid(), name: z.string().min(1), kind: z.enum(["event", "command"]) },
       annotations: { ...WRITE, title: "Create semantic message identity" },
       requiredPermissions: ["project:update"],
       async run(args, toolContext) {
@@ -2005,54 +1999,57 @@ export function createMcpTools(): McpTool[] {
       name: "delete_semantic_message",
       title: "Delete semantic message identity",
       description: "Delete an explicit identity only when no Sequence or Event Flow source still references it; this never silently destroys traceability.",
-      inputSchema: { projectId: projectId(), messageId: z.string().min(1), expectedManifestRevision: z.number().int().min(0).optional() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid(), messageId: z.string().min(1), expectedManifestRevision: z.number().int().min(0).optional() },
       annotations: { ...DELETE, title: "Delete semantic message identity" },
       requiredPermissions: ["project:update"],
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
         const messageId = stringArg(args, "messageId");
-        const { index } = await semanticIndex(toolContext, id);
+         const contextId = stringArg(args, "contextId");
+         const { index } = await semanticIndex(toolContext, id, contextId);
         const trace = traceSemanticMessage(index, messageId);
         if (!trace.identity) throw notFound(`No semantic message "${messageId}" exists.`);
         if (trace.occurrences.length || trace.eventFlowEntities.length) throw invalid(`Semantic message "${messageId}" is still referenced.`);
-        const messages = (await toolContext.catalog.listSemanticMessages(toolContext.context, id)).filter((entry) => entry.id !== messageId);
-        const result = await toolContext.catalog.updateSemanticMessages(toolContext.context, id, messages, numberArg(args, "expectedManifestRevision") ?? 0);
-        return { text: `Deleted semantic message ${messageId}.`, structured: { messageId, manifestRevision: result.manifestRevision } };
+         const messages = (await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId)).filter((entry) => entry.id !== messageId);
+         const result = await toolContext.catalog.updatePrivateSemanticMessages(toolContext.context, id, contextId, messages);
+         return { text: `Deleted semantic message ${messageId}.`, structured: { messageId, messages: result } };
       },
     },
     {
       name: "update_semantic_message",
       title: "Rename semantic message identity",
       description: "Update the display name of an existing semantic identity without changing its stable id or bindings.",
-      inputSchema: { projectId: projectId(), messageId: z.string().min(1), name: z.string().min(1), expectedManifestRevision: z.number().int().min(0).optional() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid(), messageId: z.string().min(1), name: z.string().min(1), expectedManifestRevision: z.number().int().min(0).optional() },
       annotations: { ...WRITE, title: "Rename semantic message identity" },
       requiredPermissions: ["project:update"],
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
         const messageId = stringArg(args, "messageId");
-        const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, id);
+         const contextId = stringArg(args, "contextId");
+         const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId);
         const existing = messages.find((entry) => entry.id === messageId);
         if (!existing) throw notFound(`No semantic message "${messageId}" exists.`);
         const next = messages.map((entry) => entry.id === messageId ? { ...entry, name: stringArg(args, "name") } : entry);
-        const result = await toolContext.catalog.updateSemanticMessages(toolContext.context, id, next, numberArg(args, "expectedManifestRevision") ?? 0);
-        return { text: `Renamed semantic message ${messageId}.`, structured: { message: next.find((entry) => entry.id === messageId), manifestRevision: result.manifestRevision } };
+         const result = await toolContext.catalog.updatePrivateSemanticMessages(toolContext.context, id, contextId, next);
+         return { text: `Renamed semantic message ${messageId}.`, structured: { message: next.find((entry) => entry.id === messageId), messages: result } };
       },
     },
     {
       name: "bind_semantic_message",
       title: "Bind semantic message occurrence",
       description: "Bind one exact Sequence occurrence or Event Flow event entity to an existing identity through the normal resource revision path.",
-      inputSchema: { projectId: projectId(), resource: resourceReference(), messageId: z.string().min(1), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid(), resource: resourceReference(), messageId: z.string().min(1), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
       annotations: { ...WRITE, title: "Bind semantic message occurrence" },
       requiredPermissions: ["resource:update"],
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
-        const identity = (await toolContext.catalog.listSemanticMessages(toolContext.context, id)).find((entry) => entry.id === stringArg(args, "messageId"));
+         const contextId = stringArg(args, "contextId");
+         const identity = (await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId)).find((entry) => entry.id === stringArg(args, "messageId"));
         if (!identity) throw notFound(`No semantic message "${stringArg(args, "messageId")}" exists.`);
-        const resource = await resolveResource(toolContext, id, stringArg(args, "resource"));
-        const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id);
+         const resource = await resolveResource(toolContext, id, stringArg(args, "resource"), contextId);
+         const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
         const next = bindSemanticReference(read.content, resource.type, stringArg(args, "name"), numberArg(args, "step"), identity.id, identity.kind);
-        const updated = await toolContext.catalog.updateResource(toolContext.context, id, resource.id, { content: next, expectedRevision: numberArg(args, "expectedRevision")! });
+         const updated = await toolContext.catalog.updateResource(toolContext.context, id, resource.id, { content: next, expectedRevision: numberArg(args, "expectedRevision")!, contextId });
         return { text: `Bound ${stringArg(args, "name")} to ${identity.id}.`, structured: { resource: updated, messageId: identity.id } };
       },
     },
@@ -2060,15 +2057,16 @@ export function createMcpTools(): McpTool[] {
       name: "unbind_semantic_message",
       title: "Unbind semantic message occurrence",
       description: "Remove one explicit messageRef from a Sequence occurrence or Event Flow event entity through the normal resource revision path.",
-      inputSchema: { projectId: projectId(), resource: resourceReference(), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid(), resource: resourceReference(), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
       annotations: { ...WRITE, title: "Unbind semantic message occurrence" },
       requiredPermissions: ["resource:update"],
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
-        const resource = await resolveResource(toolContext, id, stringArg(args, "resource"));
-        const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id);
+         const contextId = stringArg(args, "contextId");
+         const resource = await resolveResource(toolContext, id, stringArg(args, "resource"), contextId);
+         const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
         const next = unbindSemanticReference(read.content, resource.type, stringArg(args, "name"), numberArg(args, "step"));
-        const updated = await toolContext.catalog.updateResource(toolContext.context, id, resource.id, { content: next, expectedRevision: numberArg(args, "expectedRevision")! });
+         const updated = await toolContext.catalog.updateResource(toolContext.context, id, resource.id, { content: next, expectedRevision: numberArg(args, "expectedRevision")!, contextId });
         return { text: `Unbound ${stringArg(args, "name")}.`, structured: { resource: updated } };
       },
     },
@@ -2078,15 +2076,16 @@ export function createMcpTools(): McpTool[] {
       description:
         "List the events a project declares and, for each, the services that publish and subscribe to it. Paginated and bounded.",
       inputSchema: {
-        projectId: projectId(),
-        limit: limit(100, 500),
+         projectId: projectId(),
+         contextId: z.string().uuid().optional(),
+         limit: limit(100, 500),
         cursor: cursor(),
       },
       annotations: { ...READ_ONLY, title: "Get the event catalog" },
       requiredPermissions: ["project:search"],
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
-        const entries = await eventCatalog(toolContext, id);
+         const entries = await eventCatalog(toolContext, id, typeof args.contextId === "string" ? args.contextId : null);
         const { items, nextCursor } = page(
           entries,
           decodeCursor(
@@ -2115,8 +2114,9 @@ export function createMcpTools(): McpTool[] {
       description:
         "Find the services that publish a given event, across the project's event flows.",
       inputSchema: {
-        projectId: projectId(),
-        event: z.string().min(1).describe("The event name to look for."),
+         projectId: projectId(),
+         contextId: z.string().uuid().optional(),
+         event: z.string().min(1).describe("The event name to look for."),
       },
       annotations: { ...READ_ONLY, title: "Find event producers" },
       requiredPermissions: ["project:search"],
@@ -2125,7 +2125,8 @@ export function createMcpTools(): McpTool[] {
           toolContext,
           stringArg(args, "projectId"),
           stringArg(args, "event"),
-          "producers",
+           "producers",
+          typeof args.contextId === "string" ? args.contextId : null,
         );
       },
     },
@@ -2136,8 +2137,9 @@ export function createMcpTools(): McpTool[] {
       description:
         "Find the services that subscribe to a given event, across the project's event flows.",
       inputSchema: {
-        projectId: projectId(),
-        event: z.string().min(1).describe("The event name to look for."),
+         projectId: projectId(),
+         contextId: z.string().uuid().optional(),
+         event: z.string().min(1).describe("The event name to look for."),
       },
       annotations: { ...READ_ONLY, title: "Find event consumers" },
       requiredPermissions: ["project:search"],
@@ -2146,7 +2148,8 @@ export function createMcpTools(): McpTool[] {
           toolContext,
           stringArg(args, "projectId"),
           stringArg(args, "event"),
-          "consumers",
+           "consumers",
+          typeof args.contextId === "string" ? args.contextId : null,
         );
       },
     },
@@ -2154,11 +2157,11 @@ export function createMcpTools(): McpTool[] {
       name: "find_retry_behavior",
       title: "Find failure and retry behavior",
       description: "Find documented failures and retries across a project's event flows. Filter by mechanism or return all evidence-backed semantics; unknown policy remains explicit.",
-      inputSchema: { projectId: projectId(), mechanism: z.enum(["broker", "handler", "application", "scheduler", "external", "unknown"]).optional() },
+       inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), mechanism: z.enum(["broker", "handler", "application", "scheduler", "external", "unknown"]).optional() },
       annotations: { ...READ_ONLY, title: "Find failure and retry behavior" },
       requiredPermissions: ["project:search"],
       async run(args, toolContext) {
-        return findRetryBehavior(toolContext, stringArg(args, "projectId"), typeof args.mechanism === "string" ? args.mechanism : undefined);
+         return findRetryBehavior(toolContext, stringArg(args, "projectId"), typeof args.mechanism === "string" ? args.mechanism : undefined, typeof args.contextId === "string" ? args.contextId : null);
       },
     },
 
@@ -2234,10 +2237,12 @@ interface EventCatalogEntry {
 async function eventCatalog(
   toolContext: ToolContext,
   projectIdValue: string,
+  contextId: string | null = null,
 ): Promise<EventCatalogEntry[]> {
   const resources = await toolContext.catalog.listResources(
     toolContext.context,
     projectIdValue,
+    contextId,
   );
   const entries: EventCatalogEntry[] = [];
   for (const resource of resources) {
@@ -2247,6 +2252,7 @@ async function eventCatalog(
       toolContext.context,
       projectIdValue,
       resource.id,
+      contextId,
     );
     const { flow } = analyzeEventFlow(content);
     for (const event of eventsOf(flow)) {
@@ -2263,11 +2269,9 @@ async function findEventSides(
   projectIdValue: string,
   eventName: string,
   side: "producers" | "consumers",
+  contextId: string | null = null,
 ): Promise<ToolOutcome> {
-  const resources = await toolContext.catalog.listResources(
-    toolContext.context,
-    projectIdValue,
-  );
+  const resources = await toolContext.catalog.listResources(toolContext.context, projectIdValue, contextId);
   const hits: Array<{ service: string; resource: string }> = [];
   for (const resource of resources) {
     if (resource.type !== "event-flow") continue;
@@ -2276,6 +2280,7 @@ async function findEventSides(
       toolContext.context,
       projectIdValue,
       resource.id,
+      contextId,
     );
     const { flow } = analyzeEventFlow(content);
     const edges =
@@ -2299,12 +2304,12 @@ async function findEventSides(
   };
 }
 
-async function findRetryBehavior(toolContext: ToolContext, projectIdValue: string, mechanism?: string): Promise<ToolOutcome> {
-  const resources = await toolContext.catalog.listResources(toolContext.context, projectIdValue);
+async function findRetryBehavior(toolContext: ToolContext, projectIdValue: string, mechanism?: string, contextId: string | null = null): Promise<ToolOutcome> {
+  const resources = await toolContext.catalog.listResources(toolContext.context, projectIdValue, contextId);
   const hits: Array<{ resource: string; failures: unknown[]; retries: unknown[]; unknownPolicy: boolean }> = [];
   for (const resource of resources) {
     if (resource.type !== "event-flow") continue;
-    const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id);
+    const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id, contextId);
     const { flow } = analyzeEventFlow(content);
     const retries = (flow.causal?.retries ?? []).filter((retry) => mechanism === undefined || retry.mechanism === mechanism);
     const failures = flow.causal?.failures ?? [];

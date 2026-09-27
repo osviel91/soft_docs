@@ -648,13 +648,14 @@ describe("the journal is the authority", () => {
   });
 
   it("refuses a mutation when the deployment has no journal", async () => {
-    expect(() =>
+    const { projectId, context } = await aProject();
+    await expect(
       createMutationServiceWithoutJournal().createResource(
-        contextFor("00000000-0000-7000-8000-0000000000ff"),
-        "00000000-0000-7000-8000-0000000000fe",
+        context,
+        projectId,
         { path: "x.seq", type: "sequence-diagram", content: "" },
       ),
-    ).toThrow(ApplicationError);
+    ).rejects.toBeInstanceOf(ApplicationError);
   });
 });
 

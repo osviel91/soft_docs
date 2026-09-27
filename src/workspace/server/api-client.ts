@@ -466,6 +466,19 @@ export class ServerApiClient {
     return body.project;
   }
 
+  async bootstrapProject(
+    name: string,
+    workspaceId: string,
+    resources: Array<{ path: string; type: ServerResourceType; content: string }>,
+  ): Promise<ServerProject> {
+    const body = await this.request<{ project: ServerProject }>(
+      "POST",
+      "/api/projects/bootstrap",
+      { name, workspaceId, resources },
+    );
+    return body.project;
+  }
+
   /** Rename a project, or change its slug. */
   async updateProject(
     projectId: string,
@@ -515,7 +528,7 @@ export class ServerApiClient {
     return body.proposals ?? [];
   }
 
-  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`, input);
     return body.proposal;
   }
@@ -559,14 +572,15 @@ export class ServerApiClient {
     await this.request<unknown>("DELETE", `/api/projects/${encodeURIComponent(projectId)}/private-work/${encodeURIComponent(contextId)}`);
   }
 
-  async listSemanticMessages(projectId: string): Promise<SemanticMessageIdentity[]> {
-    const body = await this.request<{ messages: SemanticMessageIdentity[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-messages`);
+  async listSemanticMessages(projectId: string, contextId?: string | null): Promise<SemanticMessageIdentity[]> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
+    const body = await this.request<{ messages: SemanticMessageIdentity[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-messages${query}`);
     return body.messages ?? [];
   }
 
   async createSemanticMessage(
     projectId: string,
-    input: { name: string; kind: "event" | "command" },
+    input: { name: string; kind: "event" | "command"; contextId?: string },
   ): Promise<{ message: SemanticMessageIdentity; manifestRevision: number }> {
     return this.request("POST", `/api/projects/${encodeURIComponent(projectId)}/semantic-messages`, input);
   }
@@ -575,16 +589,19 @@ export class ServerApiClient {
     projectId: string,
     messages: SemanticMessageIdentity[],
     expectedManifestRevision: number,
+    contextId?: string,
   ): Promise<{ messages: SemanticMessageIdentity[]; manifestRevision: number }> {
-    return this.request("PUT", `/api/projects/${encodeURIComponent(projectId)}/semantic-messages`, { messages, expectedManifestRevision });
+    return this.request("PUT", `/api/projects/${encodeURIComponent(projectId)}/semantic-messages`, { messages, expectedManifestRevision, ...(contextId === undefined ? {} : { contextId }) });
   }
 
   async listResourceRelationships(
     projectId: string,
+    contextId?: string | null,
   ): Promise<ResourceRelationship[]> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
     const body = await this.request<{ relationships: ResourceRelationship[] }>(
       "GET",
-      `/api/projects/${encodeURIComponent(projectId)}/relationships`,
+      `/api/projects/${encodeURIComponent(projectId)}/relationships${query}`,
     );
     return body.relationships ?? [];
   }
@@ -650,15 +667,6 @@ export class ServerApiClient {
       `/api/change-proposals/${encodeURIComponent(id)}/merge-analysis`,
     );
     return body.analysis;
-  }
-
-  async mergeChangeProposal(
-    id: string,
-  ): Promise<{ proposal: ServerChangeProposal; resource: ServerResource }> {
-    return this.request<{
-      proposal: ServerChangeProposal;
-      resource: ServerResource;
-    }>("POST", `/api/change-proposals/${encodeURIComponent(id)}/merge`);
   }
 
   /** Create a resource at a path, refusing one that is already taken. */

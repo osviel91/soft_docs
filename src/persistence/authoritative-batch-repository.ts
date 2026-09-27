@@ -15,6 +15,8 @@ import { createHash } from "node:crypto";
 const date = (value: unknown): Date => value instanceof Date ? value : new Date(String(value));
 const revisionFingerprint = (rows: Array<Record<string, unknown>>): string =>
   JSON.stringify(rows.map((row) => [String(row.id), Number(row.revision)]).sort(([a], [b]) => String(a).localeCompare(String(b))));
+const relationshipFingerprint = (row: Record<string, unknown>): string =>
+  JSON.stringify({ kind: String(row.kind), sourceId: String(row.source_id), targetId: String(row.target_id), sourceRole: row.source_role ?? null, targetRole: row.target_role ?? null });
 
 export function createAuthoritativeBatchRepository(
   client: SqlClient,
@@ -57,7 +59,7 @@ export function createAuthoritativeBatchRepository(
        RETURNING id`,
       [
         operationId, input.projectId, operation.resourceId, operation.operation,
-        operation.path, operation.path, "stagedPath" in operation ? operation.stagedPath ?? null : null,
+         "sourcePath" in operation ? operation.sourcePath ?? operation.path : operation.path, operation.path, "stagedPath" in operation ? operation.stagedPath ?? null : null,
         expectedRevision, operation.operation === "create" ? 1 : expectedRevision === null ? null : expectedRevision + 1,
         input.audit.actorType ?? "user", input.audit.actorId ?? input.audit.subjectUserId,
          input.audit.credentialId ?? null, input.audit.requestId ?? null, input.batchId,
@@ -120,8 +122,8 @@ export function createAuthoritativeBatchRepository(
               if (String(row.lifecycle) !== "ACTIVE") throw invalid("The resource is already retired.");
               if (Number(row.revision) !== operation.expectedRevision) throw revisionConflict(operation.expectedRevision, Number(row.revision));
               if (operation.operation === "update") {
-                await tx.query("UPDATE resources SET revision = revision + 1, metadata = COALESCE($3::jsonb, metadata), updated_at = now() WHERE project_id = $1 AND id = $2", [input.projectId, operation.resourceId, operation.metadata === undefined ? null : JSON.stringify(operation.metadata)]);
-              } else {
+                 await tx.query("UPDATE resources SET path = $3, revision = revision + 1, metadata = COALESCE($4::jsonb, metadata), updated_at = now() WHERE project_id = $1 AND id = $2", [input.projectId, operation.resourceId, operation.path, operation.metadata === undefined ? null : JSON.stringify(operation.metadata)]);
+               } else {
                 const relationships = await tx.query(
                   `SELECT source_id, target_id, kind, source_role, target_role
                      FROM resource_relationships
@@ -150,13 +152,24 @@ export function createAuthoritativeBatchRepository(
         }
         for (const change of input.relationshipChanges ?? []) {
           const relationship = change.relationship;
+          const current = await tx.query("SELECT kind, source_id, target_id, source_role, target_role FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id IS NULL AND source_id = $2 AND target_id = $3 FOR UPDATE", [input.projectId, relationship.sourceId, relationship.targetId]);
+          if (change.operation === "ADD" && current.rows.length > 0) throw conflict("The relationship already exists.");
+          if (change.operation !== "ADD" && current.rows.length === 0) throw conflict("The relationship no longer exists.");
+          if (change.operation !== "ADD" && change.baseFingerprint !== undefined && current.rows.length > 0 && relationshipFingerprint(current.rows[0]) !== change.baseFingerprint) throw conflict("The relationship changed since the proposal base.");
           if (change.operation === "ADD") {
             await tx.query(
               `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
                VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (project_id, source_id, target_id) DO NOTHING`,
               [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
             );
-          } else {
+           } else if (change.operation === "UPDATE") {
+             await tx.query(
+               `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (project_id, source_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, source_role = EXCLUDED.source_role, target_role = EXCLUDED.target_role`,
+               [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+             );
+           } else {
             await tx.query(
               `INSERT INTO resource_relationship_history (id, project_id, source_id, target_id, kind, source_role, target_role, recorded_by, operation_id)
                SELECT $1, project_id, source_id, target_id, kind, source_role, target_role, $2, $3
@@ -170,9 +183,9 @@ export function createAuthoritativeBatchRepository(
           const current = await tx.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE' ORDER BY id", [input.projectId]);
           const resultingRevision = revisionFingerprint(current.rows);
           await tx.query(
-            `INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, resulting_shared_revision)
-             VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-             [input.promotion.id, input.projectId, input.promotion.proposalId, JSON.stringify(input.actor), input.promotion.baseSharedRevision, resultingRevision],
+             `INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, base_manifest_revision, semantic_changes, resulting_shared_revision)
+              VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8)`,
+              [input.promotion.id, input.projectId, input.promotion.proposalId, JSON.stringify(input.actor), input.promotion.baseSharedRevision, input.promotion.baseManifestRevision ?? 0, JSON.stringify(input.promotion.semanticMessages ?? []), resultingRevision],
           );
           for (const entry of input.promotion.entries) {
             await tx.query(
@@ -185,9 +198,9 @@ export function createAuthoritativeBatchRepository(
           for (const change of input.promotion.relationships) {
             const relationship = change.relationship;
             await tx.query(
-              `INSERT INTO promotion_relationship_changes (id, promotion_id, operation, source_id, target_id, kind, source_role, target_role)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-              [newId(), input.promotion.id, change.operation, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+              `INSERT INTO promotion_relationship_changes (id, promotion_id, operation, source_id, target_id, kind, source_role, target_role, base_fingerprint)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [newId(), input.promotion.id, change.operation, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, change.baseFingerprint ?? null],
             );
           }
         }

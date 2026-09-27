@@ -38,6 +38,8 @@ export interface McpHarness {
   aUser(name?: string): Promise<string>;
   /** A project owned by a user, with its storage directory materialised. */
   aProject(ownerId: string, name?: string): Promise<string>;
+  aSharedResource(projectId: string, path: string, content: string): Promise<void>;
+  aPrivateWork(projectId: string, ownerId: string): Promise<string>;
   /** An agent credential for a user; returns its plaintext and ids. */
   aToken(
     ownerId: string,
@@ -165,6 +167,14 @@ export async function startHarness(
       });
       await service.runtime.storageFor(project.id).list();
       return project.id;
+    },
+    async aPrivateWork(projectId, ownerId) {
+      const work = await service.runtime.knowledgeContexts.createPrivate({ projectId, ownerUserId: ownerId, name: "MCP test work" });
+      return work.id;
+    },
+    async aSharedResource(projectId, resourcePath, content) {
+      await service.runtime.projects.createResource(projectId, { path: resourcePath, type: "sequence-diagram" });
+      await service.runtime.storageFor(projectId).write(resourcePath, content);
     },
     async aToken(ownerId, scopes, projectIds) {
       // Managing agents is session-only and additionally requires the manage

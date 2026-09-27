@@ -22,20 +22,14 @@ export async function publishProject(
     (entry) => entry.isDefault,
   );
   if (!workspace) throw new Error("No default server workspace is available.");
-  const destination = await client.createProject(project.name, workspace.id);
-  for (const diagram of diagrams.value) {
-    await client.createResource(destination.id, {
+  const resources = diagrams.value.map((diagram) => ({
       path: diagram.name,
       type: resourceTypeOfName(diagram.name),
       content: diagram.source,
-    });
-  }
-  for (const note of notes.value) {
-    await client.createResource(destination.id, {
+    })).concat(notes.value.map((note) => ({
       path: note.name,
       type: "markdown-document",
       content: note.markdown,
-    });
-  }
-  return destination;
+    })));
+  return client.bootstrapProject(project.name, workspace.id, resources);
 }

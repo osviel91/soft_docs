@@ -9,4 +9,5 @@ export interface KnowledgeContextRepository {
   deletePrivate(contextId: string, ownerUserId: string): Promise<void>;
   listPrivateMessages(projectId: string, contextId: string): Promise<SemanticMessageIdentity[]>;
   createPrivateMessage(input: { projectId: string; contextId: string; id: string; name: string; kind: "event" | "command" }): Promise<SemanticMessageIdentity>;
+  updatePrivateMessages(projectId: string, contextId: string, messages: SemanticMessageIdentity[]): Promise<SemanticMessageIdentity[]>;
 }

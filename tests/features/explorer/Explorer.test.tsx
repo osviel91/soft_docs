@@ -146,6 +146,31 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-proposal")).toBeInTheDocument();
   });
 
+  it("offers creation intents only for non-authoritative contexts", () => {
+    const onCreateMyWork = vi.fn();
+    const onCreateProposal = vi.fn();
+    render(
+      <Explorer
+        projects={[project]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={vi.fn()}
+        onCreateMyWork={onCreateMyWork}
+        onCreateProposal={onCreateProposal}
+        serverMode
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("explorer-my-work-create"));
+    fireEvent.click(screen.getByTestId("explorer-proposal-create"));
+    expect(onCreateMyWork).toHaveBeenCalledOnce();
+    expect(onCreateProposal).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("project-add-button")).toBeNull();
+  });
+
   it("identifies sequence and event-flow diagrams with different icons", () => {
     const eventFlow: DiagramFile = {
       id: "diag-2",

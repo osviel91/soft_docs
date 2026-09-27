@@ -35,6 +35,8 @@ import { up as authoritativeLifecycle } from "./migrations/0019-authoritative-li
 import { up as authoritativeBatches } from "./migrations/0020-authoritative-batches";
 import { up as promotions } from "./migrations/0021-promotions";
 import { up as explicitProposalOperations } from "./migrations/0022-explicit-proposal-operations";
+import { up as governedProposalOperations } from "./migrations/0023-governed-proposal-operations";
+import { up as proposalResourcePaths } from "./migrations/0024-proposal-resource-paths";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -70,6 +72,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 20, name: "authoritative-batches", sql: authoritativeBatches },
   { version: 21, name: "promotions", sql: promotions },
   { version: 22, name: "explicit-proposal-operations", sql: explicitProposalOperations },
+  { version: 23, name: "governed-proposal-operations", sql: governedProposalOperations },
+  { version: 24, name: "proposal-resource-paths", sql: proposalResourcePaths },
 ];
 
 /**

@@ -33,6 +33,9 @@ import { isWorkspaceRole } from "../../src/domain/workspace/server-workspace";
 import { invalid } from "../../src/application/errors";
 import type { AppDependencies } from "./app";
 import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-metadata";
+import type { ArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
+
+type ArchitecturalProposalInput = Parameters<ArchitecturalProposalService["submit"]>[1];
 
 /** The routes this API exposes. */
 export function createRouter(dependencies: AppDependencies): Router {
@@ -395,13 +398,16 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  // Deprecated: ChangeProposal is analysis-only; ArchitecturalProposal owns publication.
   router.post("/api/change-proposals/:proposalId/merge", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-      const result = await dependencies.proposals.merge(
-        context,
-        params.proposalId,
-      );
+       const body = parseJsonBody(request.body);
+       const result = await dependencies.proposals.merge(
+         context,
+         params.proposalId,
+         typeof body.contextId === "string" ? body.contextId : undefined,
+       );
       return json(200, {
         proposal: proposalView(result.proposal),
         resource: resourceView(result.resource),
@@ -489,6 +495,23 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(typeof body.slug === "string" ? { slug: body.slug } : {}),
       });
       return json(201, { project: projectView(listing) });
+    }),
+  );
+
+  router.post("/api/projects/bootstrap", async (request) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      if (!Array.isArray(body.resources)) return errorResponse(422, "invalid", "resources must be an array.");
+      const resources = body.resources.map((value) => {
+        if (typeof value !== "object" || value === null) throw invalid("Each bootstrap resource must be an object.");
+        const item = value as Record<string, unknown>;
+        if (typeof item.path !== "string" || typeof item.content !== "string" || typeof item.type !== "string") throw invalid("Each bootstrap resource requires path, type and content.");
+        if (item.type !== "sequence-diagram" && item.type !== "event-flow" && item.type !== "markdown-document") throw invalid("Invalid bootstrap resource type.");
+        return { path: item.path, content: item.content, type: item.type as "sequence-diagram" | "event-flow" | "markdown-document" };
+      });
+      const project = await dependencies.bootstrap.bootstrap(context, { workspaceId: requireBodyString(body, "workspaceId"), name: requireBodyString(body, "name"), resources });
+      return json(201, { project: projectView({ project, role: "OWNER", resourceCount: resources.length }) });
     }),
   );
 
@@ -589,6 +612,9 @@ export function createRouter(dependencies: AppDependencies): Router {
         sourcePrivateContextId: requireBodyString(body, "sourcePrivateContextId"),
         resourceIds: Array.isArray(body.resourceIds) && body.resourceIds.every((id) => typeof id === "string") ? body.resourceIds as string[] : [],
         ...(Array.isArray(body.retireResourceIds) && body.retireResourceIds.every((id) => typeof id === "string") ? { retireResourceIds: body.retireResourceIds as string[] } : {}),
+        ...(Array.isArray(body.resourceOperations) ? { resourceOperations: body.resourceOperations as ArchitecturalProposalInput["resourceOperations"] } : {}),
+        ...(Array.isArray(body.semanticMessages) ? { semanticMessages: body.semanticMessages as ArchitecturalProposalInput["semanticMessages"] } : {}),
+        ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
         title: requireBodyString(body, "title"),
         ...(typeof body.description === "string" ? { description: body.description } : {}),
       });
@@ -710,8 +736,9 @@ export function createRouter(dependencies: AppDependencies): Router {
         if (typeof item.id !== "string" || typeof item.name !== "string" || (item.kind !== "event" && item.kind !== "command")) throw invalid("Each semantic message requires id, name and kind.");
         return { id: item.id, name: item.name, kind: item.kind } as const;
       });
-      const expected = typeof body.expectedManifestRevision === "number" ? body.expectedManifestRevision : 0;
-      return json(200, await catalog.updateSemanticMessages(context, params.projectId, messages, expected));
+       const contextId = typeof body.contextId === "string" ? body.contextId : null;
+       if (contextId === null) return errorResponse(409, "governance_context", "Semantic manifest edits require a MY WORK context.");
+       return json(200, { messages: await catalog.updatePrivateSemanticMessages(context, params.projectId, contextId, messages), manifestRevision: 0 });
     }),
   );
 
