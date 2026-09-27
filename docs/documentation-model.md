@@ -105,6 +105,27 @@ resource history can be reconstructed from resource revisions, but relationship 
 manifest history are not yet historical proposal bases; a later SHARED vector is
 reported as "base has advanced", not as a merge conflict.
 
+### Architectural proposal review
+
+The governance path is:
+
+```text
+MY WORK -> PROPOSAL -> REVIEW EVIDENCE
+                         |
+                         +-- still not SHARED
+```
+
+Reviews are append-only records containing `APPROVE` or `REQUEST_CHANGES`, a concise
+summary, and the Proposal base/current SHARED revision context observed by the
+reviewer. Proposal snapshots, submitted identities, relationships, and SHARED are
+never changed by review. Approval means acceptable for the next governance step,
+not promotion or authority. The displayed review status uses each reviewer's latest
+decision: none, approved, changes requested, or mixed. Unknown boundaries,
+candidate-only correlations, incomplete validation, and stale bases are evidence
+for human review, not automatic rejection or acceptance. Semantic/causal analysis,
+anchors, provenance, effects, recovery, and traces are the primary review surface;
+textual diffs are not architectural impact.
+
 ## Representation Selection
 
 Use these questions to choose the first useful view; Sequence and Event Flow are

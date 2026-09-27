@@ -30,6 +30,7 @@ import { up as mergedStatusConstraint } from "./migrations/0014-merged-status-co
 import { up as resourceRelationships } from "./migrations/0015-resource-relationships";
 import { up as privateWorkContexts } from "./migrations/0016-private-work-contexts";
 import { up as architecturalProposals } from "./migrations/0017-architectural-proposals";
+import { up as proposalReviews } from "./migrations/0018-proposal-reviews";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -60,6 +61,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 15, name: "resource-relationships", sql: resourceRelationships },
   { version: 16, name: "private-work-contexts", sql: privateWorkContexts },
   { version: 17, name: "architectural-proposals", sql: architecturalProposals },
+  { version: 18, name: "proposal-reviews", sql: proposalReviews },
 ];
 
 /**

@@ -113,6 +113,7 @@ export async function createMcpService(
     projects: runtime.projects,
     knowledgeContexts: runtime.knowledgeContexts,
     audit: runtime.audit,
+    reviews: runtime.proposalReviews,
     storage: runtime.storageFor,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });

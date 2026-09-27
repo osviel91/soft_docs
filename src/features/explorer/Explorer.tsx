@@ -111,7 +111,7 @@ export interface ExplorerProps {
   switcher?: ReactNode;
   /** Private server-side work contexts owned by the current user. */
   privateWorkContexts?: Array<{ id: string; name: string; lifecycle: "active" | "archived" }>;
-  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string }>;
+  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; approvals?: number; changesRequested?: number }>;
   onOpenArchitecturalProposal?: (proposalId: string) => void;
   onSubmitArchitecturalProposal?: (contextId: string) => void;
   serverMode?: boolean;
@@ -550,7 +550,7 @@ export default function Explorer({
                     <section className="explorer__private-work" data-testid="explorer-proposals">
                       <h3 className="explorer__context-label">PROPOSALS · team-visible</h3>
                       <ul className="explorer__notes">
-                        {architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button> · {proposal.status}{proposal.staleBase ? " · base advanced" : ""}</li>)}
+                        {architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button> · {proposal.status}{proposal.approvals || proposal.changesRequested ? ` · ${proposal.approvals ?? 0} approval${proposal.approvals === 1 ? "" : "s"} · ${proposal.changesRequested ?? 0} changes requested` : ""}{proposal.staleBase ? " · base advanced" : ""}</li>)}
                       </ul>
                     </section>
                   ) : null}

@@ -8,7 +8,7 @@ import type { ProjectRepository } from "./ports/project-repository";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { AuditRepository } from "./ports/audit-repository";
 import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
-import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalSemanticMessageSnapshot } from "../domain/workspace/architectural-proposal";
+import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalSemanticMessageSnapshot, ProposalReview, ProposalReviewDecision, ProposalReviewSummary } from "../domain/workspace/architectural-proposal";
 import type { ProjectStorage } from "./project-storage";
 import { createEmptyMetadata, parseProjectMetadata, type ProjectMetadata } from "../domain/workspace/metadata";
 import { analyzeResource } from "../domain/project/resource-analysis";
@@ -42,6 +42,8 @@ export interface ArchitecturalProposalService {
   submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   validate(context: ApplicationContext, projectId: string, proposalId: string): Promise<{ diagnostics: ProjectDiagnostic[]; index: ProjectIndex }>;
   trace(context: ApplicationContext, projectId: string, proposalId: string, input: { messageId: string; direction: TraceDirection; maxDepth: number; maxNodes: number; includeCandidates: boolean; includeRecovery: boolean }): Promise<{ trace: ArchitectureTrace | null; resolution: unknown }>;
+  reviews(context: ApplicationContext, projectId: string, proposalId: string): Promise<ProposalReviewSummary>;
+  review(context: ApplicationContext, input: { projectId: string; proposalId: string; decision: ProposalReviewDecision; summary?: string }): Promise<ProposalReview>;
 }
 
 export function createArchitecturalProposalService(options: {
@@ -49,6 +51,7 @@ export function createArchitecturalProposalService(options: {
   projects: ProjectRepository;
   knowledgeContexts: KnowledgeContextRepository;
   audit?: AuditRepository;
+  reviews?: import("./ports/proposal-review-repository").ProposalReviewRepository;
   policy?: AuthorizationPolicy<ServerProject>;
   storage?: (projectId: string) => ProjectStorage;
 }): ArchitecturalProposalService {
@@ -81,7 +84,18 @@ export function createArchitecturalProposalService(options: {
     async list(context, projectId) {
       await requireRead(context, projectId);
       const proposals = await options.proposals.list(projectId);
-      return proposals.map(publicSummary);
+      return Promise.all(proposals.map(async (proposal) => {
+        const summary = publicSummary(proposal);
+        if (!options.reviews) return summary;
+        const entries = await options.reviews.list(proposal.id);
+        const latest = new Map<string, ProposalReview>();
+        for (const entry of entries) latest.set(entry.reviewerUserId, entry);
+        const effective = [...latest.values()];
+        const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
+        const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
+        const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
+        return { ...summary, reviewStatus, approvals, changesRequested };
+      }));
     },
     async get(context, projectId, proposalId) {
       await requireRead(context, projectId);
@@ -138,6 +152,40 @@ export function createArchitecturalProposalService(options: {
       if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
       const index = await indexFor(proposal);
       return traceArchitectureQuery(index, { messageId: input.messageId }, input);
+    },
+    async reviews(context, projectId, proposalId) {
+      await requireRead(context, projectId);
+      const proposal = await options.proposals.get(projectId, proposalId);
+      if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
+      const reviews = options.reviews ? await options.reviews.list(proposalId) : [];
+      const latest = new Map<string, ProposalReview>();
+      for (const item of reviews) latest.set(item.reviewerUserId, item);
+      const effective = [...latest.values()];
+      const approvals = effective.filter((item) => item.decision === "APPROVE").length;
+      const changesRequested = effective.filter((item) => item.decision === "REQUEST_CHANGES").length;
+      const status = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
+      return { status, approvals, changesRequested, reviews };
+    },
+    async review(context, input) {
+      await policy.requirePermission(context, input.projectId, "resource:update");
+      if (!options.reviews) throw invalid("Proposal reviews are not configured.");
+      const proposal = await options.proposals.get(input.projectId, input.proposalId);
+      if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+      if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId) throw invalid("Proposal authors cannot approve their own proposal.");
+      const summary = input.summary?.trim();
+      if (summary !== undefined && summary.length > 4000) throw invalid("Review summary must be 4000 characters or fewer.");
+      const current = await options.proposals.currentSharedRevision(input.projectId);
+      const review = await options.reviews.submit({
+        proposalId: proposal.id, reviewerUserId: context.principal.subjectUserId, decision: input.decision,
+        ...(summary ? { summary } : {}), proposalBaseRevision: proposal.baseSharedRevision, observedSharedRevision: current.revision,
+      });
+      await options.audit?.record({
+        action: "proposal.reviewed", subjectUserId: context.principal.subjectUserId,
+        actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal),
+        authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId,
+        detail: { proposalId: proposal.id, reviewId: review.id, decision: review.decision, proposalBaseRevision: review.proposalBaseRevision, observedSharedRevision: review.observedSharedRevision },
+      });
+      return review;
     },
   };
 }

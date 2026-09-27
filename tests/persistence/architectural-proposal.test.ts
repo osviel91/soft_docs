@@ -9,6 +9,7 @@ import { createWorkspaceRepository } from "../../src/persistence/workspace-repos
 import { createUserRepository } from "../../src/persistence/user-repository";
 import { createKnowledgeContextRepository } from "../../src/persistence/knowledge-context-repository";
 import { createArchitecturalProposalRepository } from "../../src/persistence/architectural-proposal-repository";
+import { createProposalReviewRepository } from "../../src/persistence/proposal-review-repository";
 import { createWorkspaceOperationRepository } from "../../src/persistence/workspace-operation-repository";
 import { createFsProjectStorage } from "../../src/persistence/fs-project-storage";
 import { createProjectCatalog } from "../../src/application/project-catalog";
@@ -22,6 +23,7 @@ let volume: string;
 let users: ReturnType<typeof createUserRepository>;
 let catalog: ReturnType<typeof createProjectCatalog>;
 let service: ReturnType<typeof createArchitecturalProposalService>;
+let architecturalProposals: ReturnType<typeof createArchitecturalProposalRepository>;
 
 const contextFor = (id: string): ApplicationContext => ({
   requestId: "proposal-test",
@@ -34,17 +36,20 @@ beforeAll(async () => {
   const projects = createProjectRepository(client);
   users = createUserRepository(client);
   const knowledgeContexts = createKnowledgeContextRepository(client);
+  architecturalProposals = createArchitecturalProposalRepository(client);
   catalog = createProjectCatalog({
     projects,
     workspaces: createWorkspaceRepository(client),
     knowledgeContexts,
     operations: createWorkspaceOperationRepository(client),
     storage: (projectId, contextId) => createFsProjectStorage({ root: path.join(volume, projectId, contextId ? ".private" : "", contextId ?? "") }),
+    architecturalProposals,
   });
   service = createArchitecturalProposalService({
-    proposals: createArchitecturalProposalRepository(client),
+    proposals: architecturalProposals,
     projects,
     knowledgeContexts,
+    reviews: createProposalReviewRepository(client),
   });
 });
 
@@ -85,4 +90,22 @@ it("does not expose a private proposal to another project member", async () => {
   expect((await service.list(contextFor(member), project.id)).some((item) => item.id === proposal.id)).toBe(true);
   await expect(catalog.listPrivateWorkContexts(contextFor(member), project.id)).rejects.toMatchObject({ code: "not_found" });
   await expect(service.get(contextFor(member), project.id, proposal.id)).resolves.toMatchObject({ id: proposal.id });
+});
+
+it("persists append-only review history, aggregates latest decisions, and keeps the snapshot immutable", async () => {
+  const owner = await user("review-owner");
+  const reviewer = await user("reviewer");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Review", workspaceId: owner })).project;
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "retry" });
+  const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "retry.eventseq", type: "event-flow", content: "event PaymentRequested\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Retry review" });
+  await expect(service.review(contextFor(owner), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" })).rejects.toMatchObject({ code: "invalid" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "REQUEST_CHANGES", summary: "Recovery remains unknown." });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE", summary: "The documented boundary is acceptable." });
+  const result = await service.reviews(contextFor(owner), project.id, proposal.id);
+  expect(result.status).toBe("approved");
+  expect(result.reviews).toHaveLength(2);
+  expect(result.reviews[0]?.decision).toBe("REQUEST_CHANGES");
+  expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.content).toBe("event PaymentRequested\n");
 });

@@ -603,6 +603,26 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/architectural-proposals/:proposalId/reviews", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      return json(200, { reviews: await dependencies.architecturalProposals.reviews(context, projectId, params.proposalId) });
+    }),
+  );
+
+  router.post("/api/architectural-proposals/:proposalId/reviews", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      const body = parseJsonBody(request.body);
+      const decision = requireBodyString(body, "decision");
+      if (decision !== "APPROVE" && decision !== "REQUEST_CHANGES") return errorResponse(422, "invalid", "Decision must be APPROVE or REQUEST_CHANGES.");
+      const review = await dependencies.architecturalProposals.review(context, { projectId, proposalId: params.proposalId, decision, ...(typeof body.summary === "string" ? { summary: body.summary } : {}) });
+      return json(201, { review });
+    }),
+  );
+
   // ---- Membership -----------------------------------------------------------
 
   router.put(

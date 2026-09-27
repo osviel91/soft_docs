@@ -129,11 +129,33 @@ export interface ServerArchitecturalProposal {
   baseSharedResourceRevisions: Record<string, number>;
   currentSharedRevision?: string;
   staleBase?: boolean;
+  reviewStatus?: "none" | "approved" | "changes-requested" | "mixed";
+  approvals?: number;
+  changesRequested?: number;
   createdAt: string;
   submittedAt: string;
   resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string }>;
   semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
   relationships: ResourceRelationship[];
+}
+
+export interface ServerProposalReview {
+  id: string;
+  proposalId: string;
+  reviewerUserId: string;
+  reviewerDisplayName?: string;
+  decision: "APPROVE" | "REQUEST_CHANGES";
+  summary?: string;
+  createdAt: string;
+  updatedAt: string;
+  proposalBaseRevision: string;
+  observedSharedRevision: string;
+}
+export interface ServerProposalReviewSummary {
+  status: "none" | "approved" | "changes-requested" | "mixed";
+  approvals: number;
+  changesRequested: number;
+  reviews: ServerProposalReview[];
 }
 
 /** An agent identity, as `/api/agents` renders it. */
@@ -491,6 +513,16 @@ export class ServerApiClient {
   async getArchitecturalProposal(projectId: string, proposalId: string): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}?projectId=${encodeURIComponent(projectId)}`);
     return body.proposal;
+  }
+
+  async getArchitecturalProposalReviews(projectId: string, proposalId: string): Promise<ServerProposalReviewSummary> {
+    const body = await this.request<{ reviews: ServerProposalReviewSummary }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/reviews?projectId=${encodeURIComponent(projectId)}`);
+    return body.reviews;
+  }
+
+  async reviewArchitecturalProposal(projectId: string, proposalId: string, input: { decision: "APPROVE" | "REQUEST_CHANGES"; summary?: string }): Promise<ServerProposalReview> {
+    const body = await this.request<{ review: ServerProposalReview }>("POST", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/reviews?projectId=${encodeURIComponent(projectId)}`, input);
+    return body.review;
   }
 
   async createPrivateWorkContext(projectId: string, input: { name: string; description?: string }): Promise<ServerPrivateWorkContext> {

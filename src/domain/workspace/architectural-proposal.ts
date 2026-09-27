@@ -41,4 +41,30 @@ export interface ArchitecturalProposalSummary
   extends Omit<ArchitecturalProposal, "resources" | "semanticMessages" | "relationships"> {
   staleBase: boolean;
   currentSharedRevision: string;
+  reviewStatus?: ProposalReviewStatus;
+  approvals?: number;
+  changesRequested?: number;
+}
+
+export type ProposalReviewDecision = "APPROVE" | "REQUEST_CHANGES";
+export type ProposalReviewStatus = "none" | "approved" | "changes-requested" | "mixed";
+
+export interface ProposalReview {
+  id: string;
+  proposalId: string;
+  reviewerUserId: string;
+  reviewerDisplayName?: string;
+  decision: ProposalReviewDecision;
+  summary?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  proposalBaseRevision: string;
+  observedSharedRevision: string;
+}
+
+export interface ProposalReviewSummary {
+  status: ProposalReviewStatus;
+  approvals: number;
+  changesRequested: number;
+  reviews: ProposalReview[];
 }

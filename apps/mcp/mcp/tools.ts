@@ -926,6 +926,30 @@ export function createMcpTools(): McpTool[] {
       },
     },
     {
+      name: "list_architectural_proposal_reviews",
+      title: "List proposal reviews",
+      description: "Inspect append-only review evidence and its deterministic aggregate status. Reading reviews never changes a Proposal or SHARED.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
+      annotations: { ...READ_ONLY, title: "List proposal reviews" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const reviews = await toolContext.architecturalProposals.reviews(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
+        return { text: `${reviews.reviews.length} review(s); status ${reviews.status}.`, structured: { reviews } };
+      },
+    },
+    {
+      name: "review_architectural_proposal",
+      title: "Review architectural proposal",
+      description: "Explicitly record APPROVE or REQUEST_CHANGES for an immutable Proposal. Never infer approval from analysis and never mutate SHARED.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), decision: z.enum(["APPROVE", "REQUEST_CHANGES"]), summary: z.string().max(4000).optional() },
+      annotations: { ...WRITE, title: "Review architectural proposal" },
+      requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const review = await toolContext.architecturalProposals.review(toolContext.context, { projectId: stringArg(args, "projectId"), proposalId: stringArg(args, "proposalId"), decision: args.decision as "APPROVE" | "REQUEST_CHANGES", ...(typeof args.summary === "string" ? { summary: args.summary } : {}) });
+        return { text: `Recorded ${review.decision} for proposal ${review.proposalId}; SHARED was not changed.`, structured: { review } };
+      },
+    },
+    {
       name: "submit_architectural_proposal",
       title: "Submit architectural proposal",
       description: "Explicitly submit selected MY WORK resources as an immutable, non-authoritative team-visible proposal. This never changes SHARED.",

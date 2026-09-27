@@ -176,6 +176,7 @@ export async function createApp(
       projects: runtime.projects,
       knowledgeContexts: runtime.knowledgeContexts,
       audit: runtime.audit,
+      reviews: runtime.proposalReviews,
       storage: runtime.storageFor,
     }),
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),

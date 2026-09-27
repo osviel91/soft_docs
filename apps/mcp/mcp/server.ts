@@ -87,6 +87,8 @@ Event Flow causal authoring is explicit: declare "event Name", declare "handler 
 
 ${SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE}
 
+Review workflow: inspect the Proposal, base/current status, validation, semantic anchors, traces, effects, recovery and unknowns before reporting a decision. Only call review_architectural_proposal when the user explicitly asks to record APPROVE or REQUEST_CHANGES; analysis is not approval.
+
 When multiple resources are authored as complementary projections of substantially the same behavior, inspect existing typed relationships and create the appropriate complementary-view relationship if absent. Do not mechanically relate resources merely because they share a domain or terminology.
 
 Assessment guidance: INCOMPLETE means the representation and semantic boundary are correct but important knowledge is missing. MISREPRESENTED means the representation's semantics do not match observed behavior; synchronous HTTP routing represented as asynchronous Event Flow is MISREPRESENTED, not merely incomplete.
