@@ -10,6 +10,9 @@ export interface ProposalResourceSnapshot {
   sourceRevision: number;
   content: string;
   metadata?: ResourceMetadata;
+  operation?: "CREATE" | "UPDATE" | "RETIRE";
+  baseResourceId?: string;
+  baseRevision?: number;
 }
 
 export interface ProposalSemanticMessageSnapshot extends SemanticMessageIdentity {

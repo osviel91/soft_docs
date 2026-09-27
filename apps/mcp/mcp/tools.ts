@@ -41,6 +41,7 @@ import type { Permission } from "../../../src/domain/access/permissions";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
+import type { PromotionService } from "../../../src/application/promotion-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ResourceRecord } from "../../../src/application/ports/project-repository";
 import { invalid, notFound } from "../../../src/application/errors";
@@ -88,6 +89,7 @@ export interface ToolContext {
   catalog: ProjectCatalog;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
+  promotion: PromotionService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   /** Aborted when the client disconnects or the tool deadline elapses. */
@@ -954,7 +956,7 @@ export function createMcpTools(): McpTool[] {
       title: "Submit architectural proposal",
       description: "Explicitly submit selected MY WORK resources as an immutable, non-authoritative team-visible proposal. This never changes SHARED.",
       inputSchema: {
-        projectId: projectId(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()).min(1),
+        projectId: projectId(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(),
         title: z.string().min(1), description: z.string().optional(),
       },
       annotations: { ...WRITE, title: "Submit architectural proposal" },
@@ -962,10 +964,35 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const proposal = await toolContext.architecturalProposals.submit(toolContext.context, {
           projectId: stringArg(args, "projectId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"),
-          resourceIds: args.resourceIds as string[], title: stringArg(args, "title"),
+           resourceIds: args.resourceIds as string[], title: stringArg(args, "title"),
+           ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}),
           ...(typeof args.description === "string" ? { description: args.description } : {}),
         });
         return { text: `Submitted ${proposal.title} as ${proposal.id}; SHARED was not changed.`, structured: { proposal } };
+      },
+    },
+    {
+      name: "preview_architectural_proposal_promotion",
+      title: "Preview architectural proposal promotion",
+      description: "Inspect the deterministic promotion plan and blockers without changing SHARED.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
+      annotations: { ...READ_ONLY, title: "Preview proposal promotion" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const preview = await toolContext.promotion.preview(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
+        return { text: JSON.stringify(preview), structured: { preview } };
+      },
+    },
+    {
+      name: "promote_architectural_proposal",
+      title: "Promote architectural proposal",
+      description: "Apply an approved proposal to SHARED as one explicit atomic promotion.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), idempotencyKey: z.string().optional() },
+      annotations: { ...WRITE, title: "Promote architectural proposal", destructiveHint: true },
+      requiredPermissions: ["promotion:execute"],
+      async run(args, toolContext) {
+        const promotion = await toolContext.promotion.execute(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"), typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined);
+        return { text: `Promoted proposal ${promotion.proposalId}.`, structured: { promotion } };
       },
     },
     {

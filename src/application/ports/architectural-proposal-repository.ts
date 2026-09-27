@@ -8,6 +8,11 @@ export interface ProposalSelection {
   expectedRevision: number;
 }
 
+export interface ProposalRetirementSelection {
+  resourceId: string;
+  expectedRevision: number;
+}
+
 export interface ArchitecturalProposalRepository {
   submit(input: {
     projectId: string;
@@ -16,6 +21,7 @@ export interface ArchitecturalProposalRepository {
     title: string;
     description?: string;
     selections: ProposalSelection[];
+    retirements?: ProposalRetirementSelection[];
     privateMessageIds: string[];
     baseSharedRevision: string;
     baseSharedResourceRevisions: Record<string, number>;

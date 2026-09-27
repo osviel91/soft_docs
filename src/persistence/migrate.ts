@@ -33,6 +33,8 @@ import { up as architecturalProposals } from "./migrations/0017-architectural-pr
 import { up as proposalReviews } from "./migrations/0018-proposal-reviews";
 import { up as authoritativeLifecycle } from "./migrations/0019-authoritative-lifecycle";
 import { up as authoritativeBatches } from "./migrations/0020-authoritative-batches";
+import { up as promotions } from "./migrations/0021-promotions";
+import { up as explicitProposalOperations } from "./migrations/0022-explicit-proposal-operations";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -66,6 +68,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 18, name: "proposal-reviews", sql: proposalReviews },
   { version: 19, name: "authoritative-lifecycle", sql: authoritativeLifecycle },
   { version: 20, name: "authoritative-batches", sql: authoritativeBatches },
+  { version: 21, name: "promotions", sql: promotions },
+  { version: 22, name: "explicit-proposal-operations", sql: explicitProposalOperations },
 ];
 
 /**

@@ -76,13 +76,11 @@ review. Server projects now also have explicit **MY WORK** contexts: private,
 tentative knowledge owned by one user inside the project. This is distinct from
 LOCAL machine knowledge and SHARED authoritative project knowledge. MY WORK may
 read SHARED, but SHARED never implicitly reads MY WORK; every private fact keeps
-its context provenance. Full semantic architecture comparison and promotion are
-not implemented here. Architectural Proposals are the explicit transition from MY
+its context provenance. Architectural Proposals are the explicit transition from MY
 WORK to team-visible review: a selected-resource snapshot is immutable,
 non-authoritative, and never a live alias of the source context. Proposal reads
 expose only submitted resources and dependencies. Proposal status is deliberately
-minimal (`open`); approval, rejection, promotion, merge, and lineage remain
-future capabilities.
+minimal (`open`); review evidence is separate from authoritative promotion.
 
 Authoritative SHARED resources have a non-destructive lifecycle: `ACTIVE -> RETIRED`.
 Retirement removes a resource from current listings, indexes, fingerprints, and
@@ -115,12 +113,15 @@ message UUID alone is not enough to reconstruct its name or kind. Retirement doe
 not remove an identity from the manifest, so another active occurrence remains
 bound to the same identity.
 
-Authoritative multi-resource mutations use a journaled batch envelope. Resource
-rows, immutable revisions, relationship retirement evidence, audit, and the batch
-member intents commit in one SQL transaction. Filesystem staging and promotion are
-outside that transaction; unfinished members remain recoverable until every member
-is complete. A batch is not reported complete before its journal members settle,
-and retries use the existing idempotency records.
+Authoritative multi-resource mutations, including Proposal promotion, use a
+journaled batch envelope. Resource rows, immutable revisions, relationship
+retirement evidence, audit, promotion lineage, and batch member intents commit in
+one SQL transaction. Resource files and `project.json` are staged before the claim;
+unfinished members remain recoverable until every member and the manifest settle.
+Promotion evidence is `COMMITTED_COMPLETION_PENDING` until that recovery boundary
+is complete, then becomes `COMPLETED`. Pending completion is not reported as a
+successful promotion. Replays use the existing idempotency records and preserve
+the same resource and semantic identity ids.
 
 PROPOSAL analysis is effective SHARED plus the submitted snapshot, with provenance
 retained. A proposal records a SHARED resource-revision vector as its base. Current
@@ -135,7 +136,9 @@ The governance path is:
 ```text
 MY WORK -> PROPOSAL -> REVIEW EVIDENCE
                          |
-                         +-- still not SHARED
+                            +-- still not SHARED
+                                      |
+                                      +-- explicit promotion intent -> SHARED
 ```
 
 Reviews are append-only records containing `APPROVE` or `REQUEST_CHANGES`, a concise
@@ -148,6 +151,12 @@ candidate-only correlations, incomplete validation, and stale bases are evidence
 for human review, not automatic rejection or acceptance. Semantic/causal analysis,
 anchors, provenance, effects, recovery, and traces are the primary review surface;
 textual diffs are not architectural impact.
+
+Each submitted resource snapshot carries explicit `CREATE`, `UPDATE`, or `RETIRE`
+intent. Omission is not retirement. A RETIRE snapshot names the authoritative
+resource and exact base revision; promotion removes it from current SHARED state
+without deleting its identity, last active revision, or historical relationship
+evidence.
 
 ## Explorer Navigation
 

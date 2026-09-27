@@ -25,6 +25,8 @@ import { createAgentService } from "../../src/application/agent-service";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
+import { createPromotionService } from "../../src/application/promotion-service";
+import { createAuthorizationPolicy } from "../../src/application/authorization";
 import { createCredentialMint } from "./auth/agent-credential";
 import type { ServerConfig } from "./config";
 
@@ -57,6 +59,7 @@ export interface AppDependencies {
   workspaceService: ReturnType<typeof createWorkspaceService>;
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
+  promotion: ReturnType<typeof createPromotionService>;
   trajectory: ReturnType<typeof createResourceTrajectoryService>;
   /** Where a project's files live. Never derived from a request. */
   storageFor: ServerRuntime["storageFor"];
@@ -135,6 +138,17 @@ export async function createApp(
     );
   });
 
+  const promotion = createPromotionService({
+    proposals: runtime.architecturalProposals,
+    projects: runtime.projects,
+    reviews: runtime.proposalReviews,
+    batches: runtime.authoritativeBatches,
+    promotions: runtime.promotions,
+    storage: runtime.storageFor,
+    policy: createAuthorizationPolicy(runtime.projects),
+  });
+  await promotion.recover();
+
   return {
     config,
     runtime,
@@ -179,6 +193,7 @@ export async function createApp(
       reviews: runtime.proposalReviews,
       storage: runtime.storageFor,
     }),
+    promotion,
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
     storageFor: runtime.storageFor,
     locationFor: runtime.locationFor,

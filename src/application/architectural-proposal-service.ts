@@ -39,7 +39,7 @@ function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitectur
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
   get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string }>;
-  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   validate(context: ApplicationContext, projectId: string, proposalId: string): Promise<{ diagnostics: ProjectDiagnostic[]; index: ProjectIndex }>;
   trace(context: ApplicationContext, projectId: string, proposalId: string, input: { messageId: string; direction: TraceDirection; maxDepth: number; maxNodes: number; includeCandidates: boolean; includeRecovery: boolean }): Promise<{ trace: ArchitectureTrace | null; resolution: unknown }>;
   reviews(context: ApplicationContext, projectId: string, proposalId: string): Promise<ProposalReviewSummary>;
@@ -112,7 +112,8 @@ export function createArchitecturalProposalService(options: {
       const title = input.title.trim();
       if (!title) throw invalid("A proposal title is required.");
       const ids = [...new Set(input.resourceIds)];
-      if (ids.length === 0) throw invalid("Select at least one private resource.");
+      const retireIds = [...new Set(input.retireResourceIds ?? [])];
+      if (ids.length === 0 && retireIds.length === 0) throw invalid("Select at least one private resource or explicit retirement target.");
       const resources = await options.projects.listResources(input.projectId, source.id);
       const selected = resources.filter((resource) => ids.includes(resource.id));
       if (selected.length !== ids.length) throw notFound("One or more selected private resources are not available.");
@@ -120,12 +121,16 @@ export function createArchitecturalProposalService(options: {
       const currentContents = await Promise.all(selected.map(async (resource) => (await options.projects.getRevision(resource.id, resource.revision))?.content ?? ""));
       const privateMessageIds = privateMessages.filter((message) => currentContents.some((content) => content.includes(message.id))).map((message) => message.id);
       const base = await options.proposals.currentSharedRevision(input.projectId);
+      const shared = await options.projects.listResources(input.projectId, null);
+      const retirementTargets = shared.filter((resource) => retireIds.includes(resource.id));
+      if (retirementTargets.length !== retireIds.length) throw notFound("One or more retirement targets are not active SHARED resources.");
       let proposal: ArchitecturalProposal;
       try {
         proposal = await options.proposals.submit({
           projectId: input.projectId, authorUserId: context.principal.subjectUserId, sourcePrivateContextId: source.id,
           title, ...(input.description === undefined ? {} : { description: input.description }),
-          selections: selected.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })), privateMessageIds,
+           selections: selected.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })),
+           retirements: retirementTargets.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })), privateMessageIds,
           baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources,
         });
       } catch (error) {
@@ -135,7 +140,7 @@ export function createArchitecturalProposalService(options: {
         action: "proposal.submitted", subjectUserId: context.principal.subjectUserId,
         actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal),
         authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId,
-        detail: { proposalId: proposal.id, sourcePrivateContextId: source.id, resourceIds: proposal.resources.map((resource) => resource.sourceResourceId), baseSharedRevision: proposal.baseSharedRevision },
+         detail: { proposalId: proposal.id, sourcePrivateContextId: source.id, resourceIds: proposal.resources.map((resource) => resource.sourceResourceId), retirementResourceIds: retireIds, baseSharedRevision: proposal.baseSharedRevision },
       });
       return publicProposal(proposal);
     },

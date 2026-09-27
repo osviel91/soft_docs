@@ -134,7 +134,7 @@ export interface ServerArchitecturalProposal {
   changesRequested?: number;
   createdAt: string;
   submittedAt: string;
-  resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string }>;
+  resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string; operation?: "CREATE" | "UPDATE" | "RETIRE"; baseResourceId?: string; baseRevision?: number }>;
   semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
   relationships: ResourceRelationship[];
 }
@@ -156,6 +156,16 @@ export interface ServerProposalReviewSummary {
   approvals: number;
   changesRequested: number;
   reviews: ServerProposalReview[];
+}
+
+export interface ServerPromotionPreview {
+  eligible: boolean;
+  reviewStatus: "none" | "approved" | "changes-requested" | "mixed";
+  staleBase: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  creates: Array<{ path: string; operation: string }>;
+  updates: Array<{ path: string; operation: string }>;
+  retires: Array<{ path: string; operation: string }>;
 }
 
 /** An agent identity, as `/api/agents` renders it. */
@@ -505,7 +515,7 @@ export class ServerApiClient {
     return body.proposals ?? [];
   }
 
-  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`, input);
     return body.proposal;
   }
@@ -523,6 +533,16 @@ export class ServerApiClient {
   async reviewArchitecturalProposal(projectId: string, proposalId: string, input: { decision: "APPROVE" | "REQUEST_CHANGES"; summary?: string }): Promise<ServerProposalReview> {
     const body = await this.request<{ review: ServerProposalReview }>("POST", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/reviews?projectId=${encodeURIComponent(projectId)}`, input);
     return body.review;
+  }
+
+  async previewArchitecturalProposalPromotion(projectId: string, proposalId: string): Promise<ServerPromotionPreview> {
+    const body = await this.request<{ promotion: ServerPromotionPreview }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/promotion?projectId=${encodeURIComponent(projectId)}`);
+    return body.promotion;
+  }
+
+  async promoteArchitecturalProposal(projectId: string, proposalId: string): Promise<unknown> {
+    const body = await this.request<{ promotion: unknown }>("POST", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/promotion?projectId=${encodeURIComponent(projectId)}`, undefined, { "Idempotency-Key": `promotion:${proposalId}` });
+    return body.promotion;
   }
 
   async createPrivateWorkContext(projectId: string, input: { name: string; description?: string }): Promise<ServerPrivateWorkContext> {
@@ -832,6 +852,7 @@ export class ServerApiClient {
     method: string,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<T> {
     let response: Response;
     try {
@@ -841,13 +862,11 @@ export class ServerApiClient {
         // The session is a cookie, and the cookie is HttpOnly: the browser
         // attaches it, JavaScript never sees it.
         credentials: "same-origin",
-        headers:
-          body === undefined
-            ? { accept: "application/json" }
-            : {
-                accept: "application/json",
-                "content-type": "application/json",
-              },
+        headers: {
+          accept: "application/json",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...extraHeaders,
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch (error) {

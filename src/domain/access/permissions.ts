@@ -48,6 +48,7 @@ export type Permission =
   | "project:search"
   | "project:validate"
   | "project:export"
+  | "promotion:execute"
   | "agent:manage"
   | "credential:manage"
   | "user:manage";
@@ -68,6 +69,7 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "project:search",
   "project:validate",
   "project:export",
+  "promotion:execute",
   "agent:manage",
   "credential:manage",
   "user:manage",
@@ -145,6 +147,7 @@ export const PERMISSIONS_BY_ROLE: Readonly<
     "agent:manage",
     "credential:manage",
     "user:manage",
+    "promotion:execute",
   ],
   EDITOR: [...READ_PERMISSIONS, ...RESOURCE_WRITE_PERMISSIONS],
   VIEWER: [...READ_PERMISSIONS],

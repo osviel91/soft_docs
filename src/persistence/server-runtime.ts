@@ -50,6 +50,7 @@ import { createKnowledgeContextRepository } from "./knowledge-context-repository
 import { createArchitecturalProposalRepository } from "./architectural-proposal-repository";
 import { createProposalReviewRepository } from "./proposal-review-repository";
 import { createAuthoritativeBatchRepository } from "./authoritative-batch-repository";
+import { createPromotionRepository } from "./promotion-repository";
 
 /** The configuration the shared runtime needs. */
 export interface ServerRuntimeConfig {
@@ -91,6 +92,7 @@ export interface ServerRuntime {
   architecturalProposals: ReturnType<typeof createArchitecturalProposalRepository>;
   proposalReviews: ReturnType<typeof createProposalReviewRepository>;
   authoritativeBatches: ReturnType<typeof createAuthoritativeBatchRepository>;
+  promotions: ReturnType<typeof createPromotionRepository>;
   /** The one authoritative resource-mutation path. */
   mutations: WorkspaceMutationService;
   /** The HMAC pepper credential digests are keyed with. Never sent anywhere. */
@@ -160,6 +162,7 @@ export async function createServerRuntime(
   const architecturalProposals = createArchitecturalProposalRepository(sql);
   const proposalReviews = createProposalReviewRepository(sql);
   const authoritativeBatches = createAuthoritativeBatchRepository(sql);
+  const promotions = createPromotionRepository(sql);
   const mutations = createWorkspaceMutationService({
     projects,
     storage: storageForContext,
@@ -188,6 +191,7 @@ export async function createServerRuntime(
     architecturalProposals,
     proposalReviews,
     authoritativeBatches,
+    promotions,
     mutations,
     tokenPepper: config.tokenPepper,
     storageFor,

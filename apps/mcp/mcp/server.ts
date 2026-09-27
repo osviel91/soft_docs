@@ -38,6 +38,7 @@ import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
+import type { PromotionService } from "../../../src/application/promotion-service";
 import { credentialGrants } from "../../../src/application/authorization";
 import { forbidden, invalid } from "../../../src/application/errors";
 import packageJson from "../../../package.json";
@@ -87,7 +88,7 @@ Event Flow causal authoring is explicit: declare "event Name", declare "handler 
 
 ${SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE}
 
-Review workflow: inspect the Proposal, base/current status, validation, semantic anchors, traces, effects, recovery and unknowns before reporting a decision. Only call review_architectural_proposal when the user explicitly asks to record APPROVE or REQUEST_CHANGES; analysis is not approval.
+Review workflow: inspect the Proposal, base/current status, validation, semantic anchors, traces, effects, recovery and unknowns before reporting a decision. Only call review_architectural_proposal when the user explicitly asks to record APPROVE or REQUEST_CHANGES; analysis is not approval. Omission is not retirement: author retirement explicitly with retireResourceIds. RETIRE removes a resource from current SHARED knowledge while preserving its identity, revision history and relationship evidence. Approval alone does not promote; call preview_architectural_proposal_promotion and then promote_architectural_proposal only with explicit user intent.
 
 When multiple resources are authored as complementary projections of substantially the same behavior, inspect existing typed relationships and create the appropriate complementary-view relationship if absent. Do not mechanically relate resources merely because they share a domain or terminology.
 
@@ -101,6 +102,7 @@ export interface McpServerForPrincipalOptions {
   catalog: ProjectCatalog;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
+  promotion: PromotionService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   observability: Observability;
@@ -234,6 +236,7 @@ export function createMcpServerForPrincipal(
              catalog,
              proposals,
              architecturalProposals,
+             promotion: options.promotion,
              trajectory,
             config,
             signal,

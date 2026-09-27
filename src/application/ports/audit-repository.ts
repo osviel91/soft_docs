@@ -33,6 +33,7 @@ export const AUDIT_ACTIONS = [
   "project.updated",
   "proposal.submitted",
   "proposal.reviewed",
+  "proposal.promoted",
   "project.deleted",
   "project.member.added",
   "project.member.removed",

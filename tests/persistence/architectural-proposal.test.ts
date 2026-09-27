@@ -14,6 +14,10 @@ import { createWorkspaceOperationRepository } from "../../src/persistence/worksp
 import { createFsProjectStorage } from "../../src/persistence/fs-project-storage";
 import { createProjectCatalog } from "../../src/application/project-catalog";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
+import { createAuthoritativeBatchRepository } from "../../src/persistence/authoritative-batch-repository";
+import { createPromotionRepository } from "../../src/persistence/promotion-repository";
+import { createPromotionService } from "../../src/application/promotion-service";
+import { createAuthorizationPolicy } from "../../src/application/authorization";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
 import type { SqlClient } from "../../src/persistence/sql-client";
@@ -24,6 +28,7 @@ let users: ReturnType<typeof createUserRepository>;
 let catalog: ReturnType<typeof createProjectCatalog>;
 let service: ReturnType<typeof createArchitecturalProposalService>;
 let architecturalProposals: ReturnType<typeof createArchitecturalProposalRepository>;
+let promotionService: ReturnType<typeof createPromotionService>;
 
 const contextFor = (id: string): ApplicationContext => ({
   requestId: "proposal-test",
@@ -50,6 +55,15 @@ beforeAll(async () => {
     projects,
     knowledgeContexts,
     reviews: createProposalReviewRepository(client),
+  });
+  promotionService = createPromotionService({
+    proposals: architecturalProposals,
+    projects,
+    reviews: createProposalReviewRepository(client),
+    batches: createAuthoritativeBatchRepository(client),
+    promotions: createPromotionRepository(client),
+    storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }),
+    policy: createAuthorizationPolicy(projects),
   });
 });
 
@@ -103,6 +117,87 @@ it("marks a proposal stale when an included SHARED resource is retired", async (
   await catalog.deleteResource(contextFor(owner), project.id, shared.id);
 
   await expect(service.get(contextFor(owner), project.id, proposal.id)).resolves.toMatchObject({ staleBase: true });
+});
+
+it("captures explicit SHARED retirement intent without treating omission as retirement", async () => {
+  const owner = await user("explicit-retirement-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Explicit Retirement", workspaceId: owner })).project;
+  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "legacy.md", type: "markdown-document", content: "# Legacy\n" });
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "retirement-intent" });
+  const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "new.md", type: "markdown-document", content: "# New\n" });
+
+  const omittedProposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [candidate.id], title: "No retirement" });
+  expect(omittedProposal.resources.find((resource) => resource.sourceResourceId === shared.id)).toBeUndefined();
+
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [], retireResourceIds: [shared.id], title: "Retire legacy knowledge" });
+  expect(proposal.resources).toMatchObject([{ sourceResourceId: shared.id, operation: "RETIRE", baseResourceId: shared.id, baseRevision: shared.revision, content: "# Legacy\n" }]);
+  expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.operation).toBe("RETIRE");
+});
+
+it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", async () => {
+  const owner = await user("promotion-owner");
+  const reviewer = await user("promotion-reviewer");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Promotion", workspaceId: owner })).project;
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const sharedA = await catalog.createResource(contextFor(owner), project.id, { path: "a.md", type: "markdown-document", content: "A3\n" });
+  const sharedB = await catalog.createResource(contextFor(owner), project.id, { path: "b.md", type: "markdown-document", content: "B5\n" });
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "promotion-work" });
+  const privateA = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "a.md", type: "markdown-document", content: "A4\n" });
+  const privateC = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "c.md", type: "markdown-document", content: "C1\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [privateA.id, privateC.id], retireResourceIds: [sharedB.id], title: "A4 B retired C1" });
+  expect(proposal.resources.map((resource) => resource.operation).sort()).toEqual(["CREATE", "RETIRE", "UPDATE"]);
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  const preview = await promotionService.preview(contextFor(owner), project.id, proposal.id);
+  expect(preview.creates).toHaveLength(1);
+  expect(preview.updates).toHaveLength(1);
+  expect(preview.retires).toHaveLength(1);
+  const promotion = await promotionService.execute(contextFor(owner), project.id, proposal.id, "promotion-test-key");
+  expect(promotion.status).toBe("COMPLETED");
+  expect(promotion.entries.map((entry) => entry.operation).sort()).toEqual(["CREATE", "RETIRE", "UPDATE"]);
+  expect((await catalog.readResource(contextFor(owner), project.id, sharedA.id)).resource.revision).toBe(sharedA.revision + 1);
+  await expect(catalog.readResource(contextFor(owner), project.id, sharedB.id)).rejects.toMatchObject({ code: "not_found" });
+  expect(await (createProjectRepository(client).findHistoricalResource?.(project.id, sharedB.id))).toMatchObject({ lifecycle: "RETIRED", revision: sharedB.revision });
+  const promotedStorage = createFsProjectStorage({ root: path.join(volume, project.id) });
+  expect((await promotedStorage.read("b.md"))).toMatchObject({ ok: true, value: null });
+  const manifest = await promotedStorage.read("project.json");
+  expect(manifest).toMatchObject({ ok: true });
+  expect(JSON.parse(manifest.ok && manifest.value ? manifest.value.content : "{}").resources.map((resource: { id: string }) => resource.id)).toEqual(expect.arrayContaining([sharedA.id]));
+  expect(JSON.parse(manifest.ok && manifest.value ? manifest.value.content : "{}").resources.map((resource: { id: string }) => resource.id)).not.toContain(sharedB.id);
+  const retry = await promotionService.execute(contextFor(owner), project.id, proposal.id, "promotion-test-key");
+  expect(retry.id).toBe(promotion.id);
+  expect((await createPromotionRepository(client).listForResource(project.id, sharedA.id))).toHaveLength(1);
+});
+
+it("recovers a committed promotion after a manifest-stage crash and settles it once", async () => {
+  const owner = await user("promotion-recovery-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Promotion Recovery", workspaceId: owner })).project;
+  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "recover.md", type: "markdown-document", content: "before\n" });
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "recovery-work" });
+  const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "recover.md", type: "markdown-document", content: "after\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [candidate.id], title: "Recoverable update" });
+  const storage = createFsProjectStorage({ root: path.join(volume, project.id) });
+  const batchRepository = createAuthoritativeBatchRepository(client);
+  const promotionRepository = createPromotionRepository(client);
+  const batchId = "00000000-0000-4000-8000-000000000101";
+  const promotionId = "00000000-0000-4000-8000-000000000102";
+  const stagedPath = `.sdd-staging/${batchId}/recover.md`;
+  const manifestPath = `.sdd-staging/${batchId}/project.json`;
+  await storage.write(stagedPath, "after\n");
+  await storage.write(manifestPath, JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [{ id: shared.id, path: "recover.md", type: "markdown-document" }] }, null, 2));
+  await batchRepository.claim({
+    batchId, projectId: project.id,
+    actor: { kind: "user", userId: owner, subjectUserId: owner },
+    audit: { action: "proposal.promoted", subjectUserId: owner, actorType: "user", actorId: owner, authType: "session", projectId: project.id },
+    operations: [{ operation: "update", resourceId: shared.id, path: "recover.md", expectedRevision: shared.revision, content: "after\n", stagedPath }],
+    manifest: { expectedRevision: 0, expectedContent: null, content: JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [{ id: shared.id, path: "recover.md", type: "markdown-document" }] }, null, 2), stagedPath: manifestPath },
+    promotion: { id: promotionId, proposalId: proposal.id, baseSharedRevision: proposal.baseSharedRevision, entries: [{ id: "00000000-0000-4000-8000-000000000103", proposalResourceId: candidate.id, operation: "UPDATE", path: "recover.md", type: "markdown-document", baseResourceId: shared.id, baseRevision: shared.revision, resultingResourceId: shared.id, resultingRevision: shared.revision + 1, resultingLifecycle: "ACTIVE" }], relationships: [] },
+  });
+  const first = await promotionService.recover();
+  expect(first.completed).toBeGreaterThanOrEqual(1);
+  expect((await storage.read("recover.md"))).toMatchObject({ ok: true, value: { content: "after\n" } });
+  expect((await promotionRepository.getForProposal(project.id, proposal.id))).toMatchObject({ id: promotionId, status: "COMPLETED" });
+  const second = await promotionService.recover();
+  expect(second.examined).toBe(0);
 });
 
 it("persists append-only review history, aggregates latest decisions, and keeps the snapshot immutable", async () => {

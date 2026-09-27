@@ -33,6 +33,7 @@ import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
+import type { PromotionService } from "../../../src/application/promotion-service";
 import { classForTool, type McpConfig, type RateLimitClass } from "../config";
 import type { McpAuthenticator } from "../auth/bearer";
 import { bearerChallenge } from "../auth/challenge";
@@ -49,6 +50,7 @@ export interface McpHandlerDeps {
   catalog: ProjectCatalog;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
+  promotion: PromotionService;
   trajectory: ResourceTrajectoryService;
   authenticator: McpAuthenticator;
   limiter: RateLimiter;
@@ -482,6 +484,7 @@ export async function handleMcpRequest(
     catalog: deps.catalog,
     proposals: deps.proposals,
     architecturalProposals: deps.architecturalProposals,
+    promotion: deps.promotion,
     trajectory: deps.trajectory,
     config: deps.config,
     observability: deps.observability,

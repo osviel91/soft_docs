@@ -1,0 +1,206 @@
+import type { ApplicationContext } from "./context";
+import { actorIdOf, actorTypeOf, credentialIdOf } from "./context";
+import type { AuthorizationPolicy } from "./authorization";
+import type { ProjectRepository } from "./ports/project-repository";
+import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
+import type { ProposalReviewRepository } from "./ports/proposal-review-repository";
+import type { AuthoritativeBatchRepository, AuthoritativeBatchOperation } from "./ports/authoritative-batch-repository";
+import type { ProjectStorage } from "./project-storage";
+import type { Promotion, PromotionEntry, PromotionPreview } from "../domain/workspace/promotion";
+import { conflict, forbidden, invalid, notFound, unavailable } from "./errors";
+import { createEmptyMetadata, parseProjectMetadata, type ProjectMetadata } from "../domain/workspace/metadata";
+import { createIdGenerator } from "../shared/ids/uuid";
+import type { ResourceAuthorship } from "../domain/workspace/resource-revision";
+import type { ServerProject } from "../domain/project/server-project";
+import type { ResourceRelationship } from "../domain/workspace/resource-relationship";
+import { createHash } from "node:crypto";
+
+export interface PromotionService {
+  preview(context: ApplicationContext, projectId: string, proposalId: string): Promise<PromotionPreview>;
+  execute(context: ApplicationContext, projectId: string, proposalId: string, idempotencyKey?: string): Promise<Promotion>;
+  recover(limit?: number): Promise<{ examined: number; completed: number; pending: number }>;
+}
+
+export function createPromotionService(options: {
+  proposals: ArchitecturalProposalRepository;
+  projects: ProjectRepository;
+  reviews: ProposalReviewRepository;
+  batches: AuthoritativeBatchRepository;
+  promotions: import("./ports/promotion-repository").PromotionRepository;
+  storage: (projectId: string) => ProjectStorage;
+  policy: AuthorizationPolicy<ServerProject>;
+}): PromotionService {
+  const newId = createIdGenerator();
+  const plan = async (projectId: string, proposalId: string) => {
+    const proposal = await options.proposals.get(projectId, proposalId);
+    if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
+    const current = await options.proposals.currentSharedRevision(projectId);
+    const shared = await options.projects.listResources(projectId, null);
+    const byPath = new Map(shared.map((resource) => [resource.path, resource]));
+    const byId = new Map(shared.map((resource) => [resource.id, resource]));
+    const entries: PromotionEntry[] = proposal.resources.map((resource) => {
+      const operation = (resource as typeof resource & { operation?: PromotionEntry["operation"] }).operation;
+      const explicitBaseId = (resource as typeof resource & { baseResourceId?: string }).baseResourceId;
+      const existing = explicitBaseId ? byId.get(explicitBaseId) : byPath.get(resource.path);
+      const kind = operation ?? (existing ? "UPDATE" : "CREATE");
+      const baseResourceId = explicitBaseId ?? existing?.id;
+      const baseRevision = resource.baseRevision ?? existing?.revision;
+      const resultingResourceId = kind === "CREATE" ? newId() : baseResourceId ?? resource.sourceResourceId;
+      const resultingRevision = kind === "CREATE" ? 1 : kind === "UPDATE" ? (existing?.revision ?? baseRevision ?? 0) + 1 : (existing?.revision ?? baseRevision ?? 0);
+      return { id: newId(), proposalResourceId: resource.sourceResourceId, operation: kind, path: resource.path, type: resource.type, ...(baseResourceId ? { baseResourceId, baseRevision } : {}), resultingResourceId, resultingRevision, resultingLifecycle: kind === "RETIRE" ? "RETIRED" : "ACTIVE" };
+    });
+    const blockers: PromotionPreview["blockers"] = [];
+    if (proposal.baseSharedRevision !== current.revision) blockers.push({ code: "STALE_BASE", message: "SHARED changed since this proposal was submitted." });
+    for (const entry of entries) {
+      if (entry.operation !== "CREATE" && !entry.baseResourceId) blockers.push({ code: "MISSING_RETIREMENT_TARGET", message: `The ${entry.operation} target for ${entry.path} is missing.` });
+      if (entry.operation !== "CREATE" && entry.baseResourceId && !byId.has(entry.baseResourceId)) blockers.push({ code: "RETIREMENT_TARGET_NOT_ACTIVE", message: `The authoritative target for ${entry.path} is no longer active.`, resourceId: entry.baseResourceId });
+      if (entry.operation === "CREATE" && byPath.has(entry.path)) blockers.push({ code: "CREATE_PATH_TAKEN", message: `A SHARED resource already exists at ${entry.path}.`, resourceId: byPath.get(entry.path)?.id });
+      if (entry.operation !== "CREATE" && entry.baseResourceId && proposal.baseSharedResourceRevisions[entry.baseResourceId] !== entry.baseRevision) blockers.push({ code: "BASE_MISMATCH", message: `Resource ${entry.path} was not at the proposal base revision.`, resourceId: entry.baseResourceId, expectedRevision: proposal.baseSharedResourceRevisions[entry.baseResourceId], currentRevision: entry.baseRevision });
+    }
+    const reviews = await options.reviews.list(proposal.id);
+    const latest = new Map<string, typeof reviews[number]>();
+    for (const review of reviews) latest.set(review.reviewerUserId, review);
+    const effective = [...latest.values()];
+    const approvals = effective.filter((review) => review.decision === "APPROVE").length;
+    const changesRequested = effective.filter((review) => review.decision === "REQUEST_CHANGES").length;
+    const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
+    if (reviewStatus !== "approved") blockers.push({ code: "REVIEW_REQUIRED", message: "An explicit approval is required and no effective change request may remain." });
+    const entryByProposalId = new Map(entries.map((entry) => [entry.proposalResourceId, entry]));
+    const relationships = proposal.relationships.map((relationship) => ({
+      operation: "ADD" as const,
+      relationship: {
+        kind: relationship.kind,
+        sourceId: entryByProposalId.get(relationship.sourceId)?.resultingResourceId ?? relationship.sourceId,
+        targetId: entryByProposalId.get(relationship.targetId)?.resultingResourceId ?? relationship.targetId,
+        ...(relationship.sourceRole === undefined ? {} : { sourceRole: relationship.sourceRole }),
+        ...(relationship.targetRole === undefined ? {} : { targetRole: relationship.targetRole }),
+      } satisfies ResourceRelationship,
+    }));
+    return { proposal, current, entries, blockers, reviewStatus, shared, relationships };
+  };
+  const recover = async (limit = 100): Promise<{ examined: number; completed: number; pending: number }> => {
+      const batches = await options.batches.listIncomplete(limit);
+      let completed = 0;
+      for (const batch of batches) {
+        const store = options.storage(batch.projectId);
+        let ready = true;
+        for (const operation of batch.operations) {
+          if (operation.operation === "retire") {
+            if (operation.targetPath) { const removed = await store.remove(operation.targetPath); if (!removed.ok) ready = false; }
+            continue;
+          }
+          if (!operation.stagedPath || !operation.targetPath) { ready = false; continue; }
+          const promoted = await store.promote({ from: operation.stagedPath, to: operation.targetPath });
+          if (!promoted.ok) {
+            const target = await store.read(operation.targetPath);
+            if (!target.ok || !target.value || !operation.contentHash || createHash("sha256").update(target.value.content, "utf8").digest("hex") !== operation.contentHash) ready = false;
+          }
+        }
+        if (batch.manifest) {
+          const current = await store.read("project.json");
+          if (current.ok && current.value?.content === batch.manifest.content) {
+            // The manifest write already happened; only the settlement marker was lost.
+          } else if (current.ok && (current.value?.content ?? null) !== batch.manifest.expectedContent) {
+            ready = false;
+          } else if (!batch.manifest.stagedPath || !(await store.promote({ from: batch.manifest.stagedPath, to: "project.json" })).ok) {
+            const settled = await store.read("project.json");
+            if (!settled.ok || !settled.value || settled.value.content !== batch.manifest.content) ready = false;
+          }
+        }
+        if (!ready) continue;
+        await options.batches.complete(batch.id);
+        if (batch.promotionId) await options.promotions.complete(batch.promotionId);
+        completed += 1;
+      }
+      return { examined: batches.length, completed, pending: batches.length - completed };
+  };
+  return {
+    recover,
+    async preview(context, projectId, proposalId) {
+      await options.policy.requirePermission(context, projectId, "project:read");
+      const value = await plan(projectId, proposalId);
+      const existing = await options.promotions.getForProposal(projectId, proposalId);
+      const blockers = existing?.status === "COMMITTED_COMPLETION_PENDING" ? [...value.blockers, { code: "COMPLETION_PENDING", message: "This promotion committed SQL state and is awaiting authoritative manifest completion." }] : value.blockers;
+      return { proposalId, projectId, reviewStatus: value.reviewStatus as PromotionPreview["reviewStatus"], eligible: blockers.length === 0, blockers, baseSharedRevision: value.proposal.baseSharedRevision, currentSharedRevision: value.current.revision, staleBase: value.proposal.baseSharedRevision !== value.current.revision, creates: value.entries.filter((entry) => entry.operation === "CREATE"), updates: value.entries.filter((entry) => entry.operation === "UPDATE"), retires: value.entries.filter((entry) => entry.operation === "RETIRE"), semanticIdentityAdditions: value.proposal.semanticMessages.map((message) => message.id), semanticIdentityReuses: [], relationships: value.relationships };
+    },
+    async execute(context, projectId, proposalId, idempotencyKey) {
+      const authorization = await options.policy.requirePermission(context, projectId, "promotion:execute");
+      if (authorization.role !== "OWNER") throw forbidden("Only project owners may promote proposals.");
+      let prior = await options.promotions.getForProposal(projectId, proposalId);
+      if (prior?.status === "COMPLETED") return prior;
+      if (prior) { await recover(); prior = await options.promotions.getForProposal(projectId, proposalId); if (prior?.status === "COMPLETED") return prior; throw unavailable("The previous promotion is still awaiting authoritative completion."); }
+      const value = await plan(projectId, proposalId);
+      if (value.blockers.length) throw conflict("The proposal is not eligible for promotion.", { blockers: value.blockers });
+      const storage = options.storage(projectId);
+      const manifest = await storage.read("project.json");
+      if (!manifest.ok) throw unavailable("The project manifest could not be read.");
+      let metadata: ProjectMetadata;
+      try { metadata = manifest.value ? (parseProjectMetadata(JSON.parse(manifest.value.content)) ?? createEmptyMetadata()) : createEmptyMetadata(); } catch { throw invalid("The project manifest is invalid and cannot be promoted safely."); }
+      const knownMessages = new Map((metadata.semanticMessages ?? []).map((message) => [message.id, message]));
+      for (const message of value.proposal.semanticMessages) {
+        const existing = knownMessages.get(message.id);
+        if (existing && (existing.name !== message.name || existing.kind !== message.kind)) throw conflict(`Semantic identity ${message.id} conflicts with the SHARED manifest.`);
+        if (!existing) { knownMessages.set(message.id, { id: message.id, name: message.name, kind: message.kind }); }
+      }
+      const resourceRecords = [...metadata.resources];
+      for (const entry of value.entries) {
+        const existing = resourceRecords.find((resource) => resource.id === entry.resultingResourceId);
+        if (entry.operation === "CREATE") resourceRecords.push({ id: entry.resultingResourceId, path: entry.path, type: entry.type, title: entry.path });
+        else if (entry.operation === "RETIRE") {
+          const index = resourceRecords.findIndex((resource) => resource.id === entry.resultingResourceId);
+          if (index >= 0) resourceRecords.splice(index, 1);
+        } else if (existing) { existing.path = entry.path; existing.type = entry.type; }
+        else resourceRecords.push({ id: entry.resultingResourceId, path: entry.path, type: entry.type, title: entry.path });
+      }
+      const author: ResourceAuthorship = context.principal.actor.kind === "agent" ? { kind: "agent", agentId: context.principal.actor.agentId, credentialId: context.principal.actor.credentialId, subjectUserId: context.principal.subjectUserId } : { kind: "user", userId: context.principal.actor.userId, subjectUserId: context.principal.subjectUserId };
+      const batchId = newId();
+      const retiredIds = new Set(value.entries.filter((entry) => entry.operation === "RETIRE").map((entry) => entry.resultingResourceId));
+      const nextMetadata = { ...metadata, manifestRevision: (metadata.manifestRevision ?? 0) + 1, resources: resourceRecords, semanticMessages: [...knownMessages.values()], relationships: [...(metadata.relationships ?? []).filter((relationship) => !retiredIds.has(relationship.sourceId) && !retiredIds.has(relationship.targetId)), ...value.relationships.map((change) => change.relationship)] };
+      const manifestContent = JSON.stringify(nextMetadata, null, 2);
+      const manifestStagedPath = `.sdd-staging/${batchId}/project.json`;
+      const stagedManifest = await storage.write(manifestStagedPath, manifestContent);
+      if (!stagedManifest.ok) throw unavailable("The promotion could not stage the project manifest.");
+      const operations: AuthoritativeBatchOperation[] = [];
+      for (const resource of value.proposal.resources) {
+        const entry = value.entries.find((candidate) => candidate.proposalResourceId === resource.sourceResourceId)!;
+        const stagedPath = `.promotion/${batchId}/${entry.resultingResourceId}`;
+        if (entry.operation !== "RETIRE") {
+          const staged = await storage.write(stagedPath, resource.content);
+          if (!staged.ok) throw unavailable("The promotion could not stage a resource.");
+          operations.push(entry.operation === "CREATE" ? { operation: "create", resourceId: entry.resultingResourceId, path: entry.path, type: entry.type, content: resource.content, metadata: resource.metadata, stagedPath } : { operation: "update", resourceId: entry.resultingResourceId, path: entry.path, expectedRevision: entry.baseRevision!, content: resource.content, metadata: resource.metadata, stagedPath });
+        } else operations.push({ operation: "retire", resourceId: entry.resultingResourceId, path: entry.path, expectedRevision: entry.baseRevision! });
+      }
+      const promotionId = newId();
+      let batch;
+      try {
+        batch = await options.batches.claim({ batchId, projectId, actor: author, audit: { action: "proposal.promoted", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId, detail: { proposalId, batchId } }, operations, relationshipChanges: value.relationships, manifest: { expectedRevision: metadata.manifestRevision ?? 0, expectedContent: manifest.value?.content ?? null, content: manifestContent, stagedPath: manifestStagedPath }, idempotencyKey: idempotencyKey ?? `promotion:${proposalId}`, promotion: { id: promotionId, proposalId, baseSharedRevision: value.proposal.baseSharedRevision, entries: value.entries, relationships: value.relationships } });
+      } catch (error) {
+        await storage.remove(manifestStagedPath);
+        throw error;
+      }
+      for (const operation of batch.operations) {
+        if (operation.operation === "retire") {
+          if (operation.targetPath && !(await storage.remove(operation.targetPath)).ok) throw unavailable("The promotion is awaiting filesystem recovery.");
+        } else if (operation.stagedPath && operation.targetPath) {
+          const promoted = await storage.promote({ from: operation.stagedPath, to: operation.targetPath });
+          if (!promoted.ok) {
+            const settled = await storage.read(operation.targetPath);
+            if (!settled.ok || !settled.value || !operation.contentHash || createHash("sha256").update(settled.value.content, "utf8").digest("hex") !== operation.contentHash) throw unavailable("The promotion is awaiting filesystem recovery.");
+          }
+        }
+      }
+      const currentManifest = await storage.read("project.json");
+      if (!currentManifest.ok || (currentManifest.value?.content ?? null) !== (manifest.value?.content ?? null)) throw unavailable("The promotion is awaiting manifest recovery.");
+      const written = await storage.promote({ from: manifestStagedPath, to: "project.json" });
+      if (!written.ok) {
+        const settled = await storage.read("project.json");
+        if (!settled.ok || !settled.value || settled.value.content !== manifestContent) throw unavailable("The promotion is awaiting manifest recovery.");
+      }
+      await options.batches.complete(batch.id);
+      await options.promotions.complete(promotionId);
+      const promotion = await options.promotions.getForProposal(projectId, proposalId);
+      if (!promotion) throw unavailable("The promotion was committed but its evidence is not readable yet.");
+      return promotion;
+    },
+  };
+}

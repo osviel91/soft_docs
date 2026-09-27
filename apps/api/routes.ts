@@ -588,6 +588,7 @@ export function createRouter(dependencies: AppDependencies): Router {
         projectId: params.projectId,
         sourcePrivateContextId: requireBodyString(body, "sourcePrivateContextId"),
         resourceIds: Array.isArray(body.resourceIds) && body.resourceIds.every((id) => typeof id === "string") ? body.resourceIds as string[] : [],
+        ...(Array.isArray(body.retireResourceIds) && body.retireResourceIds.every((id) => typeof id === "string") ? { retireResourceIds: body.retireResourceIds as string[] } : {}),
         title: requireBodyString(body, "title"),
         ...(typeof body.description === "string" ? { description: body.description } : {}),
       });
@@ -620,6 +621,22 @@ export function createRouter(dependencies: AppDependencies): Router {
       if (decision !== "APPROVE" && decision !== "REQUEST_CHANGES") return errorResponse(422, "invalid", "Decision must be APPROVE or REQUEST_CHANGES.");
       const review = await dependencies.architecturalProposals.review(context, { projectId, proposalId: params.proposalId, decision, ...(typeof body.summary === "string" ? { summary: body.summary } : {}) });
       return json(201, { review });
+    }),
+  );
+
+  router.get("/api/architectural-proposals/:proposalId/promotion", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      return json(200, { promotion: await dependencies.promotion.preview(context, projectId, params.proposalId) });
+    }),
+  );
+
+  router.post("/api/architectural-proposals/:proposalId/promotion", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      return json(200, { promotion: await dependencies.promotion.execute(context, projectId, params.proposalId, request.headers["idempotency-key"] ?? undefined) });
     }),
   );
 

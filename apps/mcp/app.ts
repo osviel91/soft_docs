@@ -18,6 +18,8 @@ import { createProjectCatalog } from "../../src/application/project-catalog";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
+import { createPromotionService } from "../../src/application/promotion-service";
+import { createAuthorizationPolicy } from "../../src/application/authorization";
 import type { McpConfig } from "./config";
 import { createMcpAuthenticator, type McpAuthenticator } from "./auth/bearer";
 import { ProcessRateLimiter, type RateLimiter } from "./rate-limit";
@@ -52,6 +54,7 @@ export interface McpService {
   catalog: ReturnType<typeof createProjectCatalog>;
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
+  promotion: ReturnType<typeof createPromotionService>;
   authenticator: McpAuthenticator;
   limiter: RateLimiter;
   observability: Observability;
@@ -117,12 +120,14 @@ export async function createMcpService(
     storage: runtime.storageFor,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
+  const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy: createAuthorizationPolicy(runtime.projects) });
 
   const deps: McpHandlerDeps = {
     config,
     catalog,
     proposals,
     architecturalProposals,
+    promotion,
     trajectory,
     authenticator: createMcpAuthenticator({
       credentials: runtime.credentials,
@@ -145,6 +150,7 @@ export async function createMcpService(
       reason: "recovery",
     });
   });
+  await promotion.recover();
 
   observability.logger.log({
     event: "mcp.service.started",
@@ -159,6 +165,7 @@ export async function createMcpService(
     catalog,
     proposals,
     architecturalProposals,
+    promotion,
     authenticator: deps.authenticator,
     limiter: deps.limiter,
     observability,

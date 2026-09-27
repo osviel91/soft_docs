@@ -47,6 +47,9 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
     const resources = resourceRows.rows.map((row): ProposalResourceSnapshot => ({
       sourceResourceId: String(row.source_resource_id), path: String(row.path), type: row.type as ResourceType,
       sourceRevision: Number(row.source_revision), content: String(row.content), ...(metadata(row.metadata) ? { metadata: metadata(row.metadata) } : {}),
+      ...(row.operation == null ? {} : { operation: row.operation as ProposalResourceSnapshot["operation"] }),
+      ...(row.base_resource_id == null ? {} : { baseResourceId: String(row.base_resource_id) }),
+      ...(row.base_revision == null ? {} : { baseRevision: Number(row.base_revision) }),
     }));
     const messages = messageRows.rows.map((row): ProposalSemanticMessageSnapshot => ({ id: String(row.message_id), name: String(row.name), kind: row.kind as "event" | "command", sourceContextId: String(row.source_context_id) }));
     const relationships = relationshipRows.rows.map((row): ProposalRelationshipSnapshot => ({
@@ -62,18 +65,29 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
     async submit(input) {
       const title = input.title.trim();
       if (!title) throw new Error("A proposal title is required.");
-      if (input.selections.length === 0) throw new Error("Select at least one private resource.");
-      return client.transaction(async (tx) => {
+       if (input.selections.length === 0 && (input.retirements?.length ?? 0) === 0) throw new Error("Select at least one private resource or explicit retirement.");
+       return client.transaction(async (tx) => {
         const ids = input.selections.map((selection) => selection.resourceId);
         const selected = await tx.query(
           "SELECT r.*, rr.content AS snapshot_content, rr.type AS snapshot_type, rr.metadata AS snapshot_metadata FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.id AND rr.revision = r.revision WHERE r.project_id = $1 AND r.knowledge_context_id = $2 AND r.id = ANY($3::uuid[]) FOR UPDATE",
           [input.projectId, input.sourcePrivateContextId, ids],
         );
-        if (selected.rows.length !== input.selections.length) throw new Error("One or more selected private resources are no longer available.");
+         if (selected.rows.length !== input.selections.length) throw new Error("One or more selected private resources are no longer available.");
         for (const selection of input.selections) {
           const row = selected.rows.find((candidate) => String(candidate.id) === selection.resourceId);
           if (!row || Number(row.revision) !== selection.expectedRevision) throw new Error(`Private resource ${selection.resourceId} changed during submission; re-read and retry.`);
-        }
+         }
+         const retirements = input.retirements ?? [];
+         const retirementIds = retirements.map((selection) => selection.resourceId);
+         const retired = retirementIds.length === 0 ? { rows: [] } : await tx.query(
+           "SELECT r.*, rr.content AS snapshot_content, rr.type AS snapshot_type, rr.metadata AS snapshot_metadata FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.id AND rr.revision = r.revision WHERE r.project_id = $1 AND r.knowledge_context_id IS NULL AND r.lifecycle = 'ACTIVE' AND r.id = ANY($2::uuid[]) FOR UPDATE",
+           [input.projectId, retirementIds],
+         );
+         if (retired.rows.length !== retirementIds.length) throw new Error("One or more retirement targets are not active SHARED resources.");
+         for (const selection of retirements) {
+           const row = retired.rows.find((candidate) => String(candidate.id) === selection.resourceId);
+           if (!row || Number(row.revision) !== selection.expectedRevision) throw new Error(`SHARED resource ${selection.resourceId} changed during proposal submission; re-read and retry.`);
+         }
         const proposalId = newId();
         const inserted = await tx.query(
           `INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, description, base_shared_revision, base_shared_resource_revisions)
@@ -82,11 +96,26 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
         );
         for (const row of selected.rows) {
           await tx.query(
-            `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {})],
-          );
-        }
+             `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_revision)
+              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+             [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), undefined, null, null],
+           );
+         }
+         const sharedByPath = await tx.query("SELECT id, path, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE'", [input.projectId]);
+         for (const row of selected.rows) {
+           const base = sharedByPath.rows.find((candidate) => String(candidate.path) === String(row.path));
+           await tx.query(
+             `UPDATE architectural_proposal_resources SET operation = $3, base_resource_id = $4, base_revision = $5 WHERE proposal_id = $1 AND source_resource_id = $2`,
+             [proposalId, String(row.id), base ? "UPDATE" : "CREATE", base ? String(base.id) : null, base ? Number(base.revision) : null],
+           );
+         }
+         for (const row of retired.rows) {
+           await tx.query(
+             `INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_revision)
+              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'RETIRE', $2, $5)`,
+             [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {})],
+           );
+         }
         if (input.privateMessageIds.length > 0) {
           const messages = await tx.query("SELECT id, name, kind FROM private_semantic_messages WHERE project_id = $1 AND knowledge_context_id = $2 AND id = ANY($3::uuid[]) ORDER BY id", [input.projectId, input.sourcePrivateContextId, input.privateMessageIds]);
           if (messages.rows.length !== input.privateMessageIds.length) throw new Error("A private semantic identity dependency is no longer available.");

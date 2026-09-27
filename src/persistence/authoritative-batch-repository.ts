@@ -10,8 +10,11 @@ import { conflict, invalid, notFound, revisionConflict } from "../application/er
 import { normalizeResourceMetadata, parseResourceMetadata } from "../domain/workspace/resource-metadata";
 import { createAuditEventWriter } from "./audit-repository";
 import { toWorkspaceOperation } from "./workspace-operation-repository";
+import { createHash } from "node:crypto";
 
 const date = (value: unknown): Date => value instanceof Date ? value : new Date(String(value));
+const revisionFingerprint = (rows: Array<Record<string, unknown>>): string =>
+  JSON.stringify(rows.map((row) => [String(row.id), Number(row.revision)]).sort(([a], [b]) => String(a).localeCompare(String(b))));
 
 export function createAuthoritativeBatchRepository(
   client: SqlClient,
@@ -32,6 +35,8 @@ export function createAuthoritativeBatchRepository(
       createdAt: date(row.created_at),
       ...(row.completed_at == null ? {} : { completedAt: date(row.completed_at) }),
       operations: operations.rows.map(toWorkspaceOperation),
+      ...(row.promotion_id == null ? {} : { promotionId: String(row.promotion_id) }),
+      ...(row.manifest_content == null ? {} : { manifest: { expectedContent: row.manifest_expected_content == null ? null : String(row.manifest_expected_content), content: String(row.manifest_content), ...(row.manifest_staged_path == null ? {} : { stagedPath: String(row.manifest_staged_path) }) } }),
     };
   };
 
@@ -46,16 +51,17 @@ export function createAuthoritativeBatchRepository(
     const result = await tx.query(
       `INSERT INTO workspace_operations
          (id, project_id, resource_id, operation, status, source_path, target_path,
-          staged_path, expected_revision, resulting_revision, actor_type, actor_id,
-          credential_id, request_id, batch_id)
-       VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           staged_path, expected_revision, resulting_revision, actor_type, actor_id,
+           credential_id, request_id, batch_id, content_hash)
+        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [
         operationId, input.projectId, operation.resourceId, operation.operation,
         operation.path, operation.path, "stagedPath" in operation ? operation.stagedPath ?? null : null,
         expectedRevision, operation.operation === "create" ? 1 : expectedRevision === null ? null : expectedRevision + 1,
         input.audit.actorType ?? "user", input.audit.actorId ?? input.audit.subjectUserId,
-        input.audit.credentialId ?? null, input.audit.requestId ?? null, input.batchId,
+         input.audit.credentialId ?? null, input.audit.requestId ?? null, input.batchId,
+         content === undefined ? null : createHash("sha256").update(content, "utf8").digest("hex"),
       ],
     );
     if (!result.rows[0]) throw invalid("Could not journal authoritative batch operation.");
@@ -94,7 +100,12 @@ export function createAuthoritativeBatchRepository(
             }
           }
         }
-        await tx.query("INSERT INTO workspace_operation_batches (id, project_id) VALUES ($1, $2)", [input.batchId, input.projectId]);
+         await tx.query(
+           `INSERT INTO workspace_operation_batches
+              (id, project_id, promotion_id, manifest_expected_revision, manifest_expected_content, manifest_content, manifest_staged_path)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           [input.batchId, input.projectId, input.promotion?.id ?? null, input.manifest?.expectedRevision ?? null, input.manifest?.expectedContent ?? null, input.manifest?.content ?? null, input.manifest?.stagedPath ?? null],
+         );
         for (const operation of input.operations) {
             if (operation.operation === "create") {
               await tx.query(
@@ -137,6 +148,49 @@ export function createAuthoritativeBatchRepository(
             }
             await operationRow(tx, input, operation);
         }
+        for (const change of input.relationshipChanges ?? []) {
+          const relationship = change.relationship;
+          if (change.operation === "ADD") {
+            await tx.query(
+              `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
+               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (project_id, source_id, target_id) DO NOTHING`,
+              [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+            );
+          } else {
+            await tx.query(
+              `INSERT INTO resource_relationship_history (id, project_id, source_id, target_id, kind, source_role, target_role, recorded_by, operation_id)
+               SELECT $1, project_id, source_id, target_id, kind, source_role, target_role, $2, $3
+                 FROM resource_relationships WHERE project_id = $4 AND source_id = $5 AND target_id = $6`,
+              [newId(), input.audit.actorId ?? input.audit.subjectUserId, input.batchId, input.projectId, relationship.sourceId, relationship.targetId],
+            );
+            await tx.query("DELETE FROM resource_relationships WHERE project_id = $1 AND source_id = $2 AND target_id = $3", [input.projectId, relationship.sourceId, relationship.targetId]);
+          }
+        }
+        if (input.promotion) {
+          const current = await tx.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE' ORDER BY id", [input.projectId]);
+          const resultingRevision = revisionFingerprint(current.rows);
+          await tx.query(
+            `INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, resulting_shared_revision)
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+             [input.promotion.id, input.projectId, input.promotion.proposalId, JSON.stringify(input.actor), input.promotion.baseSharedRevision, resultingRevision],
+          );
+          for (const entry of input.promotion.entries) {
+            await tx.query(
+              `INSERT INTO promotion_entries
+                (id, promotion_id, proposal_resource_id, operation, path, type, base_resource_id, base_revision, resulting_resource_id, resulting_revision, resulting_lifecycle)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [entry.id, input.promotion.id, entry.proposalResourceId, entry.operation, entry.path, entry.type, entry.baseResourceId ?? null, entry.baseRevision ?? null, entry.resultingResourceId, entry.resultingRevision, entry.resultingLifecycle],
+            );
+          }
+          for (const change of input.promotion.relationships) {
+            const relationship = change.relationship;
+            await tx.query(
+              `INSERT INTO promotion_relationship_changes (id, promotion_id, operation, source_id, target_id, kind, source_role, target_role)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [newId(), input.promotion.id, change.operation, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+            );
+          }
+        }
         await writeAudit(tx, { ...input.audit, detail: { ...(input.audit.detail ?? {}), batchId: input.batchId, operationCount: input.operations.length } });
         if (input.idempotencyKey) {
           await tx.query("INSERT INTO idempotency_records (actor_id, project_id, idempotency_key, operation, status, result, completed_at) VALUES ($1, $2, $3, 'batch', 'completed', $4::jsonb, now())", [input.audit.actorId ?? input.audit.subjectUserId ?? "system", input.projectId, input.idempotencyKey, JSON.stringify({ batchId: input.batchId })]);
@@ -146,6 +200,7 @@ export function createAuthoritativeBatchRepository(
     },
     async complete(batchId) {
       return client.transaction(async (tx) => {
+        await tx.query("UPDATE workspace_operations SET status = 'completed', completed_at = now(), updated_at = now() WHERE batch_id = $1 AND status <> 'completed'", [batchId]);
         const pending = await tx.query("SELECT 1 FROM workspace_operations WHERE batch_id = $1 AND status <> 'completed' LIMIT 1", [batchId]);
         if (pending.rows.length > 0) return read(tx, batchId);
         await tx.query("UPDATE workspace_operation_batches SET status = 'completed', completed_at = now() WHERE id = $1", [batchId]);
@@ -154,6 +209,21 @@ export function createAuthoritativeBatchRepository(
     },
     get(batchId) {
       return read(client, batchId);
+    },
+    async listIncomplete(limit = 100) {
+      const rows = await client.query(
+        `SELECT b.id FROM workspace_operation_batches b
+          LEFT JOIN promotions p ON p.id = b.promotion_id
+         WHERE b.status <> 'completed' OR p.status = 'COMMITTED_COMPLETION_PENDING'
+         ORDER BY b.created_at, b.id LIMIT $1`,
+        [limit],
+      );
+      const result: AuthoritativeBatchRecord[] = [];
+      for (const row of rows.rows) {
+        const record = await read(client, String(row.id));
+        if (record) result.push(record);
+      }
+      return result;
     },
   };
 }
