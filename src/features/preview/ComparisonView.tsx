@@ -296,10 +296,10 @@ export default function ComparisonView({
           <option value="">Select a diagram</option>
           {diagrams.filter((diagram) => diagram.id !== primaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
         </select></label>
-        <button type="button" className="button button--ghost" onClick={swapViewers} disabled={!secondarySession}>Swap viewers</button>
-        {editorHidden ? <button type="button" className="button button--ghost" onClick={onToggleEditor}>Show editor</button> : null}
-        <button type="button" className="button button--ghost" onClick={onToggleMaximize}>{maximized ? "Restore comparison" : "Maximize comparison"}</button>
-        <button type="button" className="button button--ghost" onClick={onExit}>Close comparison</button>
+         <button type="button" className="icon-button" onClick={swapViewers} disabled={!secondarySession} title="Swap viewers" aria-label="Swap viewers">⇄</button>
+         {editorHidden ? <button type="button" className="icon-button" onClick={onToggleEditor} title="Show editor" aria-label="Show editor">▣</button> : null}
+         <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
+         <button type="button" className="icon-button" onClick={onExit} title="Close comparison" aria-label="Close comparison">×</button>
       </header>
        <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
       <div className="comparison__content">
