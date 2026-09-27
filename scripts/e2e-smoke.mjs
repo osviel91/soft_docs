@@ -586,7 +586,7 @@ async function waitForAuthEntry(page) {
     .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 }
 
-/** Create a server project from the switcher and wait until it is open. */
+/** Create a server project and wait for the Project Explorer to open it. */
 async function createServerProject(page, name) {
   await expandServerPanel(page);
   await page
@@ -595,7 +595,10 @@ async function createServerProject(page, name) {
   await page
     .locator('[data-testid="workspace-new-server-project-button"]')
     .click();
-  await openServerProject(page, name);
+  await page
+    .locator('[data-testid="workspace-active-project"]')
+    .filter({ hasText: name })
+    .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 }
 
 /** Open the server workspace section, which is collapsed by default. */
