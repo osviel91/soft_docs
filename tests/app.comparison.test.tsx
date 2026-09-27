@@ -94,6 +94,9 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByRole("button", { name: "Restore comparison" })).toBeInTheDocument();
     expect(screen.getByTestId("comparison-view").closest("main")).toHaveClass("app__workspace--preview-maximized");
 
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Maximize comparison" })).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
     expect(screen.getByTestId("dsl-editor")).toBeInTheDocument();
   });

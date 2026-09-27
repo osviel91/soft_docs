@@ -15,6 +15,7 @@ import { crossContextAnalysis, type AnalysisOptions, type CrossContextAnalysis }
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { AnalysisContext } from "./cross-context-analysis";
 import { analysisProvenanceLabel, type KnowledgeContext } from "../../domain/workspace/knowledge-context";
+import type { ServerProject, ServerWorkspace } from "../../workspace/server/api-client";
 
 export interface ComparisonViewProps {
   primary: DiagramFile;
@@ -29,6 +30,13 @@ export interface ComparisonViewProps {
   onRestore: () => void;
   maximized: boolean;
   onToggleMaximize: () => void;
+  activeProjectId?: string | null;
+  activeProjectName?: string | null;
+  serverProjects?: ServerProject[];
+  serverWorkspaces?: ServerWorkspace[];
+  selectedServerWorkspaceId?: string | null;
+  onSelectServerWorkspace?: (workspaceId: string) => void;
+  onOpenServerProject?: (project: ServerProject) => void;
   relationships?: ResourceRelationship[];
   editorHidden: boolean;
   onToggleEditor: () => void;
@@ -186,6 +194,13 @@ export default function ComparisonView({
   onRestore,
   maximized,
   onToggleMaximize,
+  activeProjectId = null,
+  activeProjectName = null,
+  serverProjects = [],
+  serverWorkspaces = [],
+  selectedServerWorkspaceId = null,
+  onSelectServerWorkspace,
+  onOpenServerProject,
   relationships = [],
   editorHidden,
   onToggleEditor,
@@ -264,6 +279,16 @@ export default function ComparisonView({
     <div className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
       <header className="comparison__toolbar">
         <strong>Compare diagrams</strong>
+        {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
+          {serverWorkspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+        </select></label> : null}
+        {onOpenServerProject ? <label>Project <select aria-label="Comparison project" value={activeProjectId ?? ""} onChange={(event) => {
+          const project = serverProjects.find((item) => item.id === event.target.value);
+          if (project) onOpenServerProject(project);
+        }}>
+          {activeProjectName && !serverProjects.some((project) => project.id === activeProjectId) ? <option value={activeProjectId ?? ""}>{activeProjectName}</option> : null}
+          {serverProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select></label> : null}
         <label>Viewer A <select aria-label="Viewer A resource" value={primaryId} onChange={(event) => setPrimaryId(event.target.value)}>
           {diagrams.filter((diagram) => diagram.id !== secondaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
         </select></label>

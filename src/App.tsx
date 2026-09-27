@@ -545,15 +545,16 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!previewMaximized && !comparisonMaximizedPane) return;
+    if (!previewMaximized && !comparisonMaximized && !comparisonMaximizedPane) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setPreviewMaximized(false);
+      setComparisonMaximized(false);
       setComparisonMaximizedPane(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [comparisonMaximizedPane, previewMaximized]);
+  }, [comparisonMaximized, comparisonMaximizedPane, previewMaximized]);
 
   /**
    * Open a local folder (replacing the active repository) or, when a folder is
@@ -3116,7 +3117,14 @@ export default function App() {
                        onRestore={() => setComparisonMaximizedPane(null)}
                        maximized={comparisonMaximized}
                        onToggleMaximize={() => setComparisonMaximized((value) => !value)}
-                      relationships={metadata?.relationships ?? []}
+                       activeProjectId={server.active?.project.id}
+                       activeProjectName={server.active?.project.name}
+                       serverProjects={server.projects}
+                       serverWorkspaces={serverWorkspaces}
+                       selectedServerWorkspaceId={selectedServerWorkspaceId}
+                       onSelectServerWorkspace={setSelectedServerWorkspaceId}
+                       onOpenServerProject={(project) => { void server.openProject(project); }}
+                       relationships={metadata?.relationships ?? []}
                       editorHidden={comparisonEditorHidden}
                       onToggleEditor={() => setComparisonEditorHidden((hidden) => !hidden)}
                     />
