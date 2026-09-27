@@ -3653,6 +3653,13 @@ body {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
+.resource-header__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
 
 .resource-header__icon {
   color: var(--accent);
@@ -3667,6 +3674,13 @@ body {
   margin-left: auto;
   font: 11px var(--font-mono);
   color: var(--text-faint);
+}
+.resource-header__identity .button--small {
+  flex: 0 0 auto;
+}
+.editor-restore-button {
+  align-self: flex-start;
+  margin: 8px;
 }
 .resource-header__metadata {
   flex-basis: 100%;

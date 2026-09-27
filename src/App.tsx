@@ -2948,22 +2948,16 @@ export default function App() {
                     className="resource-header"
                     data-testid="resource-header"
                   >
-                    <span className="note-header__icon" aria-hidden="true">
-                      ¶
-                    </span>
-                    <span
-                      className="note-header__title"
-                      data-testid="note-title"
-                    >
-                      {noteDisplayName(selectedNote.name, source)}
-                    </span>
-                    <span
-                      className="note-header__name"
-                      data-testid="note-filename"
-                    >
-                      {selectedNote.name}
-                    </span>
-                    {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                    <div className="resource-header__identity">
+                      <span className="note-header__icon" aria-hidden="true">¶</span>
+                      <span className="note-header__title" data-testid="note-title">
+                        {noteDisplayName(selectedNote.name, source)}
+                      </span>
+                      <span className="note-header__name" data-testid="note-filename">
+                        {selectedNote.name}
+                      </span>
+                      {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                    </div>
                     <ResourceMetadataEditor
                       metadata={selectedNote.metadata}
                       writable={metadataWritable}
@@ -3016,19 +3010,14 @@ export default function App() {
                     className="resource-header"
                     data-testid="resource-header"
                   >
-                    <span className="resource-header__icon" aria-hidden="true">
-                      {isEventFlow ? "↝" : "◌"}
-                    </span>
-                    <span className="resource-header__title">
-                      {diagramDisplayName(
-                        selectedDiagram?.name ?? "Untitled",
-                        source,
-                      )}
-                    </span>
-                    <span className="resource-header__name">
-                      {selectedDiagram?.name}
-                    </span>
-                    {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                    <div className="resource-header__identity">
+                      <span className="resource-header__icon" aria-hidden="true">{isEventFlow ? "↝" : "◌"}</span>
+                      <span className="resource-header__title">
+                        {diagramDisplayName(selectedDiagram?.name ?? "Untitled", source)}
+                      </span>
+                      <span className="resource-header__name">{selectedDiagram?.name}</span>
+                      {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                    </div>
                     <ResourceMetadataEditor
                       metadata={selectedDiagram?.metadata}
                       writable={metadataWritable}
@@ -3107,7 +3096,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden && !comparisonOpen ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(false)}>Show editor</button> : null}
+                  {comparisonEditorHidden && !comparisonOpen ? <button type="button" className="button button--ghost button--small editor-restore-button" onClick={() => setComparisonEditorHidden(false)}>Show editor</button> : null}
                   {comparisonOpen && selectedDiagram ? (
                     <ComparisonView
                       primary={selectedDiagram}
