@@ -136,12 +136,12 @@ producers or consumers, new consequences or effects, changed failure/retry
 semantics, knowledge asymmetry, unresolved candidates, and unknown boundaries.
 Absence from one resource is not proof that behavior is absent from the system.
 
-The current product has resource viewing, semantic navigation, and revision
-foundations. Private architectural resources and full semantic architecture
-comparison are future direction, not currently available capabilities. The
-intended future workflow is feature branch or work in progress -> private
-architectural knowledge -> Analysis Workspace -> human evaluation -> publish
-when appropriate.
+The Analysis Workspace now accepts explicit knowledge provenance for its two
+contexts, including SHARED, MY WORK, and LOCAL inputs. It correlates only shared
+semantic identities authoritatively, keeps private identities and relationships
+private, and reports asymmetry as "documented only in" a context. This is a
+comparison of resources and evidence, not architectural change history: lineage,
+proposals, publication, and added/removed/changed claims remain future work.
 
 ## Product Principles
 

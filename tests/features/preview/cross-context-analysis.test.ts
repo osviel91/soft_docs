@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { crossContextAnalysis, type AnalysisOptions } from "../../../src/features/preview/cross-context-analysis";
-import { semanticComparison } from "../../../src/features/preview/semantic-comparison";
+import { crossContextAnalysis, effectivePrivateIndex, type AnalysisOptions } from "../../../src/features/preview/cross-context-analysis";
+import { semanticComparison, semanticComparisonAcrossContexts } from "../../../src/features/preview/semantic-comparison";
 import type { ProjectIndex } from "../../../src/domain/project/project-index";
 import type { ResourceRelationship } from "../../../src/domain/workspace/resource-relationship";
+import type { AnalysisContext } from "../../../src/features/preview/cross-context-analysis";
 
 const options: AnalysisOptions = { direction: "both", maxDepth: 8, maxNodes: 20, includeCandidates: false, includeRecovery: false };
 
@@ -24,9 +25,17 @@ function occurrence(resourceId: string, messageRef?: string, name = "Created") {
 
 function run(source: ProjectIndex, selected = "created", relationships: ResourceRelationship[] = []) {
   const comparison = semanticComparison(source, "a", "b", relationships);
+  const context = (kind: "shared" | "private-work", id: string): AnalysisContext => ({
+    projectId: "p",
+    knowledgeContext: kind === "shared"
+      ? { kind, id, projectId: "p" }
+      : { kind, id, projectId: "p", ownerUserId: "owner", name: "feature/retry", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) },
+    index: source,
+    resourceId: kind === "shared" ? "a" : "b",
+  });
   return crossContextAnalysis(
-    { index: source, resourceId: "a" },
-    { index: source, resourceId: "b" },
+    context("shared", "shared:p"),
+    context("private-work", "private:p:retry"),
     comparison,
     { messageId: selected },
     options,
@@ -84,5 +93,32 @@ describe("crossContextAnalysis", () => {
     const result = run(source, "deleted");
     expect(result.staleAnchor).toBe(true);
     expect(JSON.stringify(source)).toBe(before);
+  });
+
+  it("keeps private provenance on trace sources", () => {
+    const result = run(index({
+      semanticMessages: [{ id: "created", name: "Created", kind: "event" }],
+      semanticOccurrences: [occurrence("a", "created"), occurrence("b", "created")],
+    }));
+    expect(result.sides.b.trace?.nodes.some((node) => node.source?.provenance?.kind === "private-work")).toBe(true);
+    expect(result.contexts.b.knowledgeContext.kind).toBe("private-work");
+  });
+
+  it("correlates shared identity across separate context indexes but isolates private identity", () => {
+    const shared = index({ semanticMessages: [{ id: "created", name: "Created", kind: "event" }], semanticOccurrences: [occurrence("a", "created")] });
+    const privateIndex = index({ semanticMessages: [{ id: "created", name: "Created", kind: "event" }, { id: "private", name: "Created", kind: "event" }], semanticOccurrences: [occurrence("b", "created"), occurrence("b", "private", "Created")] });
+    const sharedContext: AnalysisContext = { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index: shared, resourceId: "a" };
+    const privateContext: AnalysisContext = { projectId: "p", knowledgeContext: { kind: "private-work", id: "private", projectId: "p", ownerUserId: "owner", name: "feature/retry", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index: privateIndex, resourceId: "b" };
+    const result = semanticComparisonAcrossContexts(sharedContext, privateContext);
+    expect(result.shared.map((message) => message.id)).toEqual(["created"]);
+    expect(result.onlyB.map((message) => message.id)).toEqual(["private"]);
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it("marks effective private resources while retaining shared resources", () => {
+    const shared = index({ resources: [{ id: "a", projectId: "p", path: "a.seq", type: "sequence-diagram", title: "A" }] });
+    const privateIndex = index({ resources: [{ id: "b", projectId: "p", path: "b.eventseq", type: "event-flow", title: "B" }] });
+    const result = effectivePrivateIndex(shared, privateIndex, { kind: "private-work", id: "work", projectId: "p", ownerUserId: "owner", name: "feature/retry", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) });
+    expect(result.resources.map((resource) => resource.provenance?.kind)).toEqual(["shared", "private-work"]);
   });
 });

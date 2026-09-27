@@ -1030,6 +1030,7 @@ body {
 
 .comparison__header h2 { margin: 2px 0; font-size: 14px; }
 .comparison__header span, .comparison__header p { margin: 0; color: var(--text-muted); font-size: 11px; }
+.comparison__provenance { display: inline-block; padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; letter-spacing: .04em; }
 .comparison__header p { margin-top: 5px; }
 .comparison__tags { display: flex; gap: 4px; margin-top: 5px; }
 .comparison__tags span { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; }
@@ -2052,8 +2053,10 @@ body {
 .trace-explorer__header { justify-content: space-between; }
 .trace-explorer__header h2 { margin: 2px 0 0; font-size: 1rem; }
 .trace-explorer__eyebrow,
+.trace-explorer__provenance,
 .trace-explorer__node-type,
 .trace-explorer__node-confidence,
+.trace-explorer__node-provenance,
 .trace-explorer__node-source,
 .trace-explorer__edge small {
   color: var(--text-muted);

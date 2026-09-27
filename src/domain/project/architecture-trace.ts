@@ -8,6 +8,7 @@ import type {
 } from "./project-index";
 import type { ResourceId } from "../workspace/resource-id";
 import type { SemanticMessageIdentity } from "../workspace/metadata";
+import type { AnalysisProvenance } from "../workspace/knowledge-context";
 
 export type TraceDirection = "upstream" | "downstream" | "both";
 export type TraceConfidence = "authoritative" | "candidate" | "unknown";
@@ -23,6 +24,7 @@ export type UnknownBoundaryReason =
 
 export interface TraceSource {
   resourceId: ResourceId;
+  provenance?: AnalysisProvenance;
   resourcePath?: string;
   nodeId?: string;
   range?: SourceRange;
@@ -295,8 +297,8 @@ export function traceArchitectureQuery(
   const messageRef = "messageRef" in occurrence ? occurrence.messageRef : undefined;
   const identity = (index.semanticMessages ?? []).find((message) => message.id === messageRef && message.kind === kind);
   const source = "range" in occurrence
-    ? sourceOf(occurrence.resourceId, new Map(index.resources.map((resource) => [resource.id, { path: resource.path }])), nodeIdOf("message", occurrence.range), occurrence.range)
-    : sourceOf(occurrence.resourceId, new Map(index.resources.map((resource) => [resource.id, { path: resource.path }])), occurrence.nodeId, occurrence.sourceRange);
+      ? sourceOf(occurrence.resourceId, new Map(index.resources.map((resource) => [resource.id, resource])), nodeIdOf("message", occurrence.range), occurrence.range)
+      : sourceOf(occurrence.resourceId, new Map(index.resources.map((resource) => [resource.id, resource])), occurrence.nodeId, occurrence.sourceRange);
   const candidates = compatibleCandidatesByName(index, occurrence.name, kind);
   return identity
     ? {
@@ -623,17 +625,17 @@ function compatibleCandidatesByName(
   name: string,
   kind: "event" | "command",
 ): TraceResolutionCandidate[] {
-  const resources = new Map(index.resources.map((resource) => [resource.id, { path: resource.path }]));
+  const resources = new Map(index.resources.map((resource) => [resource.id, resource]));
   return compatibleCandidates(index, { id: "", name, kind }, resources);
 }
 
 function sourceOf(
   resourceId: string,
-  resources: Map<string, { path: string }>,
+  resources: Map<string, { path: string; provenance?: AnalysisProvenance }>,
   nodeId?: string,
   range?: SourceRange,
 ): TraceSource {
-  return { resourceId, resourcePath: resources.get(resourceId)?.path, ...(nodeId ? { nodeId } : {}), ...(range ? { range } : {}) };
+  return { resourceId, resourcePath: resources.get(resourceId)?.path, provenance: resources.get(resourceId)?.provenance, ...(nodeId ? { nodeId } : {}), ...(range ? { range } : {}) };
 }
 
 function mergeEdge(existing: TraceEdge | undefined, next: TraceEdge): TraceEdge {

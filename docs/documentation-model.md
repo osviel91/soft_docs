@@ -188,13 +188,15 @@ architectural contexts together. It should support cross-resource analysis
 through shared semantic knowledge, multiple perspectives such as execution and
 causality, discovery of semantic connections that are not yet explicitly
 related, and eventual evolution analysis across states or revisions. With
-future private resources, it should also support proposed-versus-shared review
-before publication.
+private work, it should support provenance-preserving inspection against SHARED
+before any future publication workflow.
 
-D03.13.3 provides a read-only Analysis Workspace over two independent viewer
-sessions. An Analysis Session supplies context A, context B, an explicit
+D03.13.3 and D03.14.2 provide a read-only Analysis Workspace over two independent
+viewer sessions. An Analysis Session supplies context A, context B, an explicit
 semantic anchor, bounded trace options, semantic correlation, and separately
-indexed typed resource relationships. Its evidence classes remain distinct:
+indexed typed resource relationships. Each context carries explicit provenance
+(SHARED, MY WORK, or LOCAL), so effective private knowledge can combine readable
+SHARED facts with private facts without flattening their authority. Its evidence classes remain distinct:
 authoritative identity bindings, explicit complementary-view relationships,
 architectural trace intersections, candidates, knowledge asymmetry, and
 unknown boundaries. A typed relationship is not implied by shared identities.
@@ -204,12 +206,14 @@ direction, depth and node limits, recovery nodes, and cycle references. It
 reports "documented only in A/B" rather than added or removed knowledge, and
 missing structured recovery as unknown rather than no retry. Candidate names
 remain non-authoritative and cannot create identities, bindings, relationships,
-or documentation. Analysis results navigate to their indexed source evidence;
+or documentation. Cross-context asymmetry means documented only in one context,
+not added or removed history. Comparison of resources is not architectural change
+history. Analysis results navigate to their indexed source evidence;
 the diagrams remain independently zoomed, panned, inspected, and rendered.
 
-Private resources and authoritative revision/state lineage are future seams,
-not current capabilities. They may later supply contexts such as shared/current
-and private/proposed, or establish stronger added/removed/changed terminology.
+Lineage, proposals, publication, and authoritative revision/state history remain
+future seams. They may later establish stronger added/removed/changed terminology;
+the current workspace deliberately does not claim those meanings.
 A missing resource-side representation must never be treated as proof that
 behavior is absent.
 

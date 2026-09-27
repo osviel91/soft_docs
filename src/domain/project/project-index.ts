@@ -44,6 +44,7 @@ import type { MessageKind } from "../eventflow/ast";
 import type { SemanticMessageIdentity } from "../workspace/metadata";
 import type { AstNodeId } from "../diagram/node-id";
 import type { CausalViewModel } from "../eventflow/causal-projection";
+import type { AnalysisProvenance } from "../workspace/knowledge-context";
 
 export interface EventFlowMessageEntity {
   /** The Event Flow node identity; never replaced by the semantic identity. */
@@ -80,6 +81,7 @@ export interface ResourceDescriptor {
   type: ResourceType;
   /** The display title (a diagram `title`, a document's first heading). */
   title: string;
+  provenance?: AnalysisProvenance;
 }
 
 /** A sequence diagram, with the shape facts navigation and hover need. */
@@ -239,6 +241,8 @@ export interface ProjectDiagnostic {
 /** The assembled project view. */
 export interface ProjectIndex {
   projectId: string;
+  /** Provenance of this index; absent for legacy/local callers. */
+  provenance?: AnalysisProvenance;
   resources: ResourceDescriptor[];
   diagrams: DiagramDescriptor[];
   eventFlows: EventFlowDescriptor[];

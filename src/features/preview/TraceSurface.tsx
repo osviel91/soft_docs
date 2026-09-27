@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import TraceExplorer from "./TraceExplorer";
+import type { AnalysisProvenance } from "../../domain/workspace/knowledge-context";
 
 interface Props {
   index: ProjectIndex;
   start: TraceQueryStart;
   direction: TraceDirection;
   provenance: string;
+  contextProvenance?: AnalysisProvenance;
   onOpenResource: (resourceId: string, nodeId?: string) => void;
 }
 
@@ -19,7 +21,7 @@ function startKey(start: TraceQueryStart): string {
   return "messageId" in start ? `message:${start.messageId}` : `occurrence:${start.resourceId}:${start.name}:${start.step ?? ""}`;
 }
 
-export default function TraceSurface({ index, start, direction, provenance, onOpenResource }: Props) {
+export default function TraceSurface({ index, start, direction, provenance, contextProvenance, onOpenResource }: Props) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const [mode, setMode] = useState<SurfaceMode>("normal");
   const [height, setHeight] = useState(420);
@@ -60,7 +62,7 @@ export default function TraceSurface({ index, start, direction, provenance, onOp
           <button type="button" className="button button--ghost button--small" onClick={() => setMode(mode === "minimized" ? "normal" : "minimized")} aria-label={mode === "minimized" ? "Restore Architectural Trace" : "Minimize Architectural Trace"}>{mode === "minimized" ? "Restore" : "Minimize"}</button>
         </div>
       </div>
-      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} onClose={() => setMode("minimized")} onOpenResource={onOpenResource} /></div>
+      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} provenance={contextProvenance} onClose={() => setMode("minimized")} onOpenResource={onOpenResource} /></div>
     </section>
   );
 }

@@ -1,14 +1,45 @@
 import { traceArchitectureQuery, type ArchitectureTrace, type TraceDirection, type TraceNode, type TraceQueryStart } from "../../domain/project/architecture-trace";
-import type { ProjectIndex } from "../../domain/project/project-index";
+import type { ProjectIndex, ResourceDescriptor } from "../../domain/project/project-index";
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { SemanticMessageIdentity } from "../../domain/workspace/metadata";
+import type { AnalysisProvenance, KnowledgeContext } from "../../domain/workspace/knowledge-context";
 import type { ComparisonOccurrence, SemanticComparison } from "./semantic-comparison";
 
 export interface AnalysisContext {
+  projectId: string;
+  knowledgeContext: KnowledgeContext;
   index: ProjectIndex;
   resourceId: string | null;
   resourcePath?: string;
   sessionId?: string;
+}
+
+/** Compose authorized SHARED facts with one private context without flattening provenance. */
+export function effectivePrivateIndex(
+  shared: ProjectIndex,
+  privateIndex: ProjectIndex,
+  context: Extract<KnowledgeContext, { kind: "private-work" }>,
+): ProjectIndex {
+  const sharedProvenance: AnalysisProvenance = { kind: "shared", id: shared.provenance?.id ?? `shared:${shared.projectId}` };
+  const privateProvenance: AnalysisProvenance = { kind: "private-work", id: context.id, label: context.name };
+  const mark = <T extends ResourceDescriptor>(resources: T[], provenance: AnalysisProvenance): T[] => resources.map((resource) => ({ ...resource, provenance }));
+  const privateIds = new Set(privateIndex.resources.map((resource) => resource.id));
+  return {
+    ...shared,
+    provenance: privateProvenance,
+    resources: [...mark(shared.resources.filter((resource) => !privateIds.has(resource.id)), sharedProvenance), ...mark(privateIndex.resources, privateProvenance)],
+    diagrams: [...mark(shared.diagrams.filter((resource) => !privateIds.has(resource.id)), sharedProvenance), ...mark(privateIndex.diagrams, privateProvenance)],
+    eventFlows: [...mark(shared.eventFlows.filter((resource) => !privateIds.has(resource.id)), sharedProvenance), ...mark(privateIndex.eventFlows, privateProvenance)],
+    documents: [...mark(shared.documents.filter((resource) => !privateIds.has(resource.id)), sharedProvenance), ...mark(privateIndex.documents, privateProvenance)],
+    participants: [...shared.participants.filter((entry) => !privateIds.has(entry.resourceId)), ...privateIndex.participants],
+    usages: [...shared.usages.filter((entry) => !privateIds.has(entry.resourceId)), ...privateIndex.usages],
+    references: [...shared.references.filter((entry) => !privateIds.has(entry.from)), ...privateIndex.references],
+    semanticMessages: [...(shared.semanticMessages ?? []), ...(privateIndex.semanticMessages ?? []).filter((message) => !(shared.semanticMessages ?? []).some((existing) => existing.id === message.id))],
+    semanticOccurrences: [...(shared.semanticOccurrences ?? []).filter((entry) => !privateIds.has(entry.resourceId)), ...(privateIndex.semanticOccurrences ?? [])],
+    eventFlowMessages: [...(shared.eventFlowMessages ?? []).filter((entry) => !privateIds.has(entry.resourceId)), ...(privateIndex.eventFlowMessages ?? [])],
+    eventFlowCausality: [...(shared.eventFlowCausality ?? []).filter((entry) => !privateIds.has(entry.resourceId)), ...(privateIndex.eventFlowCausality ?? [])],
+    diagnostics: [...shared.diagnostics.filter((entry) => !privateIds.has(entry.resourceId)), ...privateIndex.diagnostics],
+  };
 }
 
 export interface AnalysisAnchor {
@@ -39,6 +70,8 @@ export interface AnalysisMessage {
   side: "shared" | "a" | "b";
   occurrencesA: ComparisonOccurrence[];
   occurrencesB: ComparisonOccurrence[];
+  provenanceA?: string;
+  provenanceB?: string;
 }
 
 export interface CrossContextAnalysis {
@@ -51,6 +84,7 @@ export interface CrossContextAnalysis {
   candidates: ComparisonOccurrence[];
   sides: { a: AnalysisSide; b: AnalysisSide };
   staleAnchor: boolean;
+  contexts: { a: AnalysisContext; b: AnalysisContext };
 }
 
 const emptySide: AnalysisSide = {
@@ -73,6 +107,7 @@ export function crossContextAnalysis(
 ): CrossContextAnalysis {
   const explicitRelationships = relationships.filter((relationship) =>
     Boolean(contextA.resourceId && contextB.resourceId) &&
+    (relationship.contextId === undefined || relationship.contextId === contextA.knowledgeContext.id || relationship.contextId === contextB.knowledgeContext.id) &&
     ((relationship.sourceId === contextA.resourceId && relationship.targetId === contextB.resourceId) ||
       (relationship.sourceId === contextB.resourceId && relationship.targetId === contextA.resourceId)),
   );
@@ -90,6 +125,8 @@ export function crossContextAnalysis(
     side: idsA.has(message.id) && idsB.has(message.id) ? "shared" as const : idsA.has(message.id) ? "a" as const : "b" as const,
     occurrencesA: comparison.occurrences.a.filter((entry) => entry.messageId === message.id),
     occurrencesB: comparison.occurrences.b.filter((entry) => entry.messageId === message.id),
+    provenanceA: idsA.has(message.id) ? contextLabel(contextA) : undefined,
+    provenanceB: idsB.has(message.id) ? contextLabel(contextB) : undefined,
   }));
   return {
     anchor: validAnchor ? anchor : null,
@@ -101,6 +138,7 @@ export function crossContextAnalysis(
     candidates: comparison.candidates,
     sides,
     staleAnchor,
+    contexts: { a: contextA, b: contextB },
   };
 }
 
@@ -109,6 +147,11 @@ function traceSide(context: AnalysisContext, start: TraceQueryStart, options: An
   const result = traceArchitectureQuery(scopeToResource(context.index, context.resourceId), start, options);
   const trace = result.trace;
   if (!trace) return { ...emptySide, resolution: result.resolution.status };
+  const provenance = context.knowledgeContext.kind === "private-work"
+    ? { kind: "private-work" as const, id: context.knowledgeContext.id, label: context.knowledgeContext.name }
+    : { kind: context.knowledgeContext.kind, id: context.knowledgeContext.id };
+  for (const node of trace.nodes) if (node.source && !node.source.provenance) node.source.provenance = provenance;
+  for (const edge of trace.edges) if (edge.source && !edge.source.provenance) edge.source.provenance = provenance;
   const documentedMessageIds = [...new Set(trace.nodes.flatMap((node) => {
     if (node.kind === "identity") return [node.identity.id];
     if (node.kind === "causal-message" && node.messageRef) return [node.messageRef];
@@ -124,6 +167,12 @@ function traceSide(context: AnalysisContext, start: TraceQueryStart, options: An
     recovery: trace.nodes.some((node) => node.kind === "failure" || node.kind === "retry") ? "documented" : "unknown",
     cycles: trace.edges.filter((edge) => edge.cycleReference).length,
   };
+}
+
+function contextLabel(context: AnalysisContext): string {
+  return context.knowledgeContext.kind === "private-work"
+    ? `MY WORK · ${context.knowledgeContext.name}`
+    : context.knowledgeContext.kind.toUpperCase();
 }
 
 function scopeToResource(index: ProjectIndex, resourceId: string): ProjectIndex {

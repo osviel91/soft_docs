@@ -6,6 +6,7 @@ import {
   type TraceQueryStart,
 } from "../../domain/project/architecture-trace";
 import type { ProjectIndex } from "../../domain/project/project-index";
+import { analysisProvenanceLabel, type AnalysisProvenance } from "../../domain/workspace/knowledge-context";
 
 interface Props {
   index: ProjectIndex;
@@ -13,6 +14,7 @@ interface Props {
   direction?: TraceDirection;
   onClose: () => void;
   onOpenResource: (resourceId: string, nodeId?: string) => void;
+  provenance?: AnalysisProvenance;
 }
 
 const nodeType: Record<TraceNode["kind"], string> = {
@@ -57,6 +59,7 @@ function TraceNodeCard({
       <span className="trace-explorer__node-type">{typeOf(node)}</span>
       <strong>{node.label}</strong>
       <span className="trace-explorer__node-confidence">{node.confidence}</span>
+      {node.source?.provenance ? <span className="trace-explorer__node-provenance">{analysisProvenanceLabel(node.source.provenance)}</span> : null}
       {node.source ? (
         <span
           className="trace-explorer__node-source"
@@ -78,6 +81,7 @@ export default function TraceExplorer({
   direction: initialDirection = "both",
   onClose,
   onOpenResource,
+  provenance,
 }: Props) {
   const [direction, setDirection] = useState<TraceDirection>(initialDirection);
   const [maxDepth, setMaxDepth] = useState(8);
@@ -99,6 +103,7 @@ export default function TraceExplorer({
       <header className="trace-explorer__header">
         <div>
           <span className="trace-explorer__eyebrow">Architectural trace</span>
+          {provenance ? <span className="trace-explorer__provenance">{analysisProvenanceLabel(provenance)}</span> : null}
           <h2>{trace ? (nodeById.get(trace.selected)?.label ?? "Selected message") : "Unresolved starting point"}</h2>
         </div>
         <button type="button" className="button button--ghost button--small" onClick={onClose}>Close</button>
