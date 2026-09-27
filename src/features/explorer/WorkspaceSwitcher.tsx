@@ -24,6 +24,7 @@ export interface WorkspaceSwitcherProps {
   onCreateServerProject: (name: string) => void;
   onSelectServerWorkspace?: (workspaceId: string) => void;
   onReloadServerProjects?: () => void;
+  onBackToProjects?: () => void;
 }
 
 export default function WorkspaceSwitcher({
@@ -43,6 +44,7 @@ export default function WorkspaceSwitcher({
   onCreateServerProject,
   onSelectServerWorkspace,
   onReloadServerProjects,
+  onBackToProjects,
 }: WorkspaceSwitcherProps) {
   const [pendingName, setPendingName] = useState("");
   const [localExpanded, setLocalExpanded] = useState(false);
@@ -89,6 +91,33 @@ export default function WorkspaceSwitcher({
     onCreateServerProject(name);
     setPendingName("");
   };
+
+  if (activeServerProjectId !== null && activeServerProjectId !== undefined) {
+    const activeProject = serverProjects.find((project) => project.id === activeServerProjectId);
+    const workspace = serverWorkspaces.find((item) => item.id === selectedServerWorkspaceId);
+    return (
+      <nav className="workspaces workspaces--project" data-testid="workspace-switcher" aria-label="Project navigation">
+        <button type="button" className="workspaces__back" data-testid="workspace-back-to-projects" onClick={onBackToProjects}>
+          ‹ Projects
+        </button>
+        <div className="workspaces__active-project" data-testid="workspace-active-project">
+          <strong title={activeProject?.name}>{activeProject?.name ?? "Project"}</strong>
+          <span>{workspace?.name ?? "Workspace"}</span>
+        </div>
+        {onReloadServerProjects && (
+          <button
+            type="button"
+            className="workspaces__reload"
+            data-testid="workspace-server-refresh"
+            onClick={onReloadServerProjects}
+            title="Refresh project data"
+          >
+            ↻ Refresh
+          </button>
+        )}
+      </nav>
+    );
+  }
 
   return (
     <nav

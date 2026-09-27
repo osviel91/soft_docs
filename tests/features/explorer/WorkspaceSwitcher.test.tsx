@@ -80,9 +80,8 @@ describe("WorkspaceSwitcher", () => {
 
   it("lists the signed-in user's projects and opens the chosen one", () => {
     const handlers = renderSwitcher({
-      mode: "server",
+      mode: "local",
       serverProjects: [project("p1", "Payments"), project("p2", "OSIRIS")],
-      activeServerProjectId: "p2",
     });
 
     const rows = screen.getAllByTestId("workspace-server-project");
@@ -90,14 +89,24 @@ describe("WorkspaceSwitcher", () => {
       "Payments",
       "OSIRIS",
     ]);
-    // The open project is marked, so the user can tell where they are.
-    expect(rows[0]).not.toHaveAttribute("aria-current");
-    expect(rows[1]).toHaveAttribute("aria-current", "true");
-
     fireEvent.click(rows[0]);
     expect(handlers.onOpenServerProject).toHaveBeenCalledWith(
       expect.objectContaining({ id: "p1" }),
     );
+  });
+
+  it("replaces the project list with compact active-project navigation", () => {
+    const onBackToProjects = vi.fn();
+    renderSwitcher({
+      mode: "server",
+      serverProjects: [project("p1", "Payments")],
+      activeServerProjectId: "p1",
+      onBackToProjects,
+    });
+    expect(screen.getByTestId("workspace-active-project")).toHaveTextContent("Payments");
+    expect(screen.queryByTestId("workspace-server-project")).toBeNull();
+    fireEvent.click(screen.getByTestId("workspace-back-to-projects"));
+    expect(onBackToProjects).toHaveBeenCalledTimes(1);
   });
 
   it("creates a server project by name and clears the field", () => {
@@ -156,7 +165,6 @@ describe("WorkspaceSwitcher", () => {
     renderSwitcher({
       mode: "server",
       serverProjects: [project("p1", "Payments"), project("p2", "Docs")],
-      activeServerProjectId: "p1",
     });
     fireEvent.change(screen.getByTestId("workspace-server-project-filter"), {
       target: { value: "doc" },

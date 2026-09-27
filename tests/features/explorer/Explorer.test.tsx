@@ -74,6 +74,25 @@ describe("Explorer", () => {
     expect(screen.getByLabelText("Load diagram Welcome")).toBeInTheDocument();
   });
 
+  it("shows only the active project when the server project is open", () => {
+    const other: Project = { id: "proj-2", name: "Other", datasetIds: [] };
+    render(
+      <Explorer
+        projects={[project, other]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={vi.fn()}
+        serverMode
+      />,
+    );
+    expect(screen.getAllByTestId("explorer-project")).toHaveLength(1);
+    expect(screen.getByText("SHARED")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search resources…")).toBeInTheDocument();
+  });
+
   it("identifies sequence and event-flow diagrams with different icons", () => {
     const eventFlow: DiagramFile = {
       id: "diag-2",

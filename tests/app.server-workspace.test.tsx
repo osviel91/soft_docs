@@ -311,9 +311,8 @@ describe("App — authenticated browser", () => {
     expect(screen.getByTestId("explorer-diagram")).toHaveTextContent(
       "Checkout",
     );
-    expect(screen.getByTestId("workspace-server-project")).toHaveAttribute(
-      "aria-current",
-      "true",
+    expect(screen.getByTestId("workspace-active-project")).toHaveTextContent(
+      "Payments",
     );
     expect(screen.getByTestId("explorer-mode")).toHaveTextContent(
       "Server project: Payments",
@@ -339,9 +338,8 @@ describe("App — authenticated browser", () => {
 
     await waitFor(() => expect(editor).toHaveValue("title Updated by agent"));
     expect(state.calls.length).toBeGreaterThan(before);
-    expect(screen.getByTestId("workspace-server-project")).toHaveAttribute(
-      "aria-current",
-      "true",
+    expect(screen.getByTestId("workspace-active-project")).toHaveTextContent(
+      "Payments",
     );
   });
 

@@ -126,6 +126,27 @@ for human review, not automatic rejection or acceptance. Semantic/causal analysi
 anchors, provenance, effects, recovery, and traces are the primary review surface;
 textual diffs are not architectural impact.
 
+## Explorer Navigation
+
+The workspace sidebar has two navigation states:
+
+```text
+PROJECT BROWSER -> PROJECT EXPLORER
+
+PROJECT
+├── SHARED      authoritative
+├── MY WORK     private, tentative
+├── PROPOSALS   reviewable, non-authoritative
+└── LOCAL       machine-local
+```
+
+The Project Browser chooses a server workspace and project. Once a server
+project is open, the Project Explorer replaces the complete project list with
+that project's resources and provenance sections. This is navigation and
+provenance presentation only: visual co-location does not infer authority,
+semantic identity, a relationship, or folder architecture. SHARED remains the
+only authoritative context; MY WORK, PROPOSALS, and LOCAL remain distinct.
+
 ## Representation Selection
 
 Use these questions to choose the first useful view; Sequence and Event Flow are

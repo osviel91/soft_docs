@@ -192,6 +192,37 @@ body {
   color: var(--text);
   border-color: var(--accent);
 }
+.workspaces--project {
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workspaces__back {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.workspaces__back:hover,
+.workspaces__back:focus-visible { color: var(--text); }
+.workspaces__active-project {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.workspaces__active-project strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.workspaces__active-project span { color: var(--text-muted); font-size: 11px; }
 .proposal-review {
   width: 100%;
   max-width: none;

@@ -232,6 +232,10 @@ export default function Explorer({
     matchedDiagrams.length === 0 &&
     (matchedNotes?.length ?? 0) === 0;
 
+  const visibleProjects = serverMode
+    ? projects.filter((project) => project.id === selectedProjectId)
+    : projects;
+
   const diagramsOf = (projectId: string): DiagramFile[] =>
     matchedDiagrams
       ? matchedDiagrams.filter((diagram) => diagram.projectId === projectId)
@@ -300,7 +304,7 @@ export default function Explorer({
           aria-expanded={contentExpanded}
           onClick={() => setContentExpanded((expanded) => !expanded)}
         >
-          Project knowledge <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
+          {serverMode ? "SHARED" : "Project knowledge"} <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
         </button>
       </h2>
       {contentExpanded && <>
@@ -341,7 +345,7 @@ export default function Explorer({
           className="explorer__search-input"
           data-testid="diagram-search-input"
           type="search"
-          placeholder="Search diagrams and notes…"
+          placeholder={serverMode ? "Search resources…" : "Search diagrams and notes…"}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -361,7 +365,7 @@ export default function Explorer({
         </p>
       ) : (
         <ul className="explorer__projects" data-testid="explorer-projects">
-          {projects.map((project) => {
+          {visibleProjects.map((project) => {
             const projectDiagrams = diagramsOf(project.id);
             const projectNotes = notesOf(project.id);
             return (

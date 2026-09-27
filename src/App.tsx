@@ -2747,6 +2747,7 @@ export default function App() {
                       onReloadServerProjects={() => {
                         void syncServerWorkspace();
                       }}
+                      onBackToProjects={server.close}
                     />
                   }
                   onAddMenu={(project, position) =>
