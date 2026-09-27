@@ -27,6 +27,8 @@ export interface ComparisonViewProps {
   maximizedPane: "a" | "b" | null;
   onMaximize: (pane: "a" | "b") => void;
   onRestore: () => void;
+  maximized: boolean;
+  onToggleMaximize: () => void;
   relationships?: ResourceRelationship[];
   editorHidden: boolean;
   onToggleEditor: () => void;
@@ -182,6 +184,8 @@ export default function ComparisonView({
   maximizedPane,
   onMaximize,
   onRestore,
+  maximized,
+  onToggleMaximize,
   relationships = [],
   editorHidden,
   onToggleEditor,
@@ -268,7 +272,8 @@ export default function ComparisonView({
           {diagrams.filter((diagram) => diagram.id !== primaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
         </select></label>
         <button type="button" className="button button--ghost" onClick={swapViewers} disabled={!secondarySession}>Swap viewers</button>
-        <button type="button" className="button button--ghost" onClick={onToggleEditor}>{editorHidden ? "Show editor" : "Hide editor"}</button>
+        {editorHidden ? <button type="button" className="button button--ghost" onClick={onToggleEditor}>Show editor</button> : null}
+        <button type="button" className="button button--ghost" onClick={onToggleMaximize}>{maximized ? "Restore comparison" : "Maximize comparison"}</button>
         <button type="button" className="button button--ghost" onClick={onExit}>Close comparison</button>
       </header>
        <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />

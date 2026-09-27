@@ -413,6 +413,7 @@ export default function App() {
   const [previewMaximized, setPreviewMaximized] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonEditorHidden, setComparisonEditorHidden] = useState(false);
+  const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
@@ -2601,6 +2602,7 @@ export default function App() {
                 setComparisonOpen(true);
                 setComparisonEditorHidden(false);
                 setComparisonMaximizedPane(null);
+                setComparisonMaximized(false);
               }}
             >
               Compare
@@ -2688,7 +2690,7 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${previewMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonOpen && comparisonEditorHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${previewMaximized || comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
           >
             {explorerCollapsed ? (
               <button
@@ -2961,6 +2963,7 @@ export default function App() {
                     >
                       {selectedNote.name}
                     </span>
+                    {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
                     <ResourceMetadataEditor
                       metadata={selectedNote.metadata}
                       writable={metadataWritable}
@@ -3025,6 +3028,7 @@ export default function App() {
                     <span className="resource-header__name">
                       {selectedDiagram?.name}
                     </span>
+                    {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
                     <ResourceMetadataEditor
                       metadata={selectedDiagram?.metadata}
                       writable={metadataWritable}
@@ -3103,6 +3107,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
+                  {comparisonEditorHidden && !comparisonOpen ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(false)}>Show editor</button> : null}
                   {comparisonOpen && selectedDiagram ? (
                     <ComparisonView
                       primary={selectedDiagram}
@@ -3114,11 +3119,14 @@ export default function App() {
                         setComparisonOpen(false);
                         setComparisonEditorHidden(false);
                         setComparisonMaximizedPane(null);
+                        setComparisonMaximized(false);
                       }}
                       onOpenResource={openResourceById}
                       maximizedPane={comparisonMaximizedPane}
                       onMaximize={setComparisonMaximizedPane}
-                      onRestore={() => setComparisonMaximizedPane(null)}
+                       onRestore={() => setComparisonMaximizedPane(null)}
+                       maximized={comparisonMaximized}
+                       onToggleMaximize={() => setComparisonMaximized((value) => !value)}
                       relationships={metadata?.relationships ?? []}
                       editorHidden={comparisonEditorHidden}
                       onToggleEditor={() => setComparisonEditorHidden((hidden) => !hidden)}

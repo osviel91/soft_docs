@@ -83,6 +83,21 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("comparison-pane-b")).toBeInTheDocument();
   });
 
+  it("maximizes the comparison area beside its close control", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize comparison" }));
+    expect(screen.getByRole("button", { name: "Restore comparison" })).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-view").closest("main")).toHaveClass("app__workspace--preview-maximized");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
+    expect(screen.getByTestId("dsl-editor")).toBeInTheDocument();
+  });
+
   it("shows a semantic comparison summary without treating names as identities", async () => {
     render(<App />);
     await project();
