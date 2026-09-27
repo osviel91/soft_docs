@@ -51,31 +51,18 @@ function renderSwitcher(
 }
 
 describe("WorkspaceSwitcher", () => {
-  it("lists local sources", () => {
+  it("lists local entry points", () => {
     const handlers = renderSwitcher({ folderSupported: true });
-    expect(screen.getByTestId("workspace-server-toggle")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    fireEvent.click(screen.getByTestId("workspace-local-toggle"));
     fireEvent.click(screen.getByTestId("workspace-local"));
     expect(handlers.onOpenLocal).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("workspace-open-folder"));
+    expect(handlers.onOpenFolder).toHaveBeenCalledTimes(1);
   });
 
-  it("collapses local sources", () => {
+  it("does not render a resizable competing source region", () => {
     renderSwitcher();
-    expect(screen.getByTestId("workspace-local-toggle")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    fireEvent.click(screen.getByTestId("workspace-local-toggle"));
-    expect(screen.getByTestId("workspace-local")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("workspace-local-toggle"));
-    expect(screen.getByTestId("workspace-local-toggle")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.queryByTestId("workspace-local")).toBeNull();
+    expect(screen.queryByRole("separator")).toBeNull();
+    expect(screen.queryByTestId("workspace-server-toggle")).toBeNull();
   });
 
   it("lists the signed-in user's projects and opens the chosen one", () => {
@@ -109,10 +96,13 @@ describe("WorkspaceSwitcher", () => {
     expect(onBackToProjects).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a server project by name and clears the field", () => {
+  it("progressively discloses server project creation", () => {
     const handlers = renderSwitcher({
       mode: "server",
     });
+
+    expect(screen.queryByTestId("workspace-new-server-project-input")).toBeNull();
+    fireEvent.click(screen.getByTestId("workspace-new-server-project-toggle"));
 
     const input = screen.getByTestId(
       "workspace-new-server-project-input",
@@ -125,7 +115,7 @@ describe("WorkspaceSwitcher", () => {
     fireEvent.click(submit);
 
     expect(handlers.onCreateServerProject).toHaveBeenCalledWith("Payments");
-    expect(input.value).toBe("");
+    expect(screen.queryByTestId("workspace-new-server-project-input")).toBeNull();
   });
 
   it("marks the selected server workspace", () => {
@@ -176,16 +166,10 @@ describe("WorkspaceSwitcher", () => {
     );
   });
 
-  it("supports keyboard and pointer resizing at the explorer boundary", () => {
+  it("keeps the project browser as one scroll surface", () => {
     renderSwitcher({ serverProjects: [project("p1", "Payments")] });
-    const splitter = screen.getByRole("separator", {
-      name: "Resize workspace project browser",
-    });
-    fireEvent.keyDown(splitter, { key: "ArrowDown" });
-    expect(splitter).toHaveAttribute("aria-valuemin", "150");
-    fireEvent.pointerDown(splitter, { pointerId: 1, clientY: 300 });
-    fireEvent.pointerMove(splitter, { pointerId: 1, clientY: 320 });
-    fireEvent.pointerUp(splitter, { pointerId: 1 });
+    expect(screen.getByTestId("workspace-server-projects-scroll")).toBeInTheDocument();
+    expect(screen.queryByRole("separator")).toBeNull();
   });
 
 });

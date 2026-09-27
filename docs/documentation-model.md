@@ -128,10 +128,12 @@ textual diffs are not architectural impact.
 
 ## Explorer Navigation
 
-The workspace sidebar has two navigation states:
+The workspace sidebar has two mutually exclusive navigation states:
 
 ```text
-PROJECT BROWSER -> PROJECT EXPLORER
+Workspace
+└── PROJECT BROWSER
+    └── PROJECT EXPLORER
 
 PROJECT
 ├── SHARED      authoritative
@@ -140,12 +142,19 @@ PROJECT
 └── LOCAL       machine-local
 ```
 
-The Project Browser chooses a server workspace and project. Once a server
-project is open, the Project Explorer replaces the complete project list with
-that project's resources and provenance sections. This is navigation and
-provenance presentation only: visual co-location does not infer authority,
-semantic identity, a relationship, or folder architecture. SHARED remains the
-only authoritative context; MY WORK, PROPOSALS, and LOCAL remain distinct.
+The Project Browser contains workspace selection, project search, server
+project discovery, compact project creation, and the meaningful local-folder
+entry. Once a server project is open, the Project Explorer replaces the
+complete project list with one project header, resource search, and one
+provenance tree. It does not retain a second project browser, a Project
+Knowledge region, or Explorer-specific splitters.
+
+SHARED, MY WORK, PROPOSALS, and LOCAL are independent navigation and authority
+boundaries. Collapsing one section affects only its descendants. This is
+provenance presentation only: visual co-location or organizational hierarchy
+does not infer authority, semantic identity, a relationship, ownership, or
+folder architecture. SHARED remains the only authoritative context; MY WORK,
+PROPOSALS, and LOCAL remain distinct. An approved proposal is still not SHARED.
 
 ## Representation Selection
 

@@ -17,6 +17,7 @@ describe("App — safe delete for in-browser projects", () => {
   it("confirms before deleting a project, with no disk option", async () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Notes" },
     });
@@ -44,6 +45,7 @@ describe("App — safe delete for in-browser projects", () => {
   it("leaves the workspace untouched when the dialog is cancelled", async () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Keep me" },
     });

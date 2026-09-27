@@ -24,6 +24,7 @@ describe("App — project search", () => {
   ].join("\n");
 
   async function createProject(name: string): Promise<void> {
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: name },
     });

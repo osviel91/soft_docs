@@ -37,6 +37,7 @@ const FLOW = [
 
 describe("App — event flows", () => {
   async function createProject(): Promise<void> {
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Payments" },
     });

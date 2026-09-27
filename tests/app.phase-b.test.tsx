@@ -26,6 +26,7 @@ const CHECKOUT = [
 
 describe("App — project intelligence", () => {
   async function createProject(name = "Payments"): Promise<void> {
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: name },
     });

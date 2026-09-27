@@ -51,6 +51,7 @@ describe("App — export", () => {
   });
 
   async function projectWithDiagram(): Promise<void> {
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Payments" },
     });
@@ -94,6 +95,7 @@ describe("App — export", () => {
 
   it("exports the current Event Flow as a rendered SVG document", async () => {
     render(<App />);
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Payments" },
     });
@@ -189,6 +191,7 @@ describe("App — export", () => {
 
   it("exports the project chosen from its ⋯ menu", async () => {
     render(<App />);
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "First" },
     });
@@ -196,6 +199,7 @@ describe("App — export", () => {
     await waitFor(() => {
       expect(screen.getByTestId("project-name")).toHaveTextContent("First");
     });
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Second" },
     });

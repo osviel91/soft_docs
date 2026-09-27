@@ -74,7 +74,7 @@ describe("Explorer", () => {
     expect(screen.getByLabelText("Load diagram Welcome")).toBeInTheDocument();
   });
 
-  it("shows only the active project when the server project is open", () => {
+  it("shows the project explorer instead of a project list when a server project is open", () => {
     const other: Project = { id: "proj-2", name: "Other", datasetIds: [] };
     render(
       <Explorer
@@ -88,9 +88,41 @@ describe("Explorer", () => {
         serverMode
       />,
     );
-    expect(screen.getAllByTestId("explorer-project")).toHaveLength(1);
+    expect(screen.queryByTestId("explorer-project")).toBeNull();
     expect(screen.getByText("SHARED")).toBeInTheDocument();
+    expect(screen.getByText("MY WORK")).toBeInTheDocument();
+    expect(screen.getByText("PROPOSALS")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Search resources…")).toBeInTheDocument();
+    expect(screen.getAllByTestId("explorer-resources")).toHaveLength(1);
+    expect(screen.queryByRole("separator")).toBeNull();
+    expect(screen.queryByTestId("workspace-new-server-project-input")).toBeNull();
+    expect(screen.queryByText("SERVER PROJECT")).toBeNull();
+    expect(screen.queryByText("PROJECT KNOWLEDGE")).toBeNull();
+  });
+
+  it("collapses only the selected provenance section", () => {
+    render(
+      <Explorer
+        projects={[project]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={vi.fn()}
+        serverMode
+        privateWorkContexts={[{ id: "work-1", name: "retry-work", lifecycle: "active" }]}
+        architecturalProposals={[{ id: "proposal-1", title: "Retry", authorUserId: "u1", status: "open", baseSharedRevision: "1", reviewStatus: "approved" }]}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("explorer-my-work-toggle"));
+    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
+    expect(screen.getByTestId("explorer-private-context")).toBeInTheDocument();
+    expect(screen.getByTestId("explorer-proposal")).toHaveTextContent("APPROVED");
+    fireEvent.click(screen.getByTestId("explorer-shared-toggle"));
+    expect(screen.queryByLabelText("Load diagram Welcome")).toBeNull();
+    expect(screen.getByTestId("explorer-private-context")).toBeInTheDocument();
+    expect(screen.getByTestId("explorer-proposal")).toBeInTheDocument();
   });
 
   it("identifies sequence and event-flow diagrams with different icons", () => {
@@ -292,6 +324,7 @@ describe("Explorer", () => {
         onLoadDiagram={vi.fn()}
       />,
     );
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     const input = screen.getByTestId("project-name-input") as HTMLInputElement;
     const button = screen.getByTestId(
       "create-project-button",

@@ -125,6 +125,44 @@ export interface ExplorerNode {
   children?: ExplorerNode[];
 }
 
+function ServerResourceTree({
+  diagrams,
+  notes,
+  selectedDiagramId,
+  selectedNoteId,
+  openProposalCounts,
+  onLoadDiagram,
+  onLoadNote,
+  onDiagramMenu,
+  onNoteMenu,
+}: Pick<ExplorerProps, "diagrams" | "notes" | "selectedDiagramId" | "selectedNoteId" | "openProposalCounts" | "onLoadDiagram" | "onLoadNote" | "onDiagramMenu" | "onNoteMenu">) {
+  const safeNotes = notes ?? [];
+  return (
+    <ul className="explorer__resource-list" data-testid="explorer-resources">
+      {diagrams.map((diagram) => (
+        <li key={diagram.id} className={diagram.id === selectedDiagramId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-diagram" onContextMenu={(event) => { if (!onDiagramMenu) return; event.preventDefault(); onDiagramMenu(diagram, { x: event.clientX, y: event.clientY }); }}>
+          <button type="button" className="explorer__resource-button" data-testid="select-diagram-button" aria-label={`Load diagram ${diagramDisplayName(diagram.name, diagram.source)}`} onClick={() => onLoadDiagram(diagram)}>
+            <span className="explorer__diagram-kind" aria-hidden="true">{diagram.name.toLowerCase().endsWith(".eventseq") ? "□" : "○"}</span>
+            <span className="explorer__item-name">{diagramDisplayName(diagram.name, diagram.source)}</span>
+            {(openProposalCounts?.[diagram.id] ?? 0) > 0 ? <span className="explorer__status-slot" title={`${openProposalCounts?.[diagram.id]} open changes`}>◆</span> : null}
+          </button>
+          {onDiagramMenu ? <button type="button" className="explorer__diagram-menu" data-testid="diagram-menu-button" aria-label={`Actions for diagram ${diagramDisplayName(diagram.name, diagram.source)}`} onClick={(event) => onDiagramMenu(diagram, positionBelow(event.currentTarget))}>⋯</button> : null}
+        </li>
+      ))}
+      {safeNotes.map((note) => (
+        <li key={note.id} className={note.id === selectedNoteId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-note" onContextMenu={(event) => { if (!onNoteMenu) return; event.preventDefault(); onNoteMenu(note, { x: event.clientX, y: event.clientY }); }}>
+          <button type="button" className="explorer__resource-button" data-testid="select-note-button" aria-label={`Open note ${noteDisplayName(note.name, note.markdown)}`} onClick={() => onLoadNote?.(note)}>
+            <span className="explorer__item-icon" aria-hidden="true">¶</span>
+            <span className="explorer__item-name">{noteDisplayName(note.name, note.markdown)}</span>
+          </button>
+          {onNoteMenu ? <button type="button" className="explorer__note-menu" data-testid="note-menu-button" aria-label={`Actions for note ${noteDisplayName(note.name, note.markdown)}`} onClick={(event) => onNoteMenu(note, positionBelow(event.currentTarget))}>⋯</button> : null}
+        </li>
+      ))}
+      {diagrams.length === 0 && safeNotes.length === 0 ? <li className="explorer__diagram-empty" data-testid="explorer-shared-empty">No shared project knowledge yet.</li> : null}
+    </ul>
+  );
+}
+
 /** Small recursive seam for future grouped project knowledge. */
 export function ExplorerNodeList({
   nodes,
@@ -154,7 +192,62 @@ function positionBelow(element: HTMLElement): MenuPosition {
   return { x: rect.left, y: rect.bottom };
 }
 
-export default function Explorer({
+function ServerWorkspaceExplorer({
+  diagrams,
+  notes = [],
+  selectedDiagramId,
+  selectedNoteId = null,
+  openProposalCounts = {},
+  onLoadDiagram,
+  onLoadNote,
+  onDiagramMenu,
+  onNoteMenu,
+  switcher,
+  privateWorkContexts = [],
+  architecturalProposals = [],
+  onOpenArchitecturalProposal,
+  onSubmitArchitecturalProposal,
+  folderName = null,
+}: ExplorerProps) {
+  const [search, setSearch] = useState("");
+  const [sharedExpanded, setSharedExpanded] = useState(true);
+  const [myWorkExpanded, setMyWorkExpanded] = useState(false);
+  const [proposalsExpanded, setProposalsExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const resourceQuery = search.trim().toLowerCase();
+  const visibleDiagrams = diagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery));
+  const visibleNotes = notes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery));
+
+  return (
+    <nav className="explorer explorer--project" data-testid="explorer" aria-label="Project explorer">
+      {switcher}
+      <div className="explorer__search" data-testid="explorer-search">
+        <label className="visually-hidden" htmlFor="diagram-search-input">Search resources</label>
+        <input id="diagram-search-input" className="explorer__search-input" data-testid="diagram-search-input" type="search" placeholder="Search resources…" value={search} onChange={(event) => setSearch(event.target.value)} />
+      </div>
+      <div className="explorer__provenance-tree" data-testid="explorer-provenance-tree">
+        <section className="explorer__provenance-section">
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-shared-toggle" aria-expanded={sharedExpanded} onClick={() => setSharedExpanded((expanded) => !expanded)}>SHARED <span className="explorer__section-meta">authoritative</span><span aria-hidden="true">{sharedExpanded ? "▾" : "▸"}</span></button></h2>
+          {sharedExpanded ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}
+        </section>
+        <section className="explorer__provenance-section">
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => setMyWorkExpanded((expanded) => !expanded)}>MY WORK <span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button></h2>
+          {myWorkExpanded ? <ul className="explorer__context-list">{privateWorkContexts.length > 0 ? privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context"><span>{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</span>{work.lifecycle === "active" ? <button type="button" onClick={() => onSubmitArchitecturalProposal?.(work.id)}>Submit</button> : null}</li>) : <li className="explorer__diagram-empty">No private work contexts.</li>}</ul> : null}
+        </section>
+        <section className="explorer__provenance-section">
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => setProposalsExpanded((expanded) => !expanded)}>PROPOSALS <span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button></h2>
+          {proposalsExpanded ? <ul className="explorer__context-list">{architecturalProposals.length > 0 ? architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{proposal.reviewStatus === "approved" ? "APPROVED" : proposal.reviewStatus === "changes-requested" ? "CHANGES REQUESTED" : proposal.reviewStatus === "mixed" ? "MIXED" : "OPEN"}</span></li>) : <li className="explorer__diagram-empty">No proposals.</li>}</ul> : null}
+        </section>
+        {folderName ? <section className="explorer__provenance-section">
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-local-toggle" aria-expanded={localExpanded} onClick={() => setLocalExpanded((expanded) => !expanded)}>LOCAL <span aria-hidden="true">{localExpanded ? "▾" : "▸"}</span></button></h2>
+          {localExpanded ? <p className="explorer__local-binding">{folderName}</p> : null}
+        </section> : null}
+      </div>
+    </nav>
+  );
+}
+
+function LocalWorkspaceExplorer({
   projects,
   diagrams,
   notes = [],
@@ -179,23 +272,20 @@ export default function Explorer({
   workspaceLabel,
   folderSupported = false,
   switcher,
-  privateWorkContexts = [],
-  architecturalProposals = [],
-  onOpenArchitecturalProposal,
-  onSubmitArchitecturalProposal,
-  serverMode = false,
 }: ExplorerProps) {
   const [pendingName, setPendingName] = useState<string>("");
   // The search filters files by name across all projects. It is local UI state:
   // clearing it restores the normal selected-project view.
   const [search, setSearch] = useState<string>("");
   const [contentExpanded, setContentExpanded] = useState(true);
+  const [createExpanded, setCreateExpanded] = useState(false);
 
   const create = (): void => {
     const name = pendingName.trim();
     if (name) {
       onCreateProject(name);
       setPendingName("");
+      setCreateExpanded(false);
     }
   };
 
@@ -231,10 +321,6 @@ export default function Explorer({
     matchedDiagrams !== null &&
     matchedDiagrams.length === 0 &&
     (matchedNotes?.length ?? 0) === 0;
-
-  const visibleProjects = serverMode
-    ? projects.filter((project) => project.id === selectedProjectId)
-    : projects;
 
   const diagramsOf = (projectId: string): DiagramFile[] =>
     matchedDiagrams
@@ -304,11 +390,12 @@ export default function Explorer({
           aria-expanded={contentExpanded}
           onClick={() => setContentExpanded((expanded) => !expanded)}
         >
-          {serverMode ? "SHARED" : "Project knowledge"} <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
+          Projects <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
         </button>
+        <button type="button" className="explorer__section-add" data-testid="local-create-toggle" aria-label="Create local project" aria-expanded={createExpanded} onClick={() => setCreateExpanded((expanded) => !expanded)}>+</button>
       </h2>
       {contentExpanded && <>
-      <form
+      {createExpanded && <form
         className="explorer__create"
         onSubmit={(event) => {
           event.preventDefault();
@@ -334,7 +421,7 @@ export default function Explorer({
         >
           Add project
         </button>
-      </form>
+      </form>}
 
       <div className="explorer__search" data-testid="explorer-search">
         <label className="visually-hidden" htmlFor="diagram-search-input">
@@ -345,7 +432,7 @@ export default function Explorer({
           className="explorer__search-input"
           data-testid="diagram-search-input"
           type="search"
-          placeholder={serverMode ? "Search resources…" : "Search diagrams and notes…"}
+          placeholder="Search diagrams and notes…"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -365,7 +452,7 @@ export default function Explorer({
         </p>
       ) : (
         <ul className="explorer__projects" data-testid="explorer-projects">
-          {visibleProjects.map((project) => {
+          {projects.map((project) => {
             const projectDiagrams = diagramsOf(project.id);
             const projectNotes = notesOf(project.id);
             return (
@@ -437,7 +524,6 @@ export default function Explorer({
                     className="explorer__diagrams"
                     data-testid="explorer-diagrams"
                   >
-                    {serverMode ? <li className="explorer__context-label" data-testid="explorer-shared-label">SHARED · authoritative</li> : null}
                     {projectDiagrams.length === 0 &&
                     query === "" &&
                     selectedProjectId === project.id ? (
@@ -542,23 +628,6 @@ export default function Explorer({
                     )}
                   </ul>
 
-                  {serverMode && project.id === selectedProjectId && privateWorkContexts.length > 0 ? (
-                    <section className="explorer__private-work" data-testid="explorer-private-work">
-                      <h3 className="explorer__context-label">MY WORK · private, tentative</h3>
-                      <ul className="explorer__notes">
-                        {privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context">{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}{work.lifecycle === "active" ? <button type="button" onClick={() => onSubmitArchitecturalProposal?.(work.id)}>Submit</button> : null}</li>)}
-                      </ul>
-                    </section>
-                  ) : null}
-                  {serverMode && project.id === selectedProjectId && architecturalProposals.length > 0 ? (
-                    <section className="explorer__private-work" data-testid="explorer-proposals">
-                      <h3 className="explorer__context-label">PROPOSALS · team-visible</h3>
-                      <ul className="explorer__notes">
-                        {architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button> · {proposal.status}{proposal.approvals || proposal.changesRequested ? ` · ${proposal.approvals ?? 0} approval${proposal.approvals === 1 ? "" : "s"} · ${proposal.changesRequested ?? 0} changes requested` : ""}{proposal.staleBase ? " · base advanced" : ""}</li>)}
-                      </ul>
-                    </section>
-                  ) : null}
-
                  <ul className="explorer__notes" data-testid="explorer-notes">
                     {projectNotes.length === 0 &&
                     query === "" &&
@@ -657,4 +726,8 @@ export default function Explorer({
       </section>
     </nav>
   );
+}
+
+export default function Explorer(props: ExplorerProps) {
+  return props.serverMode ? <ServerWorkspaceExplorer {...props} /> : <LocalWorkspaceExplorer {...props} />;
 }

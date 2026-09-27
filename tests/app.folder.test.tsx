@@ -169,10 +169,6 @@ afterEach(() => {
 });
 
 async function openFolder(): Promise<void> {
-  const toggle = screen.getByTestId("workspace-local-toggle");
-  if (toggle.getAttribute("aria-expanded") === "false") {
-    fireEvent.click(toggle);
-  }
   const folderButton = await screen.findByTestId("workspace-open-folder");
   await act(async () => {
     fireEvent.click(folderButton);
@@ -183,7 +179,6 @@ describe("App — local folder (Phase 5)", () => {
   it("opens a folder through the explorer and shows its name", async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByTestId("workspace-local-toggle"));
     const button = screen.getByTestId("workspace-open-folder");
     expect(button).toBeEnabled();
 
@@ -214,6 +209,7 @@ describe("App — local folder (Phase 5)", () => {
     render(<App />);
 
     await openFolder();
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Docs" },
     });

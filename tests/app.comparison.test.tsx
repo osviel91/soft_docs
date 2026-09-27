@@ -18,6 +18,7 @@ async function command(label: string): Promise<void> {
 }
 
 async function project(): Promise<void> {
+  fireEvent.click(screen.getByTestId("local-create-toggle"));
   fireEvent.change(screen.getByTestId("project-name-input"), { target: { value: "Compare" } });
   fireEvent.click(screen.getByTestId("create-project-button"));
   await waitFor(() => expect(screen.getByTestId("project-name")).toHaveTextContent("Compare"));

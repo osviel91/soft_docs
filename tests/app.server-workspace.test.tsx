@@ -290,8 +290,7 @@ describe("App — authenticated browser", () => {
     ]);
     render(<App />);
 
-    const toggle = await screen.findByTestId("workspace-server-toggle");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await screen.findByTestId("workspace-server-project-filter");
     const row = await screen.findByTestId("workspace-server-project");
     expect(row).toHaveTextContent("Payments");
     await act(async () => {
@@ -314,9 +313,8 @@ describe("App — authenticated browser", () => {
     expect(screen.getByTestId("workspace-active-project")).toHaveTextContent(
       "Payments",
     );
-    expect(screen.getByTestId("explorer-mode")).toHaveTextContent(
-      "Server project: Payments",
-    );
+    expect(screen.queryByTestId("explorer-mode")).toBeNull();
+    expect(screen.getByTestId("explorer-provenance-tree")).toBeInTheDocument();
     // Opening read the access record and the resource, and nothing more.
     expect(state.calls.map((call) => `${call.method} ${call.path}`)).toContain(
       "GET /api/projects/p1/access",

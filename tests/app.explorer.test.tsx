@@ -11,6 +11,7 @@ import App from "./app-harness";
 
 /** Create an in-browser project named `name` and wait for its header. */
 async function createProject(name: string): Promise<void> {
+  fireEvent.click(screen.getByTestId("local-create-toggle"));
   fireEvent.change(screen.getByTestId("project-name-input"), {
     target: { value: name },
   });
@@ -22,6 +23,7 @@ async function createProject(name: string): Promise<void> {
 
 /** Create a second project, once two headers make `getByTestId` ambiguous. */
 async function createSecondProject(name: string): Promise<void> {
+  fireEvent.click(screen.getByTestId("local-create-toggle"));
   fireEvent.change(screen.getByTestId("project-name-input"), {
     target: { value: name },
   });
@@ -111,6 +113,7 @@ describe("App — project management", () => {
     });
 
     // A second project becomes the selection, so Default is no longer selected.
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: "Project2" },
     });

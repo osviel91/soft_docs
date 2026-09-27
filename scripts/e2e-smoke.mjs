@@ -588,7 +588,7 @@ async function waitForAuthEntry(page) {
 
 /** Create a server project and wait for the Project Explorer to open it. */
 async function createServerProject(page, name) {
-  await expandServerPanel(page);
+  await openServerCreation(page);
   await page
     .locator('[data-testid="workspace-new-server-project-input"]')
     .fill(name);
@@ -601,9 +601,9 @@ async function createServerProject(page, name) {
     .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 }
 
-/** Open the server workspace section, which is collapsed by default. */
-async function expandServerPanel(page) {
-  const toggle = page.locator('[data-testid="workspace-server-toggle"]');
+/** Open the compact server-project creation form. */
+async function openServerCreation(page) {
+  const toggle = page.locator('[data-testid="workspace-new-server-project-toggle"]');
   await toggle.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
   if ((await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
@@ -612,26 +612,22 @@ async function expandServerPanel(page) {
 
 /** Open a server project from the switcher and wait for its explorer row. */
 async function openServerProject(page, name) {
-  await expandServerPanel(page);
   const entry = page
     .locator('[data-testid="workspace-server-project"]')
     .filter({ hasText: name });
   await entry.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
   await entry.click();
   await page
-    .locator('[data-testid="explorer-project"]')
+    .locator('[data-testid="workspace-active-project"]')
     .filter({ hasText: name })
     .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 }
 
-/** Add a document to a project through the explorer's add menu. */
-async function addDocument(page, projectName, menuTestId) {
-  await page
-    .locator('[data-testid="explorer-project"]')
-    .filter({ hasText: projectName })
-    .locator('[data-testid="project-add-button"]')
-    .click();
-  await page.locator(`[data-testid="${menuTestId}"]`).click();
+/** Add a document to the selected project through the command palette. */
+async function addDocument(page, menuTestId) {
+  await page.locator('[data-testid="command-palette-button"]').click();
+  await page.locator('[data-testid="palette-input"]').fill(menuTestId.includes("note") ? "New Note" : "New Diagram");
+  await page.locator('[data-testid="palette-item-button"]').first().click();
 }
 
 /**
@@ -644,7 +640,7 @@ async function addDocument(page, projectName, menuTestId) {
  */
 async function createDocument(page, projectName, menuTestId) {
   const tabsBefore = await page.locator('[data-testid="tab"]').count();
-  await addDocument(page, projectName, menuTestId);
+  await addDocument(page, menuTestId);
   await page.waitForFunction(
     (expected) =>
       document.querySelectorAll('[data-testid="tab"]').length === expected,
@@ -1323,6 +1319,7 @@ async function runChecks(page, idp) {
   console.log("\nMarkdown notes:");
   // A project documents a system: create one, add a diagram to link to, then a
   // note that references it.
+  await page.locator('[data-testid="local-create-toggle"]').click();
   await page.locator('[data-testid="project-name-input"]').fill("Handbook");
   await page.locator('[data-testid="create-project-button"]').click();
   await page.locator('[data-testid="project-name"]').first().waitFor({
@@ -1459,6 +1456,7 @@ async function runChecks(page, idp) {
   const projectRow = (name) =>
     page.locator('[data-testid="explorer-project"]').filter({ hasText: name });
 
+  await page.locator('[data-testid="local-create-toggle"]').click();
   await page.locator('[data-testid="project-name-input"]').fill("Workspace");
   await page.locator('[data-testid="create-project-button"]').click();
 
@@ -1652,6 +1650,7 @@ async function runChecks(page, idp) {
     .locator('[data-testid="explorer-project"]')
     .filter({ hasText: "Intel" });
   const tabsAtIntel = await page.locator('[data-testid="tab"]').count();
+  await page.locator('[data-testid="local-create-toggle"]').click();
   await page.locator('[data-testid="project-name-input"]').fill("Intel");
   await page.locator('[data-testid="create-project-button"]').click();
 
@@ -1807,6 +1806,7 @@ async function runChecks(page, idp) {
 
   console.log("\nEvent flows:");
   // A second documentation language, created and rendered in the same shell.
+  await page.locator('[data-testid="local-create-toggle"]').click();
   await page.locator('[data-testid="project-name-input"]').fill("Orders");
   await page.locator('[data-testid="create-project-button"]').click();
   // Creating a document is asynchronous, and the editor was already on screen, so
@@ -2437,19 +2437,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           `status ${refused.status}`,
         );
 
-        // The explorer's create affordance is refused too, which is what an
-        // operator actually clicks.
-        const viewerRow = viewerPage
-          .locator('[data-testid="explorer-project"]')
-          .filter({ hasText: "Viewer Server" });
-        const before = await viewerRow
+        // The command palette create action is refused too, which is what an
+        // operator can use without adding controls to the clean Explorer.
+        const viewerResources = viewerPage.locator('[data-testid="explorer-resources"]');
+        const before = await viewerResources
           .locator('[data-testid="explorer-diagram"]')
           .count();
-        await addDocument(
-          viewerPage,
-          "Viewer Server",
-          "context-menu-new-diagram",
-        );
+        await addDocument(viewerPage, "context-menu-new-diagram");
         await viewerPage.locator('[data-testid="workspace-error"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2460,10 +2454,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         check(
           "no diagram was created in the read-only project",
-          (await viewerRow
+          (await viewerResources
             .locator('[data-testid="explorer-diagram"]')
             .count()) === before,
-          `${before} -> ${await viewerRow
+          `${before} -> ${await viewerResources
             .locator('[data-testid="explorer-diagram"]')
             .count()}`,
         );

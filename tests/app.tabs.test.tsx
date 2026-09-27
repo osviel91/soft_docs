@@ -18,6 +18,7 @@ import App from "./app-harness";
 describe("App — mixed document tabs", () => {
   /** Create a project through the explorer and wait for it to appear. */
   async function createProject(name: string): Promise<void> {
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
     fireEvent.change(screen.getByTestId("project-name-input"), {
       target: { value: name },
     });
