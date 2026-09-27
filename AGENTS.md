@@ -23,6 +23,7 @@
 - The Analysis Workspace direction is inspection of two architectural contexts, including cross-resource, multi-perspective, discovery, evolution, and proposed-versus-shared analysis. It is not currently a guarantee of semantic architecture diffing or private resources.
 - Future private resources are intended for work-in-progress architectural knowledge that can be evaluated before publication. Do not describe private resources, D03.14, or future semantic architecture comparison as implemented.
 - Agents must validate and analyze before submission where practical, report selected resources and dependency closure, require explicit submission intent, preserve unknowns, and never submit automatically or mutate SHARED during submission.
+- SHARED resources use a non-destructive `ACTIVE -> RETIRED` lifecycle. Removing a resource from current authoritative knowledge must preserve its identity, revisions, and historical relationship evidence; do not reintroduce hard-delete semantics for SHARED resources.
 - Distinguish current capabilities, work in progress, and future intent in documentation and agent responses. Link product-facing summaries to `docs/documentation-model.md` for normative representation rules.
 
 ## Commands

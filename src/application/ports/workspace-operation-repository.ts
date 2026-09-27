@@ -24,7 +24,7 @@ import type { ResourceMetadata } from "../../domain/workspace/resource-metadata"
 import type { ResourceAuthorship } from "../../domain/workspace/resource-revision";
 
 /** The mutations the journal records. */
-export type WorkspaceOperationKind = "create" | "update" | "move" | "delete";
+export type WorkspaceOperationKind = "create" | "update" | "move" | "delete" | "retire";
 
 /**
  * Where an operation is in its lifecycle.

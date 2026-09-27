@@ -92,6 +92,19 @@ it("does not expose a private proposal to another project member", async () => {
   await expect(service.get(contextFor(member), project.id, proposal.id)).resolves.toMatchObject({ id: proposal.id });
 });
 
+it("marks a proposal stale when an included SHARED resource is retired", async () => {
+  const owner = await user("retirement-stale-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Retirement Stale", workspaceId: owner })).project;
+  const shared = await catalog.createResource(contextFor(owner), project.id, { path: "current.md", type: "markdown-document", content: "# Current\n" });
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "candidate" });
+  const privateResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "candidate.md", type: "markdown-document", content: "# Candidate\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [privateResource.id], title: "Retirement base" });
+
+  await catalog.deleteResource(contextFor(owner), project.id, shared.id);
+
+  await expect(service.get(contextFor(owner), project.id, proposal.id)).resolves.toMatchObject({ staleBase: true });
+});
+
 it("persists append-only review history, aggregates latest decisions, and keeps the snapshot immutable", async () => {
   const owner = await user("review-owner");
   const reviewer = await user("reviewer");

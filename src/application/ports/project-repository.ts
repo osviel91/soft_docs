@@ -40,6 +40,9 @@ export interface ResourceRecord {
   metadata?: ResourceMetadata;
   /** The optimistic-concurrency token. Starts at 1. */
   revision: number;
+  lifecycle: "ACTIVE" | "RETIRED";
+  retiredAt?: Date;
+  retiredBy?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -115,6 +118,9 @@ export interface ProjectRepository {
     resourceId: string,
     contextId?: string | null,
   ): Promise<ResourceRecord | null>;
+
+  /** One resource by id including RETIRED records for historical inspection. */
+  findHistoricalResource?(projectId: string, resourceId: string): Promise<ResourceRecord | null>;
 
   /** One resource by its globally unique id. */
   findResourceById(resourceId: string): Promise<ResourceRecord | null>;

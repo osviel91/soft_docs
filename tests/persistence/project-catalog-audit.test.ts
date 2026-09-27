@@ -183,7 +183,7 @@ describe("the audit trail's contents", () => {
     expect(actions).toContain("project.created");
     expect(actions).toContain("resource.created");
     expect(actions).toContain("resource.updated");
-    expect(actions).toContain("resource.deleted");
+    expect(actions).toContain("resource.retired");
 
     // Nothing in the trail may carry the document's bytes, the session token, or
     // the cookie: an audit row outlives the request and is read by operators.

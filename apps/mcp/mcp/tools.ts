@@ -1535,7 +1535,7 @@ export function createMcpTools(): McpTool[] {
       name: "delete_resource",
       title: "Delete a resource",
       description:
-        "Delete a resource permanently. Requires `confirm: true`; without it the call fails and explains what would be removed, so an accidental invocation cannot destroy work.",
+        "Retire a shared resource from current authoritative knowledge without destroying its revision history. Requires `confirm: true`.",
       inputSchema: {
         projectId: projectId(),
         resource: resourceReference(),
@@ -1559,7 +1559,7 @@ export function createMcpTools(): McpTool[] {
         );
         if (args.confirm !== true) {
           throw invalid(
-            `Refusing to delete "${resource.path}" without confirmation. Call delete_resource again with confirm: true.`,
+              `Refusing to retire "${resource.path}" without confirmation. Call delete_resource again with confirm: true.`,
           );
         }
         await toolContext.catalog.deleteResource(
@@ -1573,8 +1573,8 @@ export function createMcpTools(): McpTool[] {
           },
         );
         return {
-          text: `Deleted ${resource.path} (id: ${resource.id}).`,
-          structured: { deleted: resource },
+          text: `Retired ${resource.path} (id: ${resource.id}).`,
+          structured: { retired: resource },
         };
       },
     },

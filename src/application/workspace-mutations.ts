@@ -385,7 +385,8 @@ export function createWorkspaceMutationService(
         // or neither present is ambiguous, and recovery refuses to guess.
         return targetExists && !sourceExists;
       }
-      case "delete": {
+      case "delete":
+      case "retire": {
         if (!operation.targetPath) return true;
         const removed = await store.remove(operation.targetPath);
         return isOk(removed);
@@ -706,14 +707,19 @@ export function createWorkspaceMutationService(
         projectId,
         contextId: record.contextId,
         resourceId,
-        operation: "delete",
+        operation: input.contextId == null ? "retire" : "delete",
         sourcePath: record.path,
         targetPath: record.path,
         stagedPath: null,
         contentHash: null,
         authorship: authorshipFor(context),
         expectedRevision: input.expectedRevision ?? null,
-        audit: auditFor(context, "resource.deleted", projectId, resourceId),
+        audit: auditFor(
+          context,
+          input.contextId == null ? "resource.retired" : "resource.deleted",
+          projectId,
+          resourceId,
+        ),
         idempotencyKey: input.idempotencyKey ?? null,
       });
       if (claim.kind === "replayed") return;

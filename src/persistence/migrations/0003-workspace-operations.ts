@@ -55,7 +55,7 @@ CREATE TABLE workspace_operations (
   updated_at         timestamptz NOT NULL DEFAULT now(),
   completed_at       timestamptz,
   CONSTRAINT workspace_operations_operation_known CHECK (
-    operation IN ('create', 'update', 'move', 'delete')
+     operation IN ('create', 'update', 'move', 'delete', 'retire')
   ),
   CONSTRAINT workspace_operations_status_known CHECK (
     status IN ('pending', 'processing', 'completed', 'failed', 'compensating')

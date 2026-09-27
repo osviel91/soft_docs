@@ -31,6 +31,8 @@ import { up as resourceRelationships } from "./migrations/0015-resource-relation
 import { up as privateWorkContexts } from "./migrations/0016-private-work-contexts";
 import { up as architecturalProposals } from "./migrations/0017-architectural-proposals";
 import { up as proposalReviews } from "./migrations/0018-proposal-reviews";
+import { up as authoritativeLifecycle } from "./migrations/0019-authoritative-lifecycle";
+import { up as authoritativeBatches } from "./migrations/0020-authoritative-batches";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -62,6 +64,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 16, name: "private-work-contexts", sql: privateWorkContexts },
   { version: 17, name: "architectural-proposals", sql: architecturalProposals },
   { version: 18, name: "proposal-reviews", sql: proposalReviews },
+  { version: 19, name: "authoritative-lifecycle", sql: authoritativeLifecycle },
+  { version: 20, name: "authoritative-batches", sql: authoritativeBatches },
 ];
 
 /**

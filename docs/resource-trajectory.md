@@ -14,7 +14,10 @@ the project result filtered by resource id. `ResourceTrajectory` is a derived
 read model over `resource_revisions` and terminal `change_proposals`. No
 trajectory table or document-content copy is persisted.
 
-Entries are `RESOURCE_CREATED`, `RESOURCE_UPDATED`, and `PROPOSAL_MERGED`.
+Entries are `RESOURCE_CREATED`, `RESOURCE_UPDATED`, `RESOURCE_RETIRED`, and
+`PROPOSAL_MERGED`. Retirement is a current-state transition, not destruction:
+the resource identity and every immutable revision remain readable through
+historical APIs.
 Direct revision authorship and immutable revision timestamps supply actor and
 time. A merged proposal is attached to the revision named by
 `merged_revision`; its proposal author and merge actor remain distinct. Entries

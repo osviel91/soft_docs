@@ -40,6 +40,7 @@ export const AUDIT_ACTIONS = [
   "resource.updated",
   "resource.moved",
   "resource.deleted",
+  "resource.retired",
   "agent.created",
   "agent.updated",
   "agent.disabled",

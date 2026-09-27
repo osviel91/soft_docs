@@ -84,6 +84,13 @@ expose only submitted resources and dependencies. Proposal status is deliberatel
 minimal (`open`); approval, rejection, promotion, merge, and lineage remain
 future capabilities.
 
+Authoritative SHARED resources have a non-destructive lifecycle: `ACTIVE -> RETIRED`.
+Retirement removes a resource from current listings, indexes, fingerprints, and
+analysis, but does not remove its stable identity or immutable revision history.
+Relationships removed from current SHARED state are retained as historical
+relationship evidence. Removing current authoritative knowledge is not destruction
+of its history.
+
 ## Knowledge Contexts
 
 ```text
@@ -99,6 +106,22 @@ SHARED, and private context metadata is not stored in the shared project
 manifest. A private context can consume readable SHARED resources, while a
 SHARED query excludes private resources, identities, relationships, indexes,
 and traces.
+
+SHARED semantic identities are currently authoritative in the project manifest
+(`project.json`). Resource source carries stable `messageRef` values; the parser,
+ProjectIndex, validation, and traces resolve those references against the manifest.
+The manifest is persisted on the project volume and survives restart/rebuild. A
+message UUID alone is not enough to reconstruct its name or kind. Retirement does
+not remove an identity from the manifest, so another active occurrence remains
+bound to the same identity.
+
+Authoritative multi-resource mutations use a journaled batch envelope. Resource
+rows, immutable revisions, relationship retirement evidence, audit, and the batch
+member intents commit in one SQL transaction. Filesystem staging and promotion are
+outside that transaction; unfinished members remain recoverable until every member
+is complete. A batch is not reported complete before its journal members settle,
+and retries use the existing idempotency records.
+
 PROPOSAL analysis is effective SHARED plus the submitted snapshot, with provenance
 retained. A proposal records a SHARED resource-revision vector as its base. Current
 resource history can be reconstructed from resource revisions, but relationship and

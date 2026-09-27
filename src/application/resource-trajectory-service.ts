@@ -30,7 +30,7 @@ export function createResourceTrajectoryService(options: {
     },
     async getResourceTrajectory(context, projectId, resourceId, page) {
       await policy.requirePermission(context, projectId, "resource:read");
-      const resource = await options.projects.findResource(projectId, resourceId);
+      const resource = await (options.projects.findHistoricalResource?.(projectId, resourceId) ?? options.projects.findResource(projectId, resourceId));
       if (!resource) throw notFound(`No resource with id ${resourceId}.`);
       return options.projects.listTrajectory(projectId, { ...page, resourceId });
     },

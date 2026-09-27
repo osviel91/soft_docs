@@ -33,7 +33,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
   const newId = options.newId ?? createIdGenerator();
 
   const currentSharedRevision = async (db: SqlClient, projectId: string) => {
-    const result = await db.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL ORDER BY id", [projectId]);
+    const result = await db.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE' ORDER BY id", [projectId]);
     const resources = Object.fromEntries(result.rows.map((row) => [String(row.id), Number(row.revision)]));
     return { revision: fingerprint(resources), resources };
   };

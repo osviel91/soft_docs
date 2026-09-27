@@ -381,9 +381,61 @@ export function createWorkspaceOperationRepository(
             );
             break;
           }
+
+          case "retire": {
+            const row = await requireRow(
+              tx,
+              intent.projectId,
+              intent.resourceId,
+              null,
+              intent.expectedRevision,
+            );
+            if (String(row.lifecycle ?? "ACTIVE") !== "ACTIVE") {
+              throw invalid("The resource is already retired.", { reason: "already_retired" });
+            }
+            const history = await tx.query(
+              `SELECT source_id, target_id, kind, source_role, target_role,
+                      knowledge_context_id
+                 FROM resource_relationships
+                WHERE project_id = $1
+                  AND knowledge_context_id IS NULL
+                  AND (source_id = $2 OR target_id = $2)`,
+              [intent.projectId, intent.resourceId],
+            );
+            for (const relationship of history.rows) {
+              await tx.query(
+                `INSERT INTO resource_relationship_history
+                   (id, project_id, source_id, target_id, kind, source_role,
+                    target_role, knowledge_context_id, recorded_by, operation_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [
+                  newId(), intent.projectId, String(relationship.source_id),
+                  String(relationship.target_id), String(relationship.kind),
+                  relationship.source_role == null ? null : String(relationship.source_role),
+                  relationship.target_role == null ? null : String(relationship.target_role),
+                  null, intent.audit.actorId ?? intent.audit.subjectUserId, intent.operationId,
+                ],
+              );
+            }
+            await tx.query(
+              `DELETE FROM resource_relationships
+                WHERE project_id = $1 AND knowledge_context_id IS NULL
+                  AND (source_id = $2 OR target_id = $2)`,
+              [intent.projectId, intent.resourceId],
+            );
+            await tx.query(
+              `UPDATE resources
+                  SET lifecycle = 'RETIRED', retired_at = now(), retired_by = $3,
+                      updated_at = now()
+                WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NULL`,
+              [intent.projectId, intent.resourceId, intent.audit.actorId ?? intent.audit.subjectUserId],
+            );
+            resultingRevision = Number(row.revision);
+            break;
+          }
         }
 
-        if (intent.operation !== "delete") {
+        if (intent.operation !== "delete" && intent.operation !== "retire") {
           let content = intent.content;
           if (content === undefined) {
             const previous = await tx.query(
@@ -477,6 +529,16 @@ export function createWorkspaceOperationRepository(
               AND r.project_id = o.project_id
               AND r.idempotency_key = o.idempotency_key`,
           [operationId, result === null ? null : JSON.stringify(result)],
+        );
+        await tx.query(
+          `UPDATE workspace_operation_batches b
+              SET status = 'completed', completed_at = now()
+            WHERE b.id = (SELECT batch_id FROM workspace_operations WHERE id = $1)
+              AND NOT EXISTS (
+                SELECT 1 FROM workspace_operations o
+                 WHERE o.batch_id = b.id AND o.status <> 'completed'
+              )`,
+          [operationId],
         );
       });
     },

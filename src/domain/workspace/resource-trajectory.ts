@@ -5,11 +5,12 @@ import type { ResourceType } from "./resource-id";
 export type ResourceTrajectoryKind =
   | "RESOURCE_CREATED"
   | "RESOURCE_UPDATED"
+  | "RESOURCE_RETIRED"
   | "CHECKPOINT_CREATED"
   | "PROPOSAL_MERGED";
 
 /** @deprecated Use ResourceTrajectoryKind. */
-export type TrajectoryOperation = "CREATED" | "EDIT" | "METADATA" | "PROPOSAL" | "MERGE";
+export type TrajectoryOperation = "CREATED" | "EDIT" | "METADATA" | "DELETE" | "PROPOSAL" | "MERGE";
 
 export interface TrajectoryEntry {
   id: string;
@@ -43,7 +44,7 @@ export function resourceTrajectoryOf(
   resourceId: string,
   revisions: readonly ResourceRevision[],
   proposals: readonly ChangeProposal[] = [],
-  resource?: { projectId?: string; path?: string; type?: ResourceType },
+  resource?: { projectId?: string; path?: string; type?: ResourceType; lifecycle?: "ACTIVE" | "RETIRED"; retiredAt?: Date; retiredBy?: string },
 ): ResourceTrajectory {
   const mergedByRevision = new Map(
     proposals
@@ -110,6 +111,21 @@ export function resourceTrajectoryOf(
         author: proposal.author,
         mergeActor: proposal.mergeActor,
       },
+    });
+  }
+
+  if (resource?.lifecycle === "RETIRED" && resource.retiredAt) {
+    entries.push({
+      id: `${resourceId}:retired`,
+      resourceId,
+      ...resource,
+      kind: "RESOURCE_RETIRED",
+      operation: "DELETE",
+      occurredAt: resource.retiredAt,
+      actor: resource.retiredBy
+        ? { kind: "user", userId: resource.retiredBy, subjectUserId: resource.retiredBy }
+        : null,
+      resultingRevision: revisions.at(-1)?.revision,
     });
   }
 

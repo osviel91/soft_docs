@@ -70,6 +70,9 @@ function toResourceRecord(row: Record<string, unknown>): ResourceRecord {
     type: toResourceType(row.type),
     ...(metadata === undefined ? {} : { metadata }),
     revision: integer(row, "revision"),
+    lifecycle: row.lifecycle === "RETIRED" ? "RETIRED" : "ACTIVE",
+    ...(row.retired_at == null ? {} : { retiredAt: row.retired_at instanceof Date ? row.retired_at : new Date(String(row.retired_at)) }),
+    ...(row.retired_by == null ? {} : { retiredBy: String(row.retired_by) }),
     createdAt:
       row.created_at instanceof Date
         ? row.created_at
@@ -146,7 +149,7 @@ export function createProjectRepository(
     contextId: string | null = null,
   ): Promise<ResourceRecord | null> => {
     const result = await client.query(
-      "SELECT * FROM resources WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+      "SELECT * FROM resources WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3 AND lifecycle = 'ACTIVE'",
       [projectId, resourceId, contextId],
     );
     const row = result.rows[0];
@@ -213,7 +216,7 @@ export function createProjectRepository(
     async listForUser(userId, workspaceId = userId) {
       const result = await client.query(
         `SELECT p.*, m.role,
-                (SELECT count(*)::int FROM resources r WHERE r.project_id = p.id AND r.knowledge_context_id IS NULL) AS resource_count
+                (SELECT count(*)::int FROM resources r WHERE r.project_id = p.id AND r.knowledge_context_id IS NULL AND r.lifecycle = 'ACTIVE') AS resource_count
            FROM projects p
            JOIN project_members m ON m.project_id = p.id
            WHERE m.user_id = $1 AND p.workspace_id = $2
@@ -304,7 +307,7 @@ export function createProjectRepository(
 
     async listResources(projectId, contextId = null) {
       const result = await client.query(
-        "SELECT * FROM resources WHERE project_id = $1 AND knowledge_context_id IS NOT DISTINCT FROM $2 ORDER BY path ASC",
+        "SELECT * FROM resources WHERE project_id = $1 AND knowledge_context_id IS NOT DISTINCT FROM $2 AND lifecycle = 'ACTIVE' ORDER BY path ASC",
         [projectId, contextId],
       );
       return result.rows.map(toResourceRecord);
@@ -312,9 +315,18 @@ export function createProjectRepository(
 
     findResource,
 
+    async findHistoricalResource(projectId, resourceId) {
+      const result = await client.query(
+        "SELECT * FROM resources WHERE project_id = $1 AND id = $2",
+        [projectId, resourceId],
+      );
+      const row = result.rows[0];
+      return row ? toResourceRecord(row) : null;
+    },
+
     async findResourceById(resourceId) {
       const result = await client.query(
-        "SELECT * FROM resources WHERE id = $1",
+        "SELECT * FROM resources WHERE id = $1 AND lifecycle = 'ACTIVE'",
         [resourceId],
       );
       const row = result.rows[0];
@@ -324,7 +336,7 @@ export function createProjectRepository(
     async findResourceByPath(projectId, path, contextId = null) {
       const normalized = normalizeResourcePath(path);
       const result = await client.query(
-        "SELECT * FROM resources WHERE project_id = $1 AND path = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+        "SELECT * FROM resources WHERE project_id = $1 AND path = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3 AND lifecycle = 'ACTIVE'",
         [projectId, normalized, contextId],
       );
       const row = result.rows[0];
@@ -384,15 +396,48 @@ export function createProjectRepository(
     },
 
     async deleteResource(projectId, resourceId) {
-      await client.query(
-        "DELETE FROM resources WHERE project_id = $1 AND id = $2",
-        [projectId, resourceId],
-      );
+      await client.transaction(async (tx) => {
+        const relationships = await tx.query(
+          `SELECT source_id, target_id, kind, source_role, target_role
+             FROM resource_relationships
+            WHERE project_id = $1 AND knowledge_context_id IS NULL
+              AND (source_id = $2 OR target_id = $2)`,
+          [projectId, resourceId],
+        );
+        for (const relationship of relationships.rows) {
+          await tx.query(
+            `INSERT INTO resource_relationship_history
+               (id, project_id, source_id, target_id, kind, source_role, target_role)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [newId(), projectId, String(relationship.source_id), String(relationship.target_id), String(relationship.kind), relationship.source_role == null ? null : String(relationship.source_role), relationship.target_role == null ? null : String(relationship.target_role)],
+          );
+        }
+        await tx.query(
+          `DELETE FROM resource_relationships
+            WHERE project_id = $1 AND knowledge_context_id IS NULL
+              AND (source_id = $2 OR target_id = $2)`,
+          [projectId, resourceId],
+        );
+        await tx.query(
+          `UPDATE resources
+              SET lifecycle = 'RETIRED', retired_at = now(), updated_at = now()
+            WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NULL`,
+          [projectId, resourceId],
+        );
+      });
     },
 
     async listResourceRelationships(projectId, contextId = null) {
       const result = await client.query(
-        "SELECT source_id, target_id, kind, source_role, target_role, knowledge_context_id FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id IS NOT DISTINCT FROM $2 ORDER BY source_id, target_id",
+        `SELECT rr.source_id, rr.target_id, rr.kind, rr.source_role, rr.target_role, rr.knowledge_context_id
+           FROM resource_relationships rr
+           JOIN resources source_resource ON source_resource.id = rr.source_id
+           JOIN resources target_resource ON target_resource.id = rr.target_id
+          WHERE rr.project_id = $1
+            AND rr.knowledge_context_id IS NOT DISTINCT FROM $2
+            AND source_resource.lifecycle = 'ACTIVE'
+            AND target_resource.lifecycle = 'ACTIVE'
+          ORDER BY rr.source_id, rr.target_id`,
         [projectId, contextId],
       );
       return result.rows.map((row) => ({
@@ -450,7 +495,7 @@ export function createProjectRepository(
       const params: SqlValue[] = [projectId];
       if (options.resourceId !== undefined) params.push(options.resourceId);
       const result = await client.query(
-        `SELECT r.id, r.project_id, r.path, r.type,
+       `SELECT r.id, r.project_id, r.path, r.type, r.lifecycle, r.retired_at, r.retired_by,
                 rr.revision, rr.content, rr.metadata, rr.authorship, rr.created_at,
                 cp.id AS proposal_id, cp.title AS proposal_title,
                 cp.authorship AS proposal_authorship,
@@ -475,7 +520,12 @@ export function createProjectRepository(
           group = {
             revisions: [],
             proposals: [],
-            resource: { projectId: text(row, "project_id"), path: text(row, "path"), type: toResourceType(row.type) },
+             resource: {
+               projectId: text(row, "project_id"), path: text(row, "path"), type: toResourceType(row.type),
+               ...(row.lifecycle === "RETIRED" ? { lifecycle: "RETIRED" as const } : {}),
+               ...(row.retired_at == null ? {} : { retiredAt: row.retired_at instanceof Date ? row.retired_at : new Date(String(row.retired_at)) }),
+               ...(row.retired_by == null ? {} : { retiredBy: String(row.retired_by) }),
+             },
           };
           grouped.set(resourceId, group);
         }

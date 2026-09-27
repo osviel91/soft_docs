@@ -364,6 +364,39 @@ describe("authorization by role", () => {
 });
 
 describe("resources and optimistic concurrency", () => {
+  it("retires SHARED resources without destroying revisions or relationships", async () => {
+    const { context, project } = await aProject("Retirement");
+    const sequence = await catalog.createResource(context, project.id, {
+      path: "retirement.seq",
+      type: "sequence-diagram",
+      content: "title Before\n",
+    });
+    const flow = await catalog.createResource(context, project.id, {
+      path: "retirement.eventseq",
+      type: "event-flow",
+      content: "event Before\n",
+    });
+    await catalog.createResourceRelationship(context, project.id, {
+      sourceId: sequence.id,
+      targetId: flow.id,
+      kind: "complementary-view",
+    });
+    await catalog.updateResource(context, project.id, sequence.id, {
+      content: "title Current\n",
+      expectedRevision: sequence.revision,
+    });
+
+    await catalog.deleteResource(context, project.id, sequence.id);
+
+    expect((await catalog.listResources(context, project.id)).map((item) => item.id)).toEqual([flow.id]);
+    await expect(catalog.getResource(context, project.id, sequence.id)).rejects.toMatchObject({ code: "not_found" });
+    expect((await createProjectRepository(client).listRevisions(sequence.id)).map((item) => item.revision)).toEqual([1, 2]);
+    expect((await client.query("SELECT lifecycle, retired_at FROM resources WHERE id = $1", [sequence.id])).rows[0]).toMatchObject({ lifecycle: "RETIRED" });
+    expect((await client.query("SELECT source_id, target_id FROM resource_relationship_history WHERE source_id = $1", [sequence.id])).rows).toHaveLength(1);
+    expect((await client.query("SELECT source_id FROM resource_relationships WHERE source_id = $1 OR target_id = $1", [sequence.id])).rows).toHaveLength(0);
+    expect((await createProjectRepository(client).listTrajectory(project.id, { resourceId: sequence.id })).entries.some((entry) => entry.kind === "RESOURCE_RETIRED")).toBe(true);
+  });
+
   it("creates, reads, moves and deletes a resource", async () => {
     const { context, project } = await aProject("CRUD");
     const created = await catalog.createResource(context, project.id, {
