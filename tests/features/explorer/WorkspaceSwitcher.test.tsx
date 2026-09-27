@@ -84,16 +84,20 @@ describe("WorkspaceSwitcher", () => {
 
   it("replaces the project list with compact active-project navigation", () => {
     const onBackToProjects = vi.fn();
+    const onReloadServerProjects = vi.fn();
     renderSwitcher({
       mode: "server",
       serverProjects: [project("p1", "Payments")],
       activeServerProjectId: "p1",
       onBackToProjects,
+      onReloadServerProjects,
     });
     expect(screen.getByTestId("workspace-active-project")).toHaveTextContent("Payments");
     expect(screen.queryByTestId("workspace-server-project")).toBeNull();
     fireEvent.click(screen.getByTestId("workspace-back-to-projects"));
     expect(onBackToProjects).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("workspace-server-refresh"));
+    expect(onReloadServerProjects).toHaveBeenCalledTimes(1);
   });
 
   it("progressively discloses server project creation", () => {
