@@ -114,6 +114,7 @@ export interface ExplorerProps {
   architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; approvals?: number; changesRequested?: number }>;
   onOpenArchitecturalProposal?: (proposalId: string) => void;
   onSubmitArchitecturalProposal?: (contextId: string) => void;
+  projectBrowser?: boolean;
   serverMode?: boolean;
 }
 
@@ -729,5 +730,6 @@ function LocalWorkspaceExplorer({
 }
 
 export default function Explorer(props: ExplorerProps) {
+  if (props.projectBrowser) return props.switcher;
   return props.serverMode ? <ServerWorkspaceExplorer {...props} /> : <LocalWorkspaceExplorer {...props} />;
 }

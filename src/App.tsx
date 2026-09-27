@@ -2712,9 +2712,10 @@ export default function App() {
                   notes={notes}
                   privateWorkContexts={server.privateWorkContexts}
                   architecturalProposals={server.architecturalProposals}
-                  onOpenArchitecturalProposal={setArchitecturalProposalId}
-                  onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
-                  serverMode={workspaceMode === "server"}
+                   onOpenArchitecturalProposal={setArchitecturalProposalId}
+                   onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
+                   projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
+                   serverMode={workspaceMode === "server"}
                   allDiagrams={allDiagrams}
                   allNotes={allNotes}
                   selectedProjectId={selectedProjectId}

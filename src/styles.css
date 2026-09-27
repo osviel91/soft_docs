@@ -223,7 +223,7 @@ body {
   color: var(--text);
   border-color: var(--accent);
 }
-.workspaces--project {
+.workspaces.workspaces--project {
   flex: 0 0 auto;
   gap: 8px;
   padding: 10px 12px;
@@ -4350,13 +4350,14 @@ body {
 .explorer__section-meta { margin-left: 6px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-faint); }
 .explorer__resource-list,
 .explorer__context-list { list-style: none; margin: 0; padding: 4px 8px 8px; }
-.explorer__resource { border-radius: var(--radius-sm); }
+.explorer__resource { display: flex; align-items: center; border-radius: var(--radius-sm); }
 .explorer__resource--selected { background: var(--bg-hover); }
 .explorer__resource-button {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
+  width: auto;
   min-width: 0;
   padding: 6px 8px;
   color: var(--text-muted);
@@ -4373,6 +4374,12 @@ body {
 .explorer__resource-button:focus-visible { color: var(--text); background: var(--bg-hover); }
 .explorer__resource--selected .explorer__resource-button { border-left-color: var(--accent); color: var(--text); }
 .explorer__resource-button .explorer__item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer__resource .explorer__diagram-menu,
+.explorer__resource .explorer__note-menu { opacity: 0; }
+.explorer__resource:hover .explorer__diagram-menu,
+.explorer__resource:hover .explorer__note-menu,
+.explorer__resource .explorer__diagram-menu:focus-visible,
+.explorer__resource .explorer__note-menu:focus-visible { opacity: 1; }
 .explorer__context-list { display: grid; gap: 4px; }
 .explorer__context-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 5px 8px; color: var(--text-muted); font-size: 12px; }
 .explorer__context-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

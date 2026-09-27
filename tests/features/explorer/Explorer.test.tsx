@@ -85,6 +85,7 @@ describe("Explorer", () => {
         isLoading={false}
         onCreateProject={vi.fn()}
         onLoadDiagram={vi.fn()}
+        onDiagramMenu={vi.fn()}
         serverMode
       />,
     );
@@ -94,10 +95,30 @@ describe("Explorer", () => {
     expect(screen.getByText("PROPOSALS")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Search resources…")).toBeInTheDocument();
     expect(screen.getAllByTestId("explorer-resources")).toHaveLength(1);
+    expect(screen.getAllByTestId("diagram-menu-button")).toHaveLength(1);
     expect(screen.queryByRole("separator")).toBeNull();
     expect(screen.queryByTestId("workspace-new-server-project-input")).toBeNull();
     expect(screen.queryByText("SERVER PROJECT")).toBeNull();
     expect(screen.queryByText("PROJECT KNOWLEDGE")).toBeNull();
+  });
+
+  it("renders only the Project Browser before a server project is open", () => {
+    render(
+      <Explorer
+        projects={[project]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={vi.fn()}
+        projectBrowser
+        switcher={<nav data-testid="project-browser">Projects</nav>}
+      />,
+    );
+    expect(screen.getByTestId("project-browser")).toBeInTheDocument();
+    expect(screen.queryByTestId("explorer")).toBeNull();
+    expect(screen.queryByTestId("explorer-project")).toBeNull();
   });
 
   it("collapses only the selected provenance section", () => {
