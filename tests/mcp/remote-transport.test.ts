@@ -77,6 +77,28 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(MCP_INSTRUCTIONS).toContain("descriptions and tags");
   });
 
+  it("exposes canonical Sequence messaging guidance", async () => {
+    const client = await connect(token);
+    expect(client.getInstructions()).toContain(
+      "semantic event publish BulkUpdateCardSuccessEvent messageRef <event-identity-id>",
+    );
+    const listed = await client.listResources();
+    const reference = listed.resources.find((entry) =>
+      entry.uri.endsWith("/reference/sequence-dsl"),
+    );
+    expect(reference).toBeDefined();
+    const read = await client.readResource({ uri: reference!.uri });
+    const guidance = (read.contents[0] as { text: string }).text;
+    expect(guidance).toContain(
+      "semantic event consume BulkUpdateCardSuccessEvent messageRef <event-identity-id>",
+    );
+    expect(guidance).toContain(
+      "semantic command dispatch BulkUpdateCardsCommand messageRef <command-identity-id>",
+    );
+    expect(guidance).toContain("Sharing a `messageRef` correlates semantic messages");
+    await client.close();
+  });
+
   it("negotiates a protocol version the SDK implements", async () => {
     const client = await connect(token);
     const version = client.getServerVersion();

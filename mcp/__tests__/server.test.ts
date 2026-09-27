@@ -377,6 +377,9 @@ describe("McpServer", () => {
     expect(contents[0].mimeType).toBe("text/markdown");
     expect(contents[0].text).toContain("### Participant");
     expect(contents[0].text).toContain("### Note on a message");
+    expect(contents[0].text).toContain(
+      "semantic event publish BulkUpdateCardSuccessEvent messageRef <event-identity-id>",
+    );
 
     const eventFlow = await request("resources/read", {
       uri: EVENT_FLOW_DSL_URI,

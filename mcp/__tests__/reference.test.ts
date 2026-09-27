@@ -56,6 +56,23 @@ describe("MCP reference resources", () => {
     }
   });
 
+  it("makes canonical Sequence messaging authoring copyable", () => {
+    const guidance = sequenceDslText();
+    for (const phrase of [
+      "Process ->> CommandBus: BulkUpdateCardSuccessEvent",
+      "semantic event publish BulkUpdateCardSuccessEvent messageRef <event-identity-id>",
+      "semantic event consume BulkUpdateCardSuccessEvent messageRef <event-identity-id>",
+      "semantic command dispatch BulkUpdateCardsCommand messageRef <command-identity-id>",
+      "Notes remain optional explanations",
+      "equal names remain candidates",
+      "Sharing a `messageRef` correlates semantic messages",
+    ]) {
+      expect(guidance).toContain(phrase);
+    }
+    expect(guidance).toContain("Do not write `A ->> B: semantic event publish");
+    expect(guidance).toContain("Do not substitute `note over A,B:");
+  });
+
   it("returns the text for every known URI and null otherwise", () => {
     expect(staticResourceText(SEQUENCE_DSL_URI)).toBe(sequenceDslText());
     expect(staticResourceText(EVENT_FLOW_DSL_URI)).toBe(eventFlowDslText());

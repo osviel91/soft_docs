@@ -1,5 +1,10 @@
-import { EVENT_FLOW_CONSTRUCTS } from "../../../src/language/dsl-reference";
+import {
+  DSL_CONSTRUCTS,
+  EVENT_FLOW_CONSTRUCTS,
+  SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
+} from "../../../src/language/dsl-reference";
 
+export const SEQUENCE_DSL_URI = "seqdocs://reference/sequence-dsl";
 export const EVENT_FLOW_DSL_URI = "seqdocs://reference/event-flow-dsl";
 
 function eventFlowDslText(): string {
@@ -39,6 +44,32 @@ function eventFlowDslText(): string {
   ].join("\n");
 }
 
+function sequenceReferenceText(): string {
+  return [
+    "# Sequence diagram language",
+    "",
+    "The `*.seq` language for ordered interactions. Read this before authoring a Sequence.",
+    "",
+    ...DSL_CONSTRUCTS.flatMap((construct) => [
+      `## ${construct.name}`,
+      "",
+      "```text",
+      construct.syntax,
+      "```",
+      "",
+      construct.summary,
+      "",
+      "Example:",
+      "",
+      "```text",
+      construct.example,
+      "```",
+      "",
+    ]),
+    SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
+  ].join("\n");
+}
+
 export function registerMcpReferences(server: {
   registerResource: (
     name: string,
@@ -53,6 +84,21 @@ export function registerMcpReferences(server: {
     }>,
   ) => unknown;
 }): void {
+  server.registerResource(
+    "sequence-dsl",
+    SEQUENCE_DSL_URI,
+    {
+      title: "Sequence diagram language reference",
+      description:
+        "The supported Sequence syntax and canonical architectural messaging authoring guidance.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: "text/markdown", text: sequenceReferenceText() },
+      ],
+    }),
+  );
   server.registerResource(
     "event-flow-dsl",
     EVENT_FLOW_DSL_URI,

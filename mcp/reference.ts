@@ -13,6 +13,7 @@
 import {
   DSL_CONSTRUCTS,
   EVENT_FLOW_CONSTRUCTS,
+  SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
   type DslConstruct,
 } from "../src/language/dsl-reference";
 import type {
@@ -168,7 +169,7 @@ function constructsToMarkdown(
 
 /** The sequence-diagram reference as markdown. */
 export function sequenceDslText(): string {
-  return constructsToMarkdown(
+  return [constructsToMarkdown(
     "Sequence diagram language",
     [
       "The language these tools write for `*.seq` files. Statements are one per",
@@ -176,7 +177,7 @@ export function sequenceDslText(): string {
       "participant before the first message, and give the diagram a `title`.",
     ].join(" "),
     DSL_CONSTRUCTS,
-  );
+  ), "", SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE].join("\n");
 }
 
 /** The event-flow reference as markdown. */
