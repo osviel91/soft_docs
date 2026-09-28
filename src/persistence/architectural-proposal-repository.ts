@@ -25,7 +25,7 @@ function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSna
     sourcePrivateContextId: String(row.source_private_context_id), title: String(row.title),
     ...(row.description == null ? {} : { description: String(row.description) }), status: "open",
     baseSharedRevision: String(row.base_shared_revision), baseSharedResourceRevisions: revisions,
-    baseManifestRevision: Number(row.base_manifest_revision ?? 0),
+    baseManifestRevision: row.base_manifest_revision == null ? null : Number(row.base_manifest_revision),
     createdAt: date(row.created_at), submittedAt: date(row.submitted_at), resources, semanticMessages: messages, relationships,
   };
 }
@@ -69,6 +69,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
     async submit(input) {
       const title = input.title.trim();
       if (!title) throw new Error("A proposal title is required.");
+      if (!Number.isInteger(input.baseManifestRevision) || input.baseManifestRevision < 0) throw new Error("A new proposal requires a concrete manifest revision.");
        if (input.selections.length === 0 && (input.retirements?.length ?? 0) === 0) throw new Error("Select at least one private resource or explicit retirement.");
        return client.transaction(async (tx) => {
         const ids = input.selections.map((selection) => selection.resourceId);

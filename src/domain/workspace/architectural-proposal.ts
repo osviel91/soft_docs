@@ -39,7 +39,8 @@ export interface ArchitecturalProposal {
   status: "open";
   baseSharedRevision: string;
   baseSharedResourceRevisions: Record<string, number>;
-  baseManifestRevision: number;
+  /** Null means this legacy proposal predates manifest-base capture. */
+  baseManifestRevision: number | null;
   createdAt: Date;
   submittedAt: Date;
   resources: ProposalResourceSnapshot[];

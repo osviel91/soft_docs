@@ -61,7 +61,10 @@ export function createPromotionService(options: {
     });
     const blockers: PromotionPreview["blockers"] = [];
     if (proposal.baseSharedRevision !== current.revision) blockers.push({ code: "STALE_BASE", message: "SHARED changed since this proposal was submitted." });
-    if (proposal.baseManifestRevision !== (metadata.manifestRevision ?? 0)) blockers.push({ code: "STALE_MANIFEST", message: "The semantic manifest changed since this proposal was submitted." });
+    const legacy = proposal.baseManifestRevision === null;
+    const hasLegacySemanticChanges = proposal.semanticMessages.some((message) => (message.operation ?? "ADD") !== "ADD") || proposal.relationships.some((relationship) => (relationship.operation ?? "ADD") !== "ADD");
+    if (legacy && hasLegacySemanticChanges) blockers.push({ code: "LEGACY_SEMANTIC_REBASE_REQUIRED", message: "This legacy proposal contains semantic authority changes without a captured semantic base; recreate it under the governed model." });
+    if (!legacy && proposal.baseManifestRevision !== (metadata.manifestRevision ?? 0)) blockers.push({ code: "STALE_MANIFEST", message: "The semantic manifest changed since this proposal was submitted." });
     for (const entry of entries) {
       if (entry.operation !== "CREATE" && !entry.baseResourceId) blockers.push({ code: "MISSING_RETIREMENT_TARGET", message: `The ${entry.operation} target for ${entry.path} is missing.` });
       if (entry.operation !== "CREATE" && entry.baseResourceId && !byId.has(entry.baseResourceId)) blockers.push({ code: "RETIREMENT_TARGET_NOT_ACTIVE", message: `The authoritative target for ${entry.path} is no longer active.`, resourceId: entry.baseResourceId });
@@ -191,15 +194,15 @@ export function createPromotionService(options: {
       const author: ResourceAuthorship = context.principal.actor.kind === "agent" ? { kind: "agent", agentId: context.principal.actor.agentId, credentialId: context.principal.actor.credentialId, subjectUserId: context.principal.subjectUserId } : { kind: "user", userId: context.principal.actor.userId, subjectUserId: context.principal.subjectUserId };
       const batchId = newId();
       const retiredIds = new Set(value.entries.filter((entry) => entry.operation === "RETIRE").map((entry) => entry.resultingResourceId));
-       const nextRelationships = [...(metadata.relationships ?? []).filter((relationship) => !retiredIds.has(relationship.sourceId) && !retiredIds.has(relationship.targetId))];
-       for (const change of value.relationships) {
-         const index = nextRelationships.findIndex((relationship) => relationship.sourceId === change.relationship.sourceId && relationship.targetId === change.relationship.targetId);
-         if (change.operation === "ADD" || change.operation === "UPDATE") {
-           if (index >= 0) nextRelationships[index] = change.relationship;
-           else nextRelationships.push(change.relationship);
-         } else if (index >= 0) nextRelationships.splice(index, 1);
-       }
-       const nextMetadata = { ...metadata, manifestRevision: (metadata.manifestRevision ?? 0) + 1, resources: resourceRecords, semanticMessages: [...knownMessages.values()], relationships: nextRelationships };
+      const nextRelationships = [...(metadata.relationships ?? []).filter((relationship) => !retiredIds.has(relationship.sourceId) && !retiredIds.has(relationship.targetId))];
+      for (const change of value.relationships) {
+        const index = nextRelationships.findIndex((relationship) => relationship.sourceId === change.relationship.sourceId && relationship.targetId === change.relationship.targetId);
+        if (change.operation === "ADD" || change.operation === "UPDATE") {
+          if (index >= 0) nextRelationships[index] = change.relationship;
+          else nextRelationships.push(change.relationship);
+        } else if (index >= 0) nextRelationships.splice(index, 1);
+      }
+      const nextMetadata = { ...metadata, manifestRevision: (metadata.manifestRevision ?? 0) + 1, resources: resourceRecords, semanticMessages: [...knownMessages.values()], relationships: nextRelationships };
       const manifestContent = JSON.stringify(nextMetadata, null, 2);
       const manifestStagedPath = `.sdd-staging/${batchId}/project.json`;
       const stagedManifest = await storage.write(manifestStagedPath, manifestContent);
@@ -217,7 +220,7 @@ export function createPromotionService(options: {
       const promotionId = newId();
       let batch;
       try {
-           batch = await options.batches.claim({ batchId, projectId, actor: author, audit: { action: "proposal.promoted", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId, detail: { proposalId, batchId } }, operations, relationshipChanges: value.relationships, semanticChanges: value.semanticMessages, manifest: { expectedRevision: metadata.manifestRevision ?? 0, expectedContent: manifest.value?.content ?? null, content: manifestContent, stagedPath: manifestStagedPath }, idempotencyKey: idempotencyKey ?? `promotion:${proposalId}`, promotion: { id: promotionId, proposalId, baseSharedRevision: value.proposal.baseSharedRevision, entries: value.entries, relationships: value.relationships, semanticMessages: value.semanticMessages, baseManifestRevision: value.proposal.baseManifestRevision } });
+        batch = await options.batches.claim({ batchId, projectId, actor: author, audit: { action: "proposal.promoted", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId, detail: { proposalId, batchId } }, operations, relationshipChanges: value.relationships, semanticChanges: value.semanticMessages, manifest: { expectedRevision: metadata.manifestRevision ?? 0, expectedContent: manifest.value?.content ?? null, content: manifestContent, stagedPath: manifestStagedPath }, idempotencyKey: idempotencyKey ?? `promotion:${proposalId}`, promotion: { id: promotionId, proposalId, baseSharedRevision: value.proposal.baseSharedRevision, entries: value.entries, relationships: value.relationships, semanticMessages: value.semanticMessages, baseManifestRevision: value.metadata.manifestRevision ?? 0 } });
       } catch (error) {
         await storage.remove(manifestStagedPath);
         throw error;

@@ -98,8 +98,8 @@ describe("migrate", () => {
       );
       expect(proposalManifestColumn.rows[0]).toMatchObject({
         column_name: "base_manifest_revision",
-        is_nullable: "NO",
-        column_default: "0",
+        is_nullable: "YES",
+        column_default: null,
       });
     } finally {
       await client.close();
@@ -190,6 +190,25 @@ describe("migrate", () => {
     const client = await createPgliteClient();
     try {
       await migrate(client, MIGRATIONS.slice(0, 22));
+      const userId = testUuid(901);
+      const projectId = testUuid(902);
+      const contextId = testUuid(903);
+      const proposalId = testUuid(904);
+      await insertTestUser(client, { id: userId, subject: "legacy-proposal" });
+      await client.query(
+        "INSERT INTO projects (id, owner_id, workspace_id, name, slug) VALUES ($1, $2, $2, 'Legacy', 'legacy')",
+        [projectId, userId],
+      );
+      await client.query(
+        "INSERT INTO knowledge_contexts (id, project_id, owner_user_id, name) VALUES ($1, $2, $3, 'legacy-work')",
+        [contextId, projectId, userId],
+      );
+      await client.query(
+        `INSERT INTO architectural_proposals
+           (id, project_id, author_user_id, source_private_context_id, title, base_shared_revision)
+         VALUES ($1, $2, $3, $4, 'Legacy', 'base')`,
+        [proposalId, projectId, userId, contextId],
+      );
       const before = await client.query(
         `SELECT column_name FROM information_schema.columns
          WHERE table_name = 'architectural_proposals'
@@ -206,9 +225,14 @@ describe("migrate", () => {
       );
       expect(afterProposalMigration.rows[0]).toMatchObject({
         column_name: "base_manifest_revision",
-        is_nullable: "NO",
-        column_default: "0",
+        is_nullable: "YES",
+        column_default: null,
       });
+      const legacyRow = await client.query(
+        "SELECT base_manifest_revision FROM architectural_proposals WHERE id = $1",
+        [proposalId],
+      );
+      expect(legacyRow.rows[0]?.base_manifest_revision).toBeNull();
 
       expect(await migrate(client, MIGRATIONS.filter(({ version }) => version === 24))).toMatchObject({ applied: [24] });
       const afterPathMigration = await client.query(

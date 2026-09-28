@@ -59,7 +59,7 @@ it("creates, reviews, promotes, and restarts after a 0022-to-current upgrade", a
     storage,
     architecturalProposals,
   });
-  const proposalService = createArchitecturalProposalService({ proposals: architecturalProposals, projects, knowledgeContexts, reviews });
+  const proposalService = createArchitecturalProposalService({ proposals: architecturalProposals, projects, knowledgeContexts, reviews, storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }) });
   const promotionService = createPromotionService({
     proposals: architecturalProposals,
     projects,
@@ -100,5 +100,16 @@ it("creates, reviews, promotes, and restarts after a 0022-to-current upgrade", a
   await proposalService.review(reviewerContext, { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
   const promotion = await promotionService.execute(ownerContext, project.id, proposal.id, "upgrade-promotion");
   expect(promotion.status).toBe("COMPLETED");
+  const work2 = await catalog.createPrivateWorkContext(ownerContext, project.id, { name: "candidate-2" });
+  const candidate2 = await catalog.createResource(ownerContext, project.id, { contextId: work2.id, path: "second.md", type: "markdown-document", content: "second\n" });
+  const proposal2 = await proposalService.submit(ownerContext, { projectId: project.id, sourcePrivateContextId: work2.id, resourceIds: [candidate2.id], title: "Manifest-base proposal" });
+  await expect(proposalService.get(ownerContext, project.id, proposal2.id)).resolves.toMatchObject({ baseManifestRevision: 1 });
+  await proposalService.review(reviewerContext, { projectId: project.id, proposalId: proposal2.id, decision: "APPROVE" });
+  const sharedStorage = createFsProjectStorage({ root: path.join(volume, project.id) });
+  const manifest = await sharedStorage.read("project.json");
+  if (!manifest.ok || !manifest.value) throw new Error("Missing upgraded project manifest.");
+  await sharedStorage.write("project.json", JSON.stringify({ ...JSON.parse(manifest.value.content), manifestRevision: 2, semanticMessages: [{ id: crypto.randomUUID(), name: "Changed", kind: "event" }] }, null, 2));
+  const preview = await promotionService.preview(ownerContext, project.id, proposal2.id);
+  expect(preview.blockers).toEqual(expect.arrayContaining([{ code: "STALE_MANIFEST", message: "The semantic manifest changed since this proposal was submitted." }]));
   expect((await migrate(client)).applied).toEqual([]);
 });
