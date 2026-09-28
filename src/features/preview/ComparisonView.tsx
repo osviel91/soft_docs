@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiagramFile } from "../../domain/workspace/types";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
@@ -38,8 +38,6 @@ export interface ComparisonViewProps {
   onSelectServerWorkspace?: (workspaceId: string) => void;
   onOpenServerProject?: (project: ServerProject) => void;
   relationships?: ResourceRelationship[];
-  editorHidden: boolean;
-  onToggleEditor: () => void;
   analysisContexts?: AnalysisContext[];
 }
 
@@ -202,10 +200,12 @@ export default function ComparisonView({
   onSelectServerWorkspace,
   onOpenServerProject,
   relationships = [],
-  editorHidden,
-  onToggleEditor,
   analysisContexts = [],
 }: ComparisonViewProps) {
+  const comparisonRef = useRef<HTMLDivElement | null>(null);
+  const summaryRef = useRef<HTMLElement | null>(null);
+  const [summaryHeight, setSummaryHeight] = useState<number | null>(null);
+  const [resizingSummary, setResizingSummary] = useState(false);
   const [primaryId, setPrimaryId] = useState(primary.id);
   const [secondaryId, setSecondaryId] = useState<string | null>(() => diagrams.find((diagram) => diagram.id !== primary.id)?.id ?? null);
   const primaryResource = diagrams.find((diagram) => diagram.id === primaryId) ?? (primaryId === primary.id ? primary : null);
@@ -274,9 +274,23 @@ export default function ComparisonView({
     setSelected((current) => current ? { ...current, pane: current.pane === "a" ? "b" : "a" } : null);
   };
   const openTrace = (start: TraceQueryStart, direction: TraceDirection, pane: Pane) => setTrace({ start, direction, pane });
+  const resizeSummary = (clientY: number) => {
+    const root = comparisonRef.current?.getBoundingClientRect();
+    const summary = summaryRef.current?.getBoundingClientRect();
+    if (!root || !summary) return;
+    const minimum = 180;
+    const maximum = Math.max(minimum, root.bottom - summary.top - 260);
+    setSummaryHeight(Math.min(maximum, Math.max(minimum, clientY - summary.top)));
+  };
+  const resizeSummaryWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const current = summaryHeight ?? summaryRef.current?.getBoundingClientRect().height ?? 320;
+    setSummaryHeight(Math.max(180, current + (event.key === "ArrowUp" ? 32 : -32)));
+  };
 
   return (
-    <div className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
+    <div ref={comparisonRef} className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
       <header className="comparison__toolbar">
         <strong>Compare diagrams</strong>
         {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
@@ -297,12 +311,32 @@ export default function ComparisonView({
           {diagrams.filter((diagram) => diagram.id !== primaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
         </select></label>
          <button type="button" className="icon-button" onClick={swapViewers} disabled={!secondarySession} title="Swap viewers" aria-label="Swap viewers">⇄</button>
-         {editorHidden ? <button type="button" className="icon-button" onClick={onToggleEditor} title="Show editor" aria-label="Show editor">▣</button> : null}
-         <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
+          <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
          <button type="button" className="icon-button" onClick={onExit} title="Close comparison" aria-label="Close comparison">×</button>
       </header>
-       <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
-      <div className="comparison__content">
+       <section ref={summaryRef} className="comparison__summary" aria-label="Architectural analysis summary" data-testid="semantic-comparison-summary" style={summaryHeight === null ? undefined : { flexBasis: summaryHeight }}>
+         <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
+       </section>
+       <div
+         className="comparison__summary-splitter"
+         role="separator"
+         tabIndex={0}
+         aria-label="Resize architectural analysis panel"
+         aria-orientation="horizontal"
+         onKeyDown={resizeSummaryWithKeyboard}
+         onPointerDown={(event) => {
+           event.currentTarget.setPointerCapture(event.pointerId);
+           setResizingSummary(true);
+           resizeSummary(event.clientY);
+         }}
+         onPointerMove={(event) => { if (resizingSummary) resizeSummary(event.clientY); }}
+         onPointerUp={(event) => {
+           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+           setResizingSummary(false);
+         }}
+         onPointerCancel={() => setResizingSummary(false)}
+       />
+       <div className="comparison__content">
       <div className="comparison__panes">
         <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
           {primarySession ? <ComparisonPane pane="a" session={primarySession} context={primaryContext} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /> : null}
@@ -332,7 +366,7 @@ function ComparisonSummary({ comparison, analysis, selected, onSelect, onFocus, 
     [sameProvenance ? "Documented only in A" : `Documented only in ${provenanceA}`, comparison.onlyA, "a", resourceNames.a],
     [sameProvenance ? "Documented only in B" : `Documented only in ${provenanceB}`, comparison.onlyB, "b", resourceNames.b],
   ] as const;
-  return <aside className="comparison__summary" aria-label="Architectural analysis summary" data-testid="semantic-comparison-summary">
+  return <div>
     <div className="comparison__counts">{groups.map(([label, identities]) => <span key={label}>{label}: <strong>{identities.length}</strong></span>)}<span>Unresolved: <strong>{new Set(comparison.candidates.map((entry) => `${entry.kind}:${entry.name}`)).size}</strong></span></div>
     {comparison.relationship ? <p className="comparison__relationship">Complementary view: {comparison.relationship.sourceRole ?? "other"} ↔ {comparison.relationship.targetRole ?? "other"}</p> : null}
     <section className="comparison__analysis" aria-label="Architectural Analysis" data-testid="architectural-analysis">
@@ -370,5 +404,5 @@ function ComparisonSummary({ comparison, analysis, selected, onSelect, onFocus, 
       return <div className="comparison__identity" key={identity.id}><button type="button" aria-label={`Inspect ${identity.kind} ${identity.name}`} onClick={() => onSelect(pane === "both" ? "a" : pane, identity.id)}>{identity.name} <small>{identity.kind} · {pane === "both" ? `A ${matchedA} · B ${matchedB}` : `${matched} occurrence${matched === 1 ? "" : "s"}`}</small></button>{selected?.messageId === identity.id && pane === "both" ? <div className="comparison__sync-actions" aria-label={`Synchronization actions for ${identity.name}`}><button type="button" onClick={() => { const occurrence = comparison.occurrences[selected.pane === "a" ? "b" : "a"].find((entry) => entry.messageId === identity.id); if (occurrence) onFocus(occurrence); }}>Focus matching occurrence</button><button type="button" onClick={() => onStep(-1)} disabled={matched < 2}>Previous</button><button type="button" onClick={() => onStep(1)} disabled={matched < 2}>Next</button></div> : null}</div>;
     })}</section>)}
     <section className="comparison__group comparison__group--unresolved" data-testid="semantic-group-unresolved"><h3>Unresolved <small>Names are candidates only</small></h3>{[...new Set(comparison.candidates.map((entry) => `${entry.kind} ${entry.name}`))].map((candidate) => <span className="comparison__candidate" key={candidate}>{candidate}</span>)}</section>
-  </aside>;
+  </div>;
 }

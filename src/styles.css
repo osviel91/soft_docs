@@ -884,7 +884,7 @@ body {
 }
 
 .app__workspace--comparison-editor-hidden .app__pane--editor,
-.app__workspace--comparison-editor-hidden > .app__splitter {
+.app__workspace--comparison-editor-hidden > .app__splitter--editor {
   display: none;
 }
 
@@ -973,6 +973,7 @@ body {
 }
 
 .app__pane--preview {
+  position: relative;
   flex: 1 1 58%;
   min-width: 280px;
   border-left: 1px solid var(--border);
@@ -1002,7 +1003,11 @@ body {
 .comparison__toolbar label { min-width: 0; flex: 0 1 auto; }
 .comparison__toolbar label select { width: 150px; max-width: 18vw; min-width: 0; }
 .comparison__toolbar .icon-button { flex: 0 0 30px; }
-.comparison__summary { padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-raised); font-size: 11px; }
+.comparison__summary { flex: 0 1 42%; min-height: 180px; min-width: 0; overflow: auto; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-raised); font-size: 11px; }
+.comparison__summary-splitter { position: relative; z-index: 1; flex: 0 0 8px; cursor: row-resize; touch-action: none; background: var(--bg-panel); }
+.comparison__summary-splitter::after { content: ""; position: absolute; inset: 3px 0; background: var(--border-strong); transition: background 120ms ease; }
+.comparison__summary-splitter:hover::after, .comparison__summary-splitter:focus-visible::after { background: var(--accent); }
+.comparison__summary-splitter:focus-visible { outline: none; }
 .comparison__counts { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-muted); }
 .comparison__counts strong { color: var(--text); }
 .comparison__relationship, .comparison__candidates { margin: 6px 0 0; color: var(--text-muted); }
@@ -1031,10 +1036,11 @@ body {
 
 .comparison__content {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 58%;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .trace-surface {
@@ -3682,8 +3688,28 @@ body {
   flex: 0 0 auto;
 }
 .editor-restore-button {
-  align-self: flex-start;
-  margin: 8px;
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 0;
+  width: 30px;
+  height: 56px;
+  padding: 0;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-left: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+.editor-restore-button:hover,
+.editor-restore-button:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+  outline: none;
 }
 .resource-header__metadata {
   flex-basis: 100%;

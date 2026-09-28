@@ -413,7 +413,7 @@ export default function App() {
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [previewMaximized, setPreviewMaximized] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const [comparisonEditorHidden, setComparisonEditorHidden] = useState(false);
+  const [comparisonEditorHidden, setComparisonEditorHidden] = useState(true);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
@@ -2644,7 +2644,6 @@ export default function App() {
               disabled={!selectedDiagram}
               onClick={() => {
                 setComparisonOpen(true);
-                setComparisonEditorHidden(false);
                 setComparisonMaximizedPane(null);
                 setComparisonMaximized(false);
               }}
@@ -3123,7 +3122,7 @@ export default function App() {
             {!proposalReviewOpen && (
               <>
                 <div
-                  className="app__splitter"
+                  className="app__splitter app__splitter--editor"
                   role="separator"
                   tabIndex={0}
                   aria-label="Resize editor"
@@ -3145,7 +3144,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden && !comparisonOpen ? <button type="button" className="button button--ghost button--small editor-restore-button" onClick={() => setComparisonEditorHidden(false)}>Show editor</button> : null}
+                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label="Show editor" title="Show editor">‹</button> : null}
                   {comparisonOpen && selectedDiagram ? (
                     <ComparisonView
                       primary={selectedDiagram}
@@ -3155,7 +3154,6 @@ export default function App() {
                       resourceIdForFile={resourceIdForFile}
                       onExit={() => {
                         setComparisonOpen(false);
-                        setComparisonEditorHidden(false);
                         setComparisonMaximizedPane(null);
                         setComparisonMaximized(false);
                       }}
@@ -3173,9 +3171,7 @@ export default function App() {
                        onSelectServerWorkspace={setSelectedServerWorkspaceId}
                        onOpenServerProject={(project) => { void server.openProject(project); }}
                        relationships={metadata?.relationships ?? []}
-                      editorHidden={comparisonEditorHidden}
-                      onToggleEditor={() => setComparisonEditorHidden((hidden) => !hidden)}
-                    />
+                     />
                   ) : noteMode ? (
                     <MarkdownView
                       markdown={source}

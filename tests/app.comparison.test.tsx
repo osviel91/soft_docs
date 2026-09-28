@@ -117,6 +117,7 @@ describe("App — dual viewer foundation", () => {
     await project();
     await command("New Diagram");
     await command("New Diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Show editor" }));
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: "participant Dirty" } });
     fireEvent.click(screen.getByTestId("compare-mode-button"));
 
@@ -155,7 +156,7 @@ describe("App — dual viewer foundation", () => {
     await command("New Diagram");
     fireEvent.click(screen.getByTestId("compare-mode-button"));
     expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Hide editor" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show editor" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Maximize Viewer A" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Maximize Viewer B" })).toBeInTheDocument();
   });
