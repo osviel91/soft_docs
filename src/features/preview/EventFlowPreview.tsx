@@ -84,7 +84,10 @@ export default function EventFlowPreview({
     () => decorateReviewSvg(document.svg, "event-flow", reviewChanges, reviewSide),
     [document.svg, reviewChanges, reviewSide],
   );
-  const flow = providedFlow ?? analyzeEventFlow(source).flow;
+  const flow = useMemo(
+    () => providedFlow ?? analyzeEventFlow(source).flow,
+    [providedFlow, source],
+  );
   const [selectedCausalId, setSelectedCausalId] = useState<CausalNodeId | null>(null);
   useEffect(() => setSelectedCausalId(null), [source]);
   const catalog = useMemo(() => projectEventFlowToCatalog(flow), [flow]);
@@ -92,12 +95,18 @@ export default function EventFlowPreview({
   const [topologyDetailsOpen, setTopologyDetailsOpen] = useState(false);
   const causal = useMemo(() => projectEventFlowToCausalView(flow), [flow]);
   const [causalDocument, setCausalDocument] = useState<Awaited<ReturnType<typeof renderEventFlowCausalDocument>> | null>(null);
+  const [causalError, setCausalError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setCausalDocument(null);
-    void renderEventFlowCausalDocument(flow, selectedCausalId).then((document) => {
-      if (active) setCausalDocument(document);
-    });
+    setCausalError(null);
+    void renderEventFlowCausalDocument(flow, selectedCausalId)
+      .then((document) => {
+        if (active) setCausalDocument(document);
+      })
+      .catch((error: unknown) => {
+        if (active) setCausalError(error instanceof Error ? error.message : "Unable to lay out the causal graph.");
+      });
     return () => { active = false; };
   }, [flow, selectedCausalId]);
   const topologyDocument = useMemo(
@@ -397,7 +406,7 @@ export default function EventFlowPreview({
             </p>
           ) : (
             <>
-              {!causalDocument ? <p className="preview__empty">Laying out causal graph...</p> : (
+              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : !causalDocument ? <p className="preview__empty">Laying out causal graph...</p> : (
               <DiagramViewport
                 svg={causalDocument.svg}
                 size={{ width: causalDocument.width, height: causalDocument.height }}

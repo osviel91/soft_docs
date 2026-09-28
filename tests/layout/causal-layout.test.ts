@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseEventFlow } from "../../src/language/eventflow/parser";
 import { projectEventFlowToCausalView } from "../../src/domain/eventflow/causal-projection";
-import { layoutCausalView } from "../../src/layout/causal-layout";
+import { layoutCausalView, selectCausalDensity } from "../../src/layout/causal-layout";
 
 async function layout(source: string) {
   return layoutCausalView(projectEventFlowToCausalView(parseEventFlow(source).flow));
@@ -162,5 +162,37 @@ describe("layoutCausalView", () => {
       const owner = result.nodes.find((node) => node.id === result.edges.find((edge) => edge.edge.to === effect.id)?.edge.from);
       return owner ? effect.box.y > owner.box.y + owner.box.height : false;
     })).toBe(true);
+  });
+
+  it("keeps small graphs spacious and compacts sufficiently deep graphs", async () => {
+    const small = projectEventFlowToCausalView(parseEventFlow([
+      "event A", "handler H", "A handled by H",
+    ].join("\n")).flow);
+    const deep = projectEventFlowToCausalView(parseEventFlow([
+      "event A", "event B", "event C", "event D", "event E", "event F", "event G",
+      "handler H1", "handler H2", "handler H3", "handler H4", "handler H5", "handler H6",
+      "A handled by H1", "H1 causes B", "B handled by H2", "H2 causes C", "C handled by H3", "H3 causes D",
+      "D handled by H4", "H4 causes E", "E handled by H5", "H5 causes F", "F handled by H6", "H6 causes G",
+    ].join("\n")).flow);
+    expect(selectCausalDensity(small).name).toBe("normal");
+    expect(selectCausalDensity(deep).name).toBe("compact");
+    expect((await layoutCausalView(deep)).width).toBeLessThan((await layoutCausalView(small)).width * 8);
+  });
+
+  it("packs recharge-shaped primary and independent components into a tighter canvas", async () => {
+    const result = await layout([
+      "event RechargeRequested", "event BalanceLoaded", "event RechargeAuthorized", "event PaymentCaptured", "event RechargeCompleted",
+      "handler LoadBalance", "handler AuthorizeRecharge", "handler CapturePayment", "handler CompleteRecharge",
+      "RechargeRequested handled by LoadBalance", "LoadBalance causes BalanceLoaded", "BalanceLoaded handled by AuthorizeRecharge",
+      "AuthorizeRecharge causes RechargeAuthorized", "RechargeAuthorized handled by CapturePayment", "CapturePayment causes PaymentCaptured",
+      "PaymentCaptured handled by CompleteRecharge", "CompleteRecharge causes RechargeCompleted",
+      "event AuditTrail", "event CustomerPreference", "event BillingClock", "event IndependentNotification",
+    ].join("\n"));
+    const boxes = result.nodes.map((node) => node.box);
+    for (let left = 0; left < boxes.length; left++) {
+      for (let right = left + 1; right < boxes.length; right++) expect(overlaps(boxes[left], boxes[right])).toBe(false);
+    }
+    expect(result.width).toBeGreaterThan(Math.max(...boxes.map((box) => box.width)) + 100);
+    expect(result.height).toBeLessThan(result.nodes.length * 180);
   });
 });

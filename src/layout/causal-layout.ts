@@ -37,8 +37,23 @@ export interface CausalLayout {
   effectGroups: HandlerEffectGroup[];
 }
 
-const GAP_X = 72;
-const GAP_Y = 28;
+export interface CausalDensity {
+  name: "normal" | "compact";
+  layerGap: number;
+  subordinateGap: number;
+  handlerWidth: [number, number];
+  messageWidth: [number, number];
+  effectWidth: [number, number];
+}
+
+const NORMAL_DENSITY: CausalDensity = {
+  name: "normal", layerGap: 72, subordinateGap: 28,
+  handlerWidth: [140, 220], messageWidth: [180, 260], effectWidth: [150, 250],
+};
+const COMPACT_DENSITY: CausalDensity = {
+  name: "compact", layerGap: 42, subordinateGap: 16,
+  handlerWidth: [122, 178], messageWidth: [160, 220], effectWidth: [138, 220],
+};
 const COMPONENT_GAP = 64;
 const MARGIN = 28;
 const NODE_LINE_HEIGHT = 15;
@@ -54,19 +69,39 @@ type LayoutItem = {
   sourceNodeIds: string[];
 };
 
-function width(label: string, type: CausalNodeLayout["type"]): number {
+export function selectCausalDensity(view: CausalViewModel): CausalDensity {
+  const causalEdges = view.edges.filter((edge) => edge.type !== "HANDLER_HAS_EFFECT");
+  const outgoing = new Map<CausalNodeId, CausalNodeId[]>();
+  for (const edge of causalEdges) outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge.to]);
+  const depth = (id: CausalNodeId, path: Set<CausalNodeId>): number => {
+    if (path.has(id)) return 0;
+    const next = new Set(path).add(id);
+    return Math.max(0, ...(outgoing.get(id) ?? []).map((child) => 1 + depth(child, next)));
+  };
+  const maxDepth = Math.max(0, ...[
+    ...view.messages,
+    ...view.handlers,
+    ...(view.failures ?? []),
+    ...(view.retries ?? []),
+  ].map((item) => depth(item.id, new Set())));
+  return maxDepth >= 5 || view.messages.length + view.handlers.length + (view.failures?.length ?? 0) + (view.retries?.length ?? 0) >= 14
+    ? COMPACT_DENSITY
+    : NORMAL_DENSITY;
+}
+
+function width(label: string, type: CausalNodeLayout["type"], density: CausalDensity): number {
   const limits = type === "message"
-    ? [180, 260]
+    ? density.messageWidth
     : type === "effect"
-      ? [150, 250]
+      ? density.effectWidth
       : type === "handler"
-        ? [140, 220]
+        ? density.handlerWidth
         : [130, 210];
   return Math.min(limits[1], Math.max(limits[0], estimateTextWidth(label) + 28));
 }
 
-function nodeGeometry(label: string, type: CausalNodeLayout["type"]): { width: number; height: number; lines: string[] } {
-  const boxWidth = width(label, type);
+function nodeGeometry(label: string, type: CausalNodeLayout["type"], density: CausalDensity): { width: number; height: number; lines: string[] } {
+  const boxWidth = width(label, type, density);
   const lines = wrapText(label, boxWidth - 24, type === "effect" ? 12 : 13);
   const lineHeight = type === "effect" ? EFFECT_LINE_HEIGHT : NODE_LINE_HEIGHT;
   const padding = type === "effect" ? EFFECT_PADDING_Y : NODE_PADDING_Y;
@@ -75,6 +110,7 @@ function nodeGeometry(label: string, type: CausalNodeLayout["type"]): { width: n
 
 /** ELK owns placement and routing; the projection remains the source of edges. */
 export async function layoutCausalView(view: CausalViewModel): Promise<CausalLayout> {
+  const density = selectCausalDensity(view);
   const items = causalItems(view);
   const itemById = new Map(items.map((item) => [item.id, item]));
   const effectGroups = view.handlers
@@ -85,32 +121,33 @@ export async function layoutCausalView(view: CausalViewModel): Promise<CausalLay
     : items.map((item) => ({ id: `component:${item.id}`, nodeIds: [item.id], rootNodeIds: [item.id] }));
   const placedNodes: CausalNodeLayout[] = [];
   const placedEdges: CausalEdgeLayout[] = [];
-  let offsetY = MARGIN + (view.title ? 28 : 0);
-  let canvasWidth = MARGIN * 2;
-
+  const componentLayouts: Array<{ nodes: CausalNodeLayout[]; edges: CausalEdgeLayout[]; width: number; height: number }> = [];
   for (const component of components) {
     const componentItems = component.nodeIds.map((id) => itemById.get(id)).filter((item): item is LayoutItem => Boolean(item));
     if (!componentItems.length) continue;
-    const result = await layoutComponent(componentItems, view.edges.filter((edge) => component.nodeIds.includes(edge.from) && component.nodeIds.includes(edge.to)));
-    for (const node of result.nodes) {
-      placedNodes.push({ ...node, box: { ...node.box, y: node.box.y + offsetY } });
-    }
-    const boxes = new Map(placedNodes.slice(-result.nodes.length).map((node) => [node.id, node.box]));
-    for (const edge of result.edges) {
-      placedEdges.push({
-        ...edge,
-        from: boxes.get(edge.edge.from)!,
-        to: boxes.get(edge.edge.to)!,
-        points: edge.points.map((point) => ({ x: point.x, y: point.y + offsetY })),
-      });
-    }
-    offsetY += result.height + COMPONENT_GAP;
-    canvasWidth = Math.max(canvasWidth, result.width + MARGIN * 2);
+    componentLayouts.push(await layoutComponent(componentItems, view.edges.filter((edge) => component.nodeIds.includes(edge.from) && component.nodeIds.includes(edge.to)), density));
+  }
+  const placements = packComponents(componentLayouts, MARGIN + (view.title ? 28 : 0));
+  let canvasWidth = MARGIN * 2;
+  let canvasHeight = MARGIN + (view.title ? 28 : 0);
+  for (let index = 0; index < componentLayouts.length; index++) {
+    const result = componentLayouts[index];
+    const placement = placements[index];
+    for (const node of result.nodes) placedNodes.push({ ...node, box: translateBox(node.box, placement.x, placement.y) });
+    const boxes = new Map(result.nodes.map((node) => [node.id, translateBox(node.box, placement.x, placement.y)]));
+    for (const edge of result.edges) placedEdges.push({
+      ...edge,
+      from: boxes.get(edge.edge.from)!,
+      to: boxes.get(edge.edge.to)!,
+      points: edge.points.map((point) => ({ x: point.x + placement.x, y: point.y + placement.y })),
+    });
+    canvasWidth = Math.max(canvasWidth, placement.x + result.width + MARGIN);
+    canvasHeight = Math.max(canvasHeight, placement.y + result.height + MARGIN);
   }
 
   return {
     width: canvasWidth,
-    height: Math.max(MARGIN * 2, offsetY - COMPONENT_GAP + MARGIN),
+    height: Math.max(MARGIN * 2, canvasHeight),
     ...(view.title === undefined ? {} : { title: view.title }),
     nodes: placedNodes,
     edges: placedEdges,
@@ -118,7 +155,7 @@ export async function layoutCausalView(view: CausalViewModel): Promise<CausalLay
   };
 }
 
-async function layoutComponent(items: LayoutItem[], edges: CausalEdge[]): Promise<{ nodes: CausalNodeLayout[]; edges: CausalEdgeLayout[]; width: number; height: number }> {
+async function layoutComponent(items: LayoutItem[], edges: CausalEdge[], density: CausalDensity): Promise<{ nodes: CausalNodeLayout[]; edges: CausalEdgeLayout[]; width: number; height: number }> {
   const mainItems = items.filter((item) => item.type !== "effect");
   const itemById = new Map(items.map((item) => [item.id, item]));
   const graph: ElkNode = {
@@ -130,11 +167,11 @@ async function layoutComponent(items: LayoutItem[], edges: CausalEdge[]): Promis
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.spacing.nodeNode": "28",
-      "elk.layered.spacing.nodeNodeBetweenLayers": String(GAP_X),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(density.layerGap),
       "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
     },
     children: mainItems.map((item) => {
-      const geometry = nodeGeometry(item.label, item.type);
+      const geometry = nodeGeometry(item.label, item.type, density);
       return { id: item.id, width: geometry.width, height: geometry.height };
     }),
     edges: edges.filter((edge) => edge.type !== "HANDLER_HAS_EFFECT" && itemById.has(edge.from) && itemById.has(edge.to)).map((edge) => ({ id: edge.id, sources: [edge.from], targets: [edge.to] })),
@@ -142,21 +179,40 @@ async function layoutComponent(items: LayoutItem[], edges: CausalEdge[]): Promis
   const laidOut = mainItems.length ? await elk.layout(graph) : graph;
   const localNodes = (laidOut.children ?? []).map((child) => {
     const item = itemById.get(child.id as CausalNodeId)!;
-    const geometry = nodeGeometry(item.label, item.type);
+    const geometry = nodeGeometry(item.label, item.type, density);
     return { ...item, box: { x: child.x ?? 0, y: child.y ?? 0, width: child.width ?? geometry.width, height: child.height ?? geometry.height }, lines: geometry.lines };
   });
   const boxes = new Map(localNodes.map((node) => [node.id, node.box]));
-  const effectNodes = items.filter((item) => item.type === "effect");
   const mainBottom = Math.max(0, ...localNodes.map((node) => node.box.y + node.box.height));
-  for (const effect of effectNodes) {
+  const effectGroups = new Map<CausalNodeId, LayoutItem[]>();
+  for (const effect of items.filter((item) => item.type === "effect")) {
     const owner = edges.find((edge) => edge.type === "HANDLER_HAS_EFFECT" && edge.to === effect.id)?.from;
-    const handler = owner ? boxes.get(owner) : undefined;
+    if (owner) effectGroups.set(owner, [...(effectGroups.get(owner) ?? []), effect]);
+  }
+  for (const [owner, effects] of effectGroups) {
+    const handler = boxes.get(owner);
     if (!handler) continue;
-    const geometry = nodeGeometry(effect.label, effect.type);
-    let box: CausalBox = { x: handler.x + (handler.width - geometry.width) / 2, y: handler.y + handler.height + GAP_Y, width: geometry.width, height: geometry.height };
-    while ([...boxes.values()].some((other) => overlaps(box, other))) box = { ...box, y: box.y + geometry.height + GAP_Y };
-    boxes.set(effect.id, box);
-    localNodes.push({ ...effect, box, lines: geometry.lines });
+    const geometries = effects.map((effect) => ({ effect, geometry: nodeGeometry(effect.label, effect.type, density) }));
+    let groupY = handler.y + handler.height + density.subordinateGap;
+    const makeGroupBoxes = (y: number) => {
+      let cursor = y;
+      return geometries.map(({ geometry }) => {
+        const box = { x: handler.x + (handler.width - geometry.width) / 2, y: cursor, width: geometry.width, height: geometry.height };
+        cursor += geometry.height + density.subordinateGap;
+        return box;
+      });
+    };
+    let groupBoxes = makeGroupBoxes(groupY);
+    while (groupBoxes.some((box) => [...boxes.values()].some((other) => overlaps(box, other)))) {
+      groupY += Math.max(...groupBoxes.map((box) => box.height)) + density.subordinateGap;
+      groupBoxes = makeGroupBoxes(groupY);
+    }
+    for (let index = 0; index < geometries.length; index++) {
+      const { effect, geometry } = geometries[index];
+      const box = groupBoxes[index];
+      boxes.set(effect.id, box);
+      localNodes.push({ ...effect, box, lines: geometry.lines });
+    }
   }
   const localEdges = edges.flatMap((edge) => {
     const from = boxes.get(edge.from);
@@ -209,4 +265,28 @@ function isBackEdge(from: CausalBox, to: CausalBox): boolean {
 
 function overlaps(left: CausalBox, right: CausalBox): boolean {
   return left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y;
+}
+
+function translateBox(box: CausalBox, x: number, y: number): CausalBox {
+  return { ...box, x: box.x + x, y: box.y + y };
+}
+
+/** Pack complete component bounds; ELK coordinates inside each bound stay intact. */
+function packComponents(components: Array<{ width: number; height: number }>, startY: number): CausalPoint[] {
+  const maxWidth = Math.max(0, ...components.map((component) => component.width));
+  const placements: CausalPoint[] = [];
+  let x = MARGIN;
+  let y = startY;
+  let rowHeight = 0;
+  for (const component of components) {
+    if (x > MARGIN && x + component.width > MARGIN + maxWidth) {
+      x = MARGIN;
+      y += rowHeight + COMPONENT_GAP;
+      rowHeight = 0;
+    }
+    placements.push({ x, y });
+    x += component.width + COMPONENT_GAP;
+    rowHeight = Math.max(rowHeight, component.height);
+  }
+  return placements;
 }
