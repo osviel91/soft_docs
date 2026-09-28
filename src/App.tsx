@@ -876,29 +876,21 @@ export default function App() {
 
   /** Create non-authoritative server knowledge through a private context. */
   const createServerKnowledge = useCallback(
-    async (asProposal: boolean): Promise<void> => {
+    async (): Promise<void> => {
       if (workspaceMode !== "server" || !server.active) return;
       const projectId = server.active.project.id;
       const suffix = Date.now().toString(36);
       try {
         const context = await apiClient.createPrivateWorkContext(projectId, {
-          name: asProposal ? `proposal-${suffix}` : `work-${suffix}`,
+          name: `work-${suffix}`,
         });
-        const resource = await apiClient.createResource(projectId, {
+        await apiClient.createResource(projectId, {
           contextId: context.id,
           path: `untitled-${suffix}.seq`,
           type: "sequence-diagram",
           content: "title Untitled\n",
         });
-        if (asProposal) {
-          await apiClient.submitArchitecturalProposal(projectId, {
-            sourcePrivateContextId: context.id,
-            resourceIds: [resource.id],
-            title: `Proposal ${suffix}`,
-          });
-        }
-        if (asProposal) await server.openProject(server.active.project);
-        else await server.openPrivateWork(context.id);
+        await server.openPrivateWork(context.id);
       } catch (error) {
         setTransferError(
           error instanceof Error ? error.message : "Could not create server knowledge.",
@@ -2759,9 +2751,8 @@ export default function App() {
                   architecturalProposals={server.architecturalProposals}
                    onOpenArchitecturalProposal={setArchitecturalProposalId}
                    onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
-                    onCreateMyWork={() => { void createServerKnowledge(false); }}
+                     onCreateMyWork={() => { void createServerKnowledge(); }}
                     onOpenMyWork={(contextId) => { void server.openPrivateWork(contextId); }}
-                    onCreateProposal={() => { void createServerKnowledge(true); }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
                    activeContextId={server.active?.contextId ?? null}
@@ -2870,7 +2861,7 @@ export default function App() {
               {architecturalProposalContextId && server.active ? (
                 <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} onCancel={() => setArchitecturalProposalContextId(null)} onDone={() => setArchitecturalProposalContextId(null)} />
               ) : architecturalProposalId && server.active ? (
-                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} />
+                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} canReview={canReviewProjectProposals} canPromote={server.active.project.role === "OWNER"} onChanged={() => { void syncServerWorkspace(); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}

@@ -68,6 +68,34 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
+.governance-card,
+.proposal-detail {
+  width: min(100%, 900px);
+  margin: 0 auto;
+  padding: 24px;
+  overflow: auto;
+}
+.governance-eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.governance-note { padding: 12px; background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.proposal-submit label { display: grid; gap: 6px; margin: 12px 0; color: var(--text-muted); }
+.proposal-submit input:not([type="checkbox"]), .proposal-submit textarea { width: 100%; padding: 9px; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }
+.proposal-submit textarea { min-height: 100px; resize: vertical; }
+.proposal-submit__resources { padding: 0; list-style: none; }
+.proposal-submit__resources li { padding: 9px 0; border-bottom: 1px solid var(--border); }
+.proposal-submit__resources label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--text); }
+.proposal-submit__resources small { flex-basis: 100%; margin-left: 25px; color: var(--text-faint); }
+.proposal-detail__facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
+.proposal-detail__facts dt { color: var(--text-muted); }
+.proposal-detail__facts dd { margin: 0; }
+.proposal-detail__changes { margin: 24px 0; }
+.proposal-detail__changes ul, .proposal-detail section ul { padding-left: 20px; }
+.proposal-detail section { margin: 22px 0; padding: 16px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.proposal-detail h3 { margin-top: 0; }
+.proposal-detail button { margin: 4px 6px 4px 0; }
+.proposal-detail__technical { margin-top: 24px; color: var(--text-muted); }
+.proposal-detail__technical summary { cursor: pointer; color: var(--text); }
+.proposal-detail__technical dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin-top: 12px; overflow-wrap: anywhere; }
+.proposal-detail__technical dd { margin: 0; font-family: var(--font-mono); font-size: 12px; }
 
 .proposal-review-panel {
   display: flex;
@@ -4396,6 +4424,7 @@ body {
 .explorer__provenance-section { border-bottom: 1px solid var(--border); }
 .explorer__provenance-section .explorer__section-title { border-bottom: 0; }
 .explorer__section-meta { margin-left: 6px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-faint); }
+.explorer__context-note { margin: 0; padding: 8px 16px 4px; color: var(--text-muted); font-size: 11px; }
 .explorer__resource-list,
 .explorer__context-list { list-style: none; margin: 0; padding: 4px 8px 8px; }
 .explorer__resource { display: flex; align-items: center; border-radius: var(--radius-sm); }
@@ -4434,7 +4463,13 @@ body {
 .explorer__context-list button { min-width: 0; overflow: hidden; color: var(--text); background: transparent; border: 0; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .explorer__context-list button:hover,
 .explorer__context-list button:focus-visible { color: var(--accent); }
+.explorer__context-list li > button:last-child { flex: 0 0 auto; color: var(--accent); font-size: 11px; }
 .explorer__local-binding { margin: 0; padding: 8px 16px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) {
+  .governance-card, .proposal-detail { padding: 16px; }
+  .proposal-detail__facts { grid-template-columns: 1fr; gap: 3px; }
+  .proposal-detail__facts dd { margin-bottom: 8px; }
+}
 
 .login-page {
   display: grid;

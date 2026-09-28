@@ -15,14 +15,15 @@ export function ArchitecturalProposalSubmit({ client, projectId, contextId, onDo
     catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be submitted."); }
     finally { setSubmitting(false); }
   };
-  return <section className="proposal-submit" aria-label="Submit architectural proposal">
-    <button type="button" onClick={onCancel}>Cancel</button><h2>Submit for team review</h2>
-    <p>Selected resources become an immutable, team-visible Proposal. MY WORK remains private and SHARED is unchanged.</p>
-    <label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-    <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-    <h3>Resources and dependency closure</h3>
-    <ul>{resources.map((resource) => <li key={resource.id}><label><input type="checkbox" checked={selected.includes(resource.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, resource.id] : current.filter((id) => id !== resource.id))} /> {resource.path} (revision {resource.revision})</label></li>)}</ul>
+  return <section className="proposal-submit governance-card" aria-label="Submit architectural proposal">
+    <button type="button" onClick={onCancel}>Back to MY WORK</button><p className="governance-eyebrow">MY WORK to PROPOSAL</p><h2>Submit for review</h2>
+    <p>Choose the private resources to include. The submission becomes an immutable, non-authoritative proposal.</p>
+    <label>Proposal title<input aria-label="Proposal title" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+    <label>Intention and review context<textarea aria-label="Proposal description" value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+    <h3>Included resources</h3>
+    <ul className="proposal-submit__resources">{resources.map((resource) => <li key={resource.id}><label><input type="checkbox" checked={selected.includes(resource.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, resource.id] : current.filter((id) => id !== resource.id))} /> <span>{resource.path}</span><small>Operation will be determined by the governed SHARED base.</small></label></li>)}</ul>
+    <p className="governance-note"><strong>Before you submit:</strong> submitting creates a non-authoritative proposal. SHARED is not modified.</p>
     {error ? <p role="alert">{error}</p> : null}
-    <button type="button" disabled={submitting || !title.trim() || selected.length === 0} onClick={() => void submit()}>Confirm submission</button>
+    <button type="button" disabled={submitting || !title.trim() || selected.length === 0} onClick={() => void submit()}>Submit proposal for review</button>
   </section>;
 }

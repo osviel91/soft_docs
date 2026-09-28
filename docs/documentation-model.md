@@ -188,6 +188,13 @@ does not infer authority, semantic identity, a relationship, ownership, or
 folder architecture. SHARED remains the only authoritative context; MY WORK,
 PROPOSALS, and LOCAL remain distinct. An approved proposal is still not SHARED.
 
+The current ArchitecturalProposal API exposes only `open` proposal status. It
+does not yet expose a durable promotion/lifecycle query that lets Explorer
+reconstruct `PROMOTED` after a reload. Until that follow-up capability exists,
+the governed UI reports a successful promotion immediately in proposal detail
+and offers explicit navigation to the resulting SHARED knowledge; it does not
+invent a durable promoted state in Explorer.
+
 ## Representation Selection
 
 Use these questions to choose the first useful view; Sequence and Event Flow are

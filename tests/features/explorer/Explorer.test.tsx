@@ -146,9 +146,8 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-proposal")).toBeInTheDocument();
   });
 
-  it("offers creation intents only for non-authoritative contexts", () => {
+  it("offers creation only in MY WORK, never direct proposal creation", () => {
     const onCreateMyWork = vi.fn();
-    const onCreateProposal = vi.fn();
     render(
       <Explorer
         projects={[project]}
@@ -159,15 +158,13 @@ describe("Explorer", () => {
         onCreateProject={vi.fn()}
         onLoadDiagram={vi.fn()}
         onCreateMyWork={onCreateMyWork}
-        onCreateProposal={onCreateProposal}
         serverMode
       />,
     );
 
     fireEvent.click(screen.getByTestId("explorer-my-work-create"));
-    fireEvent.click(screen.getByTestId("explorer-proposal-create"));
     expect(onCreateMyWork).toHaveBeenCalledOnce();
-    expect(onCreateProposal).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("explorer-proposal-create")).toBeNull();
     expect(screen.queryByTestId("project-add-button")).toBeNull();
   });
 

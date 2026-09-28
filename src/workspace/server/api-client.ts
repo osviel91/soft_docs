@@ -162,10 +162,14 @@ export interface ServerPromotionPreview {
   eligible: boolean;
   reviewStatus: "none" | "approved" | "changes-requested" | "mixed";
   staleBase: boolean;
-  blockers: Array<{ code: string; message: string }>;
-  creates: Array<{ path: string; operation: string }>;
-  updates: Array<{ path: string; operation: string }>;
-  retires: Array<{ path: string; operation: string }>;
+  blockers: Array<{ code: string; message: string; resourceId?: string; expectedRevision?: number; currentRevision?: number }>;
+  creates: Array<{ path: string; operation: "CREATE"; resultingRevision?: number }>;
+  updates: Array<{ path: string; operation: "UPDATE"; basePath?: string; resultingRevision?: number }>;
+  retires: Array<{ path: string; operation: "RETIRE" }>;
+  semanticIdentityAdditions?: string[];
+  semanticIdentityReuses?: string[];
+  semanticChanges?: Array<{ operation: "ADD" | "UPDATE" | "RETIRE"; message: { id: string; name: string; kind: "event" | "command" } }>;
+  relationships?: Array<{ operation: "ADD" | "UPDATE" | "REMOVE"; relationship: ResourceRelationship; baseFingerprint?: string }>;
 }
 
 /** An agent identity, as `/api/agents` renders it. */
