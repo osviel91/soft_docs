@@ -26,6 +26,7 @@ import { createChangeProposalService } from "../../src/application/change-propos
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createPromotionService } from "../../src/application/promotion-service";
+import { createCapabilityService } from "../../src/application/capability-service";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
 import { createAuthorizationPolicy } from "../../src/application/authorization";
 import { createCredentialMint } from "./auth/agent-credential";
@@ -61,6 +62,7 @@ export interface AppDependencies {
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   promotion: ReturnType<typeof createPromotionService>;
+  capabilities: ReturnType<typeof createCapabilityService>;
   bootstrap: ReturnType<typeof createProjectBootstrapService>;
   trajectory: ReturnType<typeof createResourceTrajectoryService>;
   /** Where a project's files live. Never derived from a request. */
@@ -151,6 +153,13 @@ export async function createApp(
   });
   await promotion.recover();
 
+  const capabilities = createCapabilityService({
+    policy: createAuthorizationPolicy(runtime.projects),
+    knowledgeContexts: runtime.knowledgeContexts,
+    proposals: runtime.architecturalProposals,
+    promotion,
+  });
+
   const catalog = createProjectCatalog({
     projects: runtime.projects,
     workspaces: runtime.workspaces,
@@ -205,6 +214,7 @@ export async function createApp(
       storage: runtime.storageFor,
     }),
     promotion,
+    capabilities,
     bootstrap,
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
     storageFor: runtime.storageFor,

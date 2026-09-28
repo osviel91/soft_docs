@@ -115,7 +115,19 @@ export interface ServerPrivateWorkContext {
   lifecycle: "active" | "archived";
   createdAt: string;
   updatedAt: string;
+  capabilities?: Record<string, ServerCapabilityDecision>;
 }
+
+export interface ServerCapabilityDecision {
+  capability: string;
+  allowed: boolean;
+  reason?: string;
+  requiredPermission?: string;
+  requiredRole?: string;
+  state?: string;
+}
+
+export type ServerProjectCapabilities = Record<string, ServerCapabilityDecision>;
 
 export interface ServerArchitecturalProposal {
   id: string;
@@ -137,6 +149,7 @@ export interface ServerArchitecturalProposal {
   resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string; operation?: "CREATE" | "UPDATE" | "RETIRE"; baseResourceId?: string; baseRevision?: number }>;
   semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
   relationships: ResourceRelationship[];
+  capabilities?: Record<string, ServerCapabilityDecision>;
 }
 
 export interface ServerProposalReview {
@@ -510,6 +523,14 @@ export class ServerApiClient {
       "GET",
       `/api/projects/${encodeURIComponent(projectId)}/access`,
     );
+  }
+
+  async capabilities(projectId: string): Promise<ServerProjectCapabilities> {
+    const body = await this.request<{ capabilities: ServerProjectCapabilities }>(
+      "GET",
+      `/api/projects/${encodeURIComponent(projectId)}/capabilities`,
+    );
+    return body.capabilities;
   }
 
   /** Every resource a project records. */

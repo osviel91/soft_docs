@@ -2861,7 +2861,7 @@ export default function App() {
               {architecturalProposalContextId && server.active ? (
                 <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} onCancel={() => setArchitecturalProposalContextId(null)} onDone={() => setArchitecturalProposalContextId(null)} />
               ) : architecturalProposalId && server.active ? (
-                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} canReview={canReviewProjectProposals} canPromote={server.active.project.role === "OWNER"} onChanged={() => { void syncServerWorkspace(); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} onChanged={() => { void syncServerWorkspace(); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}

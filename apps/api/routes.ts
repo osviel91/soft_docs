@@ -558,10 +558,18 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/projects/:projectId/capabilities", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      return json(200, { capabilities: await dependencies.capabilities.project(context, params.projectId) });
+    }),
+  );
+
   router.get("/api/projects/:projectId/private-work", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-      return json(200, { contexts: await catalog.listPrivateWorkContexts(context, params.projectId) });
+      const contexts = await catalog.listPrivateWorkContexts(context, params.projectId);
+      return json(200, { contexts: await Promise.all(contexts.map(async (work) => ({ ...contextView(work), capabilities: await dependencies.capabilities.privateWork(context, params.projectId, work.id) }))) });
     }),
   );
 
@@ -572,7 +580,7 @@ export function createRouter(dependencies: AppDependencies): Router {
         name: requireBodyString(body, "name"),
         ...(typeof body.description === "string" ? { description: body.description } : {}),
       });
-      return json(201, { context: contextView(work) });
+      return json(201, { context: { ...contextView(work), capabilities: await dependencies.capabilities.privateWork(context, params.projectId, work.id) } });
     }),
   );
 
@@ -584,7 +592,7 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(typeof body.description === "string" ? { description: body.description } : {}),
         ...(body.lifecycle === "active" || body.lifecycle === "archived" ? { lifecycle: body.lifecycle } : {}),
       });
-      return json(200, { context: contextView(work) });
+      return json(200, { context: { ...contextView(work), capabilities: await dependencies.capabilities.privateWork(context, params.projectId, work.id) } });
     }),
   );
 
@@ -626,7 +634,8 @@ export function createRouter(dependencies: AppDependencies): Router {
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
       const projectId = requireQueryString(request.query, "projectId");
-      return json(200, { proposal: await dependencies.architecturalProposals.get(context, projectId, params.proposalId) });
+      const proposal = await dependencies.architecturalProposals.get(context, projectId, params.proposalId);
+      return json(200, { proposal: { ...proposal, capabilities: await dependencies.capabilities.proposal(context, projectId, params.proposalId) } });
     }),
   );
 

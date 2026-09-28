@@ -27,12 +27,12 @@ describe("governance UI intent", () => {
   it("keeps review separate and displays promotion operation categories and blockers", async () => {
     const review = vi.fn().mockResolvedValue({});
     const client = clientWith({
-      getArchitecturalProposal: vi.fn().mockResolvedValue({ id: "p1", projectId: "p1", authorUserId: "u1", title: "Checkout", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, createdAt: "2026-01-01", submittedAt: "2026-01-01", resources: [{ sourceResourceId: "r1", path: "checkout.seq", type: "sequence-diagram", sourceRevision: 1, content: "", operation: "UPDATE" }], semanticMessages: [], relationships: [], staleBase: true }),
+      getArchitecturalProposal: vi.fn().mockResolvedValue({ id: "p1", projectId: "p1", authorUserId: "u1", title: "Checkout", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, createdAt: "2026-01-01", submittedAt: "2026-01-01", resources: [{ sourceResourceId: "r1", path: "checkout.seq", type: "sequence-diagram", sourceRevision: 1, content: "", operation: "UPDATE" }], semanticMessages: [], relationships: [], staleBase: true, capabilities: { "proposal.review": { capability: "proposal.review", allowed: true }, "proposal.promote": { capability: "proposal.promote", allowed: true }, "proposal.previewPromotion": { capability: "proposal.previewPromotion", allowed: true } } }),
       getArchitecturalProposalReviews: vi.fn().mockResolvedValue({ status: "none", approvals: 0, changesRequested: 0, reviews: [] }),
       reviewArchitecturalProposal: review,
       previewArchitecturalProposalPromotion: vi.fn().mockResolvedValue({ eligible: false, reviewStatus: "none", staleBase: true, blockers: [{ code: "STALE_BASE", message: "Resource changed in SHARED since proposal submission" }], creates: [{ path: "new.seq", operation: "CREATE" }], updates: [], retires: [], semanticChanges: [], relationships: [] }),
     });
-    render(<ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} canPromote />);
+    render(<ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} />);
     await screen.findByText("Checkout");
     fireEvent.click(screen.getByRole("button", { name: "Preview promotion" }));
     expect(await screen.findByText(/CREATE/)).toBeInTheDocument();
