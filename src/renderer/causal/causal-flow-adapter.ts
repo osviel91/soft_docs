@@ -156,9 +156,25 @@ export function positionedCausalFlow(view: CausalViewModel, laidOut: ElkNode): C
 }
 
 export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" | "owner">): { width: number; height: number } {
-  const ownerText = data.owner ? 16 : 0;
   const width = Math.min(data.kind === "message" ? 260 : 230, Math.max(data.kind === "handler" ? 150 : 140, data.label.length * 7.2 + 38));
-  return { width, height: Math.max(54, Math.ceil(data.label.length / Math.max(1, Math.floor(width / 8))) * 18 + 30 + ownerText) };
+  const labelLines = causalTextLines(data.label, width);
+  const ownerLines = data.owner ? causalTextLines(`owned by ${data.owner.replace("handler:", "")}`, width, 5.8) : [];
+  return { width, height: Math.max(54, labelLines.length * 18 + ownerLines.length * 14 + 30) };
+}
+
+export function causalTextLines(text: string, width: number, characterWidth = 7.2): string[] {
+  const limit = Math.max(1, Math.floor((width - 28) / characterWidth));
+  const lines: string[] = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (word.length <= limit) {
+      const current = lines.at(-1);
+      if (current && current.length + word.length + 1 <= limit) lines[lines.length - 1] = `${current} ${word}`;
+      else lines.push(word);
+      continue;
+    }
+    for (let index = 0; index < word.length; index += limit) lines.push(word.slice(index, index + limit));
+  }
+  return lines.length ? lines : [""];
 }
 
 function edgePoints(edge: ElkEdge): Array<{ x: number; y: number }> | undefined {
