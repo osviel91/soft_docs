@@ -654,6 +654,12 @@ async function signIn(page, idp, subject) {
   });
 }
 
+/** Restore the precision editor when a scenario needs to edit source. */
+async function showEditor(page) {
+  const button = page.getByRole("button", { name: "Show editor" });
+  if (await button.count() > 0 && await button.isVisible()) await button.click();
+}
+
 /** Wait for either the login gate or the authenticated application shell. */
 async function waitForAuthEntry(page) {
   await page
@@ -880,6 +886,14 @@ async function runChecks(page, idp) {
     stepNumbers === 4,
     `found ${stepNumbers}`,
   );
+
+  // The code editor starts minimized; the smoke checks it only after exercising
+  // the same explicit restore action available to users.
+  await page.getByRole("button", { name: "Show editor" }).click();
+  await page.locator('[aria-label="DSL editor"]').waitFor({
+    state: "visible",
+    timeout: UI_TIMEOUT_MS,
+  });
 
   // The gutter must line up with the textarea and keep the step badges in one
   // column. jsdom has no layout, so only a real browser can catch a line-height
@@ -2127,6 +2141,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await createServerProject(page, "Alpha Server");
         const contextId = await createMyWorkDocument(page, "Alpha Server");
         check("creating a server project opens it in the explorer", true);
+        await showEditor(page);
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2159,6 +2174,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await page.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(page, "Alpha Server");
         await openMyWorkContext(page, contextId);
+        await showEditor(page);
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2191,6 +2207,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await createServerProject(page, "Docs Server");
         const contextId = await createMyWorkDocument(page, "Docs Server");
         await createDocument(page, "Docs Server", "context-menu-new-note");
+        await showEditor(page);
         await page.locator('[data-testid="markdown-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2218,6 +2235,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await openServerProject(page, "Docs Server");
         await openMyWorkContext(page, contextId);
         await page.locator('[data-testid="select-note-button"]').click();
+        await showEditor(page);
         await page.locator('[data-testid="markdown-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2251,6 +2269,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await signIn(ownerPage, idp, owner);
         await createServerProject(ownerPage, "Conflict Server");
         const contextId = await createMyWorkDocument(ownerPage, "Conflict Server");
+        await showEditor(ownerPage);
         await ownerPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2281,6 +2300,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await signIn(otherPage, idp, owner);
         await openServerProject(otherPage, "Conflict Server");
         await openMyWorkContext(otherPage, contextId);
+        await showEditor(otherPage);
         await otherPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2399,6 +2419,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await ownerPage.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(ownerPage, "Viewer Server");
+        await showEditor(ownerPage);
         await ownerPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2452,6 +2473,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         // reload is what makes the shared project appear.
         await viewerPage.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(viewerPage, "Viewer Server");
+        await showEditor(viewerPage);
         await viewerPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2603,6 +2625,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await page.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(page, "Agent Project");
+        await showEditor(page);
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
