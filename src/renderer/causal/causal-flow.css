@@ -1,5 +1,5 @@
 .causal-flow { position: relative; height: 100%; min-height: 420px; }
-.causal-flow .react-flow { background: #f8fafc; }
+.causal-flow .react-flow { background: var(--bg-inset); }
 .causal-node { box-sizing: border-box; position: relative; min-width: 130px; max-width: 250px; padding: 10px 14px; border: 1px solid #94a3b8; border-radius: 10px; color: #0f172a; background: #fff; box-shadow: 0 3px 12px #17203320; }
 .causal-node strong { display: block; width: 100%; margin-top: 3px; color: #0f172a; font-size: 13px; line-height: 1.25; overflow-wrap: anywhere; }
 .causal-node small { display: block; margin-top: 5px; color: #334155; font-size: 10px; line-height: 1.3; overflow-wrap: anywhere; }

@@ -263,6 +263,7 @@ describe("App — event flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
     const handler = await findCausalNode("handler:TransactionHandler");
     fireEvent.click(handler);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent("TransactionHandler");
   });
 
@@ -294,6 +295,7 @@ describe("App — event flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
     const handler = await findCausalNode("handler:TransactionHandler");
     fireEvent.click(handler);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent(
       "Validates and transforms the received record.",
     );

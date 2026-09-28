@@ -3144,7 +3144,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label="Show editor" title="Show editor">‹</button> : null}
+                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label="Show editor" title="Show editor">›</button> : null}
                   {comparisonOpen && selectedDiagram ? (
                     <ComparisonView
                       primary={selectedDiagram}

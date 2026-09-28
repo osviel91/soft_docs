@@ -3692,8 +3692,8 @@ body {
   z-index: 4;
   top: 50%;
   left: 0;
-  width: 30px;
-  height: 56px;
+  width: 18px;
+  height: 48px;
   padding: 0;
   transform: translateY(-50%);
   color: var(--text-muted);
@@ -3702,7 +3702,7 @@ body {
   border-left: 0;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   cursor: pointer;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1;
 }
 .editor-restore-button:hover,

@@ -89,7 +89,11 @@ export default function EventFlowPreview({
     [providedFlow, source],
   );
   const [selectedCausalId, setSelectedCausalId] = useState<CausalNodeId | null>(null);
-  useEffect(() => setSelectedCausalId(null), [source]);
+  const [causalDetailsOpen, setCausalDetailsOpen] = useState(false);
+  useEffect(() => {
+    setSelectedCausalId(null);
+    setCausalDetailsOpen(false);
+  }, [source]);
   const catalog = useMemo(() => projectEventFlowToCatalog(flow), [flow]);
   const topology = useMemo(() => projectEventFlowToTopology(flow), [flow]);
   const [topologyDetailsOpen, setTopologyDetailsOpen] = useState(false);
@@ -148,6 +152,17 @@ export default function EventFlowPreview({
           onClick={() => setTopologyDetailsOpen((open) => !open)}
         >
           {topologyDetailsOpen ? "Hide details" : "Details"}
+        </button>
+      )}
+      {view === "causal" && (
+        <button
+          type="button"
+          className="event-flow-details-toggle"
+          aria-pressed={causalDetailsOpen}
+          aria-controls="causal-selection-details"
+          onClick={() => setCausalDetailsOpen((open) => !open)}
+        >
+          {causalDetailsOpen ? "Hide details" : "Details"}
         </button>
       )}
     </div>
@@ -394,7 +409,7 @@ export default function EventFlowPreview({
           ) : (
             <>
               {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} />}
-              {selected && (
+              {selected && causalDetailsOpen && (
                 <CausalDetails item={selected} view={causal} onSourceSelect={onNodeSelect} />
               )}
             </>
@@ -445,7 +460,7 @@ function CausalDetails({ item, view, onSourceSelect }: { item: CausalItem; view:
   const source = item.sourceNodeIds[0];
   const label = String("displayName" in item ? item.displayName : "name" in item ? item.name : "description" in item && item.description ? item.description : "failureId" in item ? item.failureId : "retryId" in item ? item.retryId : item.effectId);
   return (
-    <aside className="event-causal__details" aria-label="Causal selection details">
+    <aside id="causal-selection-details" className="event-causal__details" aria-label="Causal selection details">
       <strong>{"displayName" in item ? "Handler" : "name" in item ? "Event" : "failureId" in item ? "Failure" : "retryId" in item ? "Retry" : "Effect"}</strong>
       <h2>{label}</h2>
       {"provenance" in item && <p>Provenance: {item.provenance}</p>}
