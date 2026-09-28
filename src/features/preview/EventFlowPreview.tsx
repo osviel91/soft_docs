@@ -12,8 +12,8 @@ import { useEffect, useMemo, useState } from "react";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
 import { renderEventFlowDocument } from "../../renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowTopologyDocument } from "../../renderer/pipeline/eventflow-to-topology-svg";
-import { renderEventFlowCausalDocument } from "../../renderer/pipeline/eventflow-to-causal-svg";
 import { downstreamCausalNeighbors, effectsForHandler, inputsForHandler, outputsForHandler, projectEventFlowToCausalView, upstreamCausalNeighbors, type CausalNodeId, type CausalMessage, type CausalHandler, type CausalEffect, type CausalFailure, type CausalRetry } from "../../domain/eventflow/causal-projection";
+import CausalFlowView from "../../renderer/causal/CausalFlowView";
 import { projectEventFlowToCatalog } from "../../domain/eventflow/catalog-projection";
 import { projectEventFlowToTopology } from "../../domain/eventflow/topology-projection";
 import {
@@ -94,21 +94,8 @@ export default function EventFlowPreview({
   const topology = useMemo(() => projectEventFlowToTopology(flow), [flow]);
   const [topologyDetailsOpen, setTopologyDetailsOpen] = useState(false);
   const causal = useMemo(() => projectEventFlowToCausalView(flow), [flow]);
-  const [causalDocument, setCausalDocument] = useState<Awaited<ReturnType<typeof renderEventFlowCausalDocument>> | null>(null);
+  const [, setCausalLayoutState] = useState<"loading" | "ready" | "error">("loading");
   const [causalError, setCausalError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    setCausalDocument(null);
-    setCausalError(null);
-    void renderEventFlowCausalDocument(flow, selectedCausalId)
-      .then((document) => {
-        if (active) setCausalDocument(document);
-      })
-      .catch((error: unknown) => {
-        if (active) setCausalError(error instanceof Error ? error.message : "Unable to lay out the causal graph.");
-      });
-    return () => { active = false; };
-  }, [flow, selectedCausalId]);
   const topologyDocument = useMemo(
     () => renderEventFlowTopologyDocument(flow),
     [flow],
@@ -406,27 +393,7 @@ export default function EventFlowPreview({
             </p>
           ) : (
             <>
-              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : !causalDocument ? <p className="preview__empty">Laying out causal graph...</p> : (
-              <DiagramViewport
-                svg={causalDocument.svg}
-                size={{ width: causalDocument.width, height: causalDocument.height }}
-                svgTestId="causal-svg"
-                resetKey={source}
-                onNodeSelect={onNodeSelect}
-                onSemanticMessageSelect={onSemanticMessageSelect}
-                onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
-                onCausalNodeSelect={selectCausal}
-                activeNodeId={activeNodeId}
-                activeSemanticMessageId={activeSemanticMessageId}
-                maximized={maximized}
-                onToggleMaximize={onToggleMaximize}
-                reviewMode={reviewMode}
-                linkedTransform={linkedTransform}
-                onTransformChange={onTransformChange}
-                activeReviewChange={activeReviewChange}
-                focusReviewChange={focusReviewChange}
-              />
-              )}
+              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} />}
               {selected && (
                 <CausalDetails item={selected} view={causal} onSourceSelect={onNodeSelect} />
               )}
