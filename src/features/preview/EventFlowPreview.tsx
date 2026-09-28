@@ -91,10 +91,15 @@ export default function EventFlowPreview({
   const topology = useMemo(() => projectEventFlowToTopology(flow), [flow]);
   const [topologyDetailsOpen, setTopologyDetailsOpen] = useState(false);
   const causal = useMemo(() => projectEventFlowToCausalView(flow), [flow]);
-  const causalDocument = useMemo(
-    () => renderEventFlowCausalDocument(flow, selectedCausalId),
-    [flow, selectedCausalId],
-  );
+  const [causalDocument, setCausalDocument] = useState<Awaited<ReturnType<typeof renderEventFlowCausalDocument>> | null>(null);
+  useEffect(() => {
+    let active = true;
+    setCausalDocument(null);
+    void renderEventFlowCausalDocument(flow, selectedCausalId).then((document) => {
+      if (active) setCausalDocument(document);
+    });
+    return () => { active = false; };
+  }, [flow, selectedCausalId]);
   const topologyDocument = useMemo(
     () => renderEventFlowTopologyDocument(flow),
     [flow],
@@ -392,6 +397,7 @@ export default function EventFlowPreview({
             </p>
           ) : (
             <>
+              {!causalDocument ? <p className="preview__empty">Laying out causal graph...</p> : (
               <DiagramViewport
                 svg={causalDocument.svg}
                 size={{ width: causalDocument.width, height: causalDocument.height }}
@@ -411,6 +417,7 @@ export default function EventFlowPreview({
                 activeReviewChange={activeReviewChange}
                 focusReviewChange={focusReviewChange}
               />
+              )}
               {selected && (
                 <CausalDetails item={selected} view={causal} onSourceSelect={onNodeSelect} />
               )}

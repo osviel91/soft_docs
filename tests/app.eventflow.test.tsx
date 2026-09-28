@@ -253,8 +253,9 @@ describe("App — event flows", () => {
     ].join("\n");
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: source } });
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
-    expect(screen.getByTestId("causal-svg").querySelector("svg")).toHaveAttribute("aria-label", "Causal event flow");
-    const handler = screen.getByTestId("causal-svg").querySelector('[data-causal-id="handler:TransactionHandler"]');
+    const causalSvg = await screen.findByTestId("causal-svg");
+    expect(causalSvg.querySelector("svg")).toHaveAttribute("aria-label", "Causal event flow");
+    const handler = causalSvg.querySelector('[data-causal-id="handler:TransactionHandler"]');
     expect(handler).not.toBeNull();
     fireEvent.click(handler!);
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent("TransactionHandler");
@@ -286,7 +287,7 @@ describe("App — event flows", () => {
     ].join("\n");
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: source } });
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
-    const handler = screen.getByTestId("causal-svg").querySelector('[data-causal-id="handler:TransactionHandler"]');
+    const handler = (await screen.findByTestId("causal-svg")).querySelector('[data-causal-id="handler:TransactionHandler"]');
     fireEvent.click(handler!);
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent(
       "Validates and transforms the received record.",

@@ -5,14 +5,14 @@ import { layoutCausalView } from "../../src/layout/causal-layout";
 import { renderCausalToSvg } from "../../src/renderer/svg/causal-svg-renderer";
 import { estimateTextWidth } from "../../src/layout/text";
 
-function render(source: string, selected?: string) {
+async function render(source: string, selected?: string) {
   const view = projectEventFlowToCausalView(parseEventFlow(source).flow);
-  return renderCausalToSvg(layoutCausalView(view), view, { selected: selected as CausalNodeId | undefined });
+  return renderCausalToSvg(await layoutCausalView(view), view, { selected: selected as CausalNodeId | undefined });
 }
 
 describe("causal SVG presentation", () => {
-  it("distinguishes events, handlers, effects, and causal edge labels", () => {
-    const svg = render([
+  it("distinguishes events, handlers, effects, and causal edge labels", async () => {
+    const svg = await render([
       "event Received", "event Created", "handler TransactionHandler in Transactions",
       "Received handled by TransactionHandler", "TransactionHandler causes Created",
       "effect persist on TransactionHandler kind state: persist transaction",
@@ -25,8 +25,8 @@ describe("causal SVG presentation", () => {
     expect(svg).toContain('aria-label="effect"');
   });
 
-  it("renders message kind and initiation without color-only semantics", () => {
-    const svg = render([
+  it("renders message kind and initiation without color-only semantics", async () => {
+    const svg = await render([
       "event RetryCommand {", "  kind: command", "  provenance: internal", "}",
       "handler RetryHandler", "scheduled initiates RetryCommand",
       "RetryCommand handled by RetryHandler",
@@ -36,8 +36,8 @@ describe("causal SVG presentation", () => {
     expect(svg).toContain('data-edge-type="MESSAGE_HANDLED_BY_HANDLER"');
   });
 
-  it("subdues unrelated branches while preserving the selected context", () => {
-    const svg = render([
+  it("subdues unrelated branches while preserving the selected context", async () => {
+    const svg = await render([
       "event A", "event B", "event C", "handler H1", "handler H2",
       "A handled by H1", "A handled by H2", "H1 causes B", "H2 causes C",
     ].join("\n"), handlerNodeId("H1"));
@@ -45,7 +45,7 @@ describe("causal SVG presentation", () => {
     expect(svg).toContain('class="causal-node is-subdued"');
   });
 
-  it("renders wrapped labels and explicit focus-path classes", () => {
+  it("renders wrapped labels and explicit focus-path classes", async () => {
     const source = [
       "event VeryLongMessageNameThatShouldWrapAcrossSeveralLines",
       "event Downstream",
@@ -53,7 +53,7 @@ describe("causal SVG presentation", () => {
       "VeryLongMessageNameThatShouldWrapAcrossSeveralLines handled by VeryLongHandlerNameThatShouldWrapToo",
       "VeryLongHandlerNameThatShouldWrapToo causes Downstream",
     ].join("\n");
-    const svg = render(source, "message:VeryLongMessageNameThatShouldWrapAcrossSeveralLines");
+    const svg = await render(source, "message:VeryLongMessageNameThatShouldWrapAcrossSeveralLines");
     expect(svg).toContain("<tspan");
     expect(svg).toContain("is-causal-neighbor");
     expect(svg).toContain("is-downstream");
@@ -61,21 +61,29 @@ describe("causal SVG presentation", () => {
     expect(svg).toContain("V");
   });
 
-  it("routes multiple effect edges through separate lanes", () => {
-    const svg = render([
+  it("renders the route supplied by layout for effect edges", async () => {
+    const svg = await render([
       "event Raised", "handler Persistence", "handler Registry",
       "Raised handled by Persistence", "Raised handled by Registry",
       "effect persist on Persistence: persist transaction",
       "effect update on Registry: update registries",
     ].join("\n"));
     const paths = [...svg.matchAll(/data-edge-type="HANDLER_HAS_EFFECT"[^>]*><path d="([^"]+)"/g)];
-    const lanes = paths.map((path) => path[1]?.match(/^M[\d.]+ [\d.]+ H([\d.]+)/)?.[1]);
-
     expect(paths).toHaveLength(2);
-    expect(new Set(lanes).size).toBe(2);
+    expect(paths.every((path) => path[1]?.startsWith("M"))).toBe(true);
+    expect(svg).not.toContain("effectGroupOffsets");
   });
 
-  it("wraps production identifiers at semantic boundaries without overflow", () => {
+  it("does not recompute a supplied route", async () => {
+    const view = projectEventFlowToCausalView(parseEventFlow([
+      "event A", "event B", "handler H", "A handled by H", "H causes B",
+    ].join("\n")).flow);
+    const layout = await layoutCausalView(view);
+    layout.edges[0].points = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+    expect(renderCausalToSvg(layout, view)).toContain('d="M1 2 L3 4"');
+  });
+
+  it("wraps production identifiers at semantic boundaries without overflow", async () => {
     const labels = [
       "ExportTransactionsProcessEndedEvent",
       "ExportConsumptionProcessEndedEvent",
@@ -88,7 +96,7 @@ describe("causal SVG presentation", () => {
       ...labels.filter((label) => label.endsWith("Event")).map((label) => `${label} handled by CorporateBalanceExportEndedHandler`),
     ].join("\n");
     const view = projectEventFlowToCausalView(parseEventFlow(source).flow);
-    const layout = layoutCausalView(view);
+    const layout = await layoutCausalView(view);
     const expectedLines: Record<string, string[]> = {
       ExportTransactionsProcessEndedEvent: ["Export Transactions", "Process Ended Event"],
       ExportConsumptionProcessEndedEvent: ["Export Consumption", "Process Ended Event"],
