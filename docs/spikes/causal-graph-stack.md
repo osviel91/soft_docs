@@ -12,13 +12,13 @@ The original candidate screenshots were generated during the spike and are not p
 - Monthly Billing
 - Programmed Recharge
 
-Run `npm run spike:causal:screenshots` to regenerate all ten images.
+The five fixtures are now permanent geometry and integration tests; the temporary screenshot entry point was removed with the spike harness.
 
 ## Candidates
 
 ### A. React Flow + direct ELK
 
-`causalGraphElements()` makes one React Flow node for every message, handler, effect, failure, and retry. `layoutDirectElk()` passes that flat graph directly to ELK layered/orthogonal layout. ELK supplies node positions and routed sections; the spike only converts those sections to an SVG path for React Flow's edge primitive.
+The production adapter makes one React Flow node for every message, handler, effect, failure, and retry. It passes that flat graph directly to ELK layered/orthogonal layout. ELK supplies node positions and routed sections; the renderer only converts those sections to an SVG path for React Flow's edge primitive.
 
 ### B. React Flow + @statelyai/graph + ELK (rejected)
 
@@ -37,7 +37,7 @@ The same elements are converted to `@statelyai/graph`'s JSON graph, laid out thr
 | Dynamic dimensions | Pass with adapter-owned measured dimensions before layout. React Flow can remeasure later. | Pass through `measure`; the same sizing responsibility remains project-owned. |
 | Fit, pan, zoom, minimap | Pass through React Flow `fitView`, `Controls`, and `MiniMap`. | Pass. |
 | Upstream/downstream highlighting | Pass. Existing domain neighbor queries drive classes; the library owns interaction only. | Pass. |
-| ELK Web Worker | Direct `elkjs` supports worker construction, but this spike uses the bundled in-process instance. | Adapter accepts an injected `ElkLike` instance, explicitly enabling a worker factory. |
+| ELK Web Worker | Production uses a module worker around direct `elkjs`; the layout client also accepts an injected worker factory for tests. | Adds a conversion layer and an incompatible optional ELK peer range. |
 | Custom layout/routing code | Low: graph conversion plus polyline rendering. | Low, but adds conversion and metadata boundary. |
 | Bundle impact | Adds `@xyflow/react`; `elkjs` already existed. | Adds `@xyflow/react`, `@statelyai/graph`, and `web-worker` for Vite's ELK import path. |
 | License | MIT. | MIT. |
@@ -52,13 +52,12 @@ The same elements are converted to `@statelyai/graph`'s JSON graph, laid out thr
 
 ## Known limitations
 
-- The spike does not infer compound groups because `CausalViewModel` does not currently declare compound ownership. B supports the representation; inventing groups here would change semantics.
+- The production view does not infer compound groups because `CausalViewModel` does not currently declare compound ownership. B supports the representation; inventing groups here would change semantics.
 - Route rendering is a small adapter from ELK points to React Flow's edge path, not a new routing algorithm.
-- The screenshot harness uses main-thread ELK. Worker feasibility is supported by the APIs but not yet wired into the production build.
 - Dynamic node resizing after layout needs a re-layout trigger; the spike supplies deterministic pre-layout dimensions.
-- Existing source-node selection, review decorations, and SVG export are not integrated into the experimental page.
+- Source-node selection, review decorations, and SVG export are integrated through the production preview and export pipeline.
 - Candidate B was removed because it added an unnecessary graph conversion layer and imposed an incompatible optional ELK peer range.
 
 ## Recommendation
 
-**Candidate A: React Flow + direct ELK.** It delegates viewport, interaction, minimap, and layout/routing while keeping the smallest dependency and metadata path. Keep B as a bounded follow-up only if compound graph interchange, ports, or worker injection become requirements that justify its peer-version and conversion overhead. Do not replace the production causal renderer during this spike.
+**Candidate A: React Flow + direct ELK.** It delegates viewport, interaction, minimap, and layout/routing while keeping the smallest dependency and metadata path. Keep B as a bounded follow-up only if compound graph interchange or ports become requirements that justify its peer-version and conversion overhead.
