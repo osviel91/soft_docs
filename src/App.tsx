@@ -119,6 +119,7 @@ import EventFlowPreview, {
 } from "./features/preview/EventFlowPreview";
 import ComparisonView from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
+import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
 import { analyzeEventFlow } from "./language/eventflow/parser";
 import { eventsOf } from "./domain/eventflow/ast";
 import {
@@ -1959,7 +1960,13 @@ export default function App() {
       setExportDiagramOpen(false);
       // One export path for both languages: an event flow renders through its own
       // pipeline, and PNG/PDF derive from whatever SVG that produced.
-      const rendered = isEventFlow
+      const rendered = isEventFlow && eventFlowView === "causal"
+        ? await renderEventFlowCausalDocument(eventFlow, {
+            background: options.background,
+            includeTitle: options.includeTitle,
+            padding: options.padding,
+          })
+        : isEventFlow
         ? renderEventFlowDocument(eventFlow, {
             theme: options.theme,
             background: options.background,
