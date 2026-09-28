@@ -39,6 +39,7 @@ import type { ChangeProposalService } from "../../../src/application/change-prop
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
 import type { PromotionService } from "../../../src/application/promotion-service";
+import type { CapabilityService } from "../../../src/application/capability-service";
 import { credentialGrants } from "../../../src/application/authorization";
 import { forbidden, invalid } from "../../../src/application/errors";
 import packageJson from "../../../package.json";
@@ -48,6 +49,7 @@ import { createMcpTools, type McpTool, type ToolContext } from "./tools";
 import { describeMcpError, toMcpError } from "./errors";
 import {
   EVENT_FLOW_DSL_URI,
+  GOVERNANCE_GUIDE_URI,
   SEQUENCE_DSL_URI,
   registerMcpReferences,
 } from "./reference";
@@ -68,11 +70,12 @@ export const MCP_SERVER_VERSION = packageJson.version;
  */
 export const MCP_INSTRUCTIONS = `This server exposes Software Docs Manager projects to an external agent. Every request is authenticated with a personal access token as \`Authorization: Bearer sdm_pat_…\`; there are no anonymous tools.
 
-A project contains sequence diagrams (\`.seq\`), event flows (\`.eventseq\`) and markdown documents (\`.md\`).
+A project contains sequence diagrams (\`.seq\`), event flows (\`.eventseq\`) and markdown documents (\`.md\`). Read ${GOVERNANCE_GUIDE_URI} for the reusable governance contract.
 
 Work in this order:
 1. list_projects — the project ids every other tool addresses. If it is empty and the credential has project:create, call create_project.
-2. get_project_index or list_resources — see what exists and what your token may do; these responses include semantic metadata when present.
+2. get_project_capabilities — inspect shared advisory decisions before acting; then list_private_work_contexts and create_private_work_context to find or create your owned MY WORK context.
+3. get_project_index or list_resources — see what exists and what your token may do; these responses include semantic metadata when present.
 3. read_diagram, read_documentation or read_resource — get the text, semantic metadata and current revision. Use get_resource_metadata when you need metadata without reading the contents; search_project also returns matched descriptions and tags.
 4. Read ${SEQUENCE_DSL_URI} before authoring a Sequence and ${EVENT_FLOW_DSL_URI} before authoring an Event Flow. Prefer the semantic tools for writing: upsert_sequence_diagram, upsert_event_flow and upsert_documentation parse and validate before they persist, and apply the revision for you. Use create_resource/update_resource only when you need raw control.
 5. Every write names the revision it read as \`expectedRevision\`. A stale value is refused with a conflict: re-read, then retry at the new revision. Never invent a revision.
@@ -90,6 +93,8 @@ ${SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE}
 
 Review workflow: inspect the Proposal, base/current status, validation, semantic anchors, traces, effects, recovery and unknowns before reporting a decision. Only call review_architectural_proposal when the user explicitly asks to record APPROVE or REQUEST_CHANGES; analysis is not approval. Omission is not retirement: author retirement explicitly with retireResourceIds. RETIRE removes a resource from current SHARED knowledge while preserving its identity, revision history and relationship evidence. Approval alone does not promote; call preview_architectural_proposal_promotion and then promote_architectural_proposal only with explicit user intent.
 
+Canonical governance workflow: inspect the project, query capabilities, find or create owned MY WORK, read SHARED, edit MY WORK, validate/render/trace, explicitly submit an Architectural Proposal, inspect its capabilities, preview promotion, review only when permitted, promote only when explicitly requested and authorized, then re-read SHARED. Never use contextId null as publication, treat resource:write as SHARED authority, treat approval or preview as publication, or let OWNER bypass the proposal lifecycle. Capability results are advisory and subject to TOCTOU: a later authoritative command may reject after state or permissions change. On conflict, re-read SHARED and the proposal/preview, understand the changed base, update or rebase through MY WORK, and resubmit where required; never retry blindly.
+
 When multiple resources are authored as complementary projections of substantially the same behavior, inspect existing typed relationships and create the appropriate complementary-view relationship if absent. Do not mechanically relate resources merely because they share a domain or terminology.
 
 Assessment guidance: INCOMPLETE means the representation and semantic boundary are correct but important knowledge is missing. MISREPRESENTED means the representation's semantics do not match observed behavior; synchronous HTTP routing represented as asynchronous Event Flow is MISREPRESENTED, not merely incomplete.
@@ -103,6 +108,7 @@ export interface McpServerForPrincipalOptions {
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
   promotion: PromotionService;
+  capabilities: CapabilityService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   observability: Observability;
@@ -236,7 +242,8 @@ export function createMcpServerForPrincipal(
              catalog,
              proposals,
              architecturalProposals,
-             promotion: options.promotion,
+              promotion: options.promotion,
+              capabilities: options.capabilities,
              trajectory,
             config,
             signal,

@@ -20,6 +20,21 @@ describe("authoritative write boundary", () => {
     expect(await source("src/application/workspace-mutations.ts")).not.toContain("AuthoritativeBatchRepository");
   });
 
+  it("keeps the MCP adapter above application use cases", async () => {
+    const files = [
+      "apps/mcp/app.ts",
+      "apps/mcp/mcp/handler.ts",
+      "apps/mcp/mcp/server.ts",
+      "apps/mcp/mcp/tools.ts",
+    ];
+    for (const file of files) {
+      const text = await source(file);
+      expect(text).not.toContain("AuthoritativeBatchRepository");
+      expect(text).not.toContain("authoritative-batch-repository");
+      expect(text).not.toContain("options.batches.claim");
+    }
+  });
+
   it("requires MY WORK in remote MCP mutation tools", async () => {
     const text = await source("apps/mcp/mcp/tools.ts");
     for (const name of ["create_resource", "update_resource", "move_resource", "delete_resource", "create_resource_relationship"]) {

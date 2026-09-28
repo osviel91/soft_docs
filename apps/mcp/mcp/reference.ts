@@ -6,6 +6,15 @@ import {
 
 export const SEQUENCE_DSL_URI = "seqdocs://reference/sequence-dsl";
 export const EVENT_FLOW_DSL_URI = "seqdocs://reference/event-flow-dsl";
+export const GOVERNANCE_GUIDE_URI = "seqdocs://reference/mcp-governance";
+
+const GOVERNANCE_GUIDE = `# MCP knowledge governance
+
+SHARED is authoritative and ordinarily read-only. MY WORK is private, writable, and owned by the current user. PROPOSAL is an immutable submitted snapshot and is not authoritative. REVIEW records APPROVE or REQUEST_CHANGES and does not publish. PROMOTION is the explicit authoritative transition through PromotionService.
+
+Workflow: list_projects -> get_project_capabilities -> list_private_work_contexts/create_private_work_context -> read SHARED -> edit MY WORK with contextId -> validate/render/trace -> submit_architectural_proposal -> inspect proposal capabilities -> preview_architectural_proposal_promotion -> review only when explicitly requested -> promote only when explicitly requested and authorized -> re-read SHARED.
+
+Never omit or null contextId for ordinary resource, relationship, or semantic writes. Never mutate SHARED directly, treat resource:write as publication authority, assume OWNER bypasses proposals, treat approval or preview as publication, or retry conflicts blindly. Capability results and tool metadata are advisory only; authoritative application use cases re-check permission, role, ownership, state, and current revisions. On conflict, re-read SHARED and the proposal/preview, update MY WORK, and resubmit where required.`;
 
 function eventFlowDslText(): string {
   return [
@@ -84,6 +93,18 @@ export function registerMcpReferences(server: {
     }>,
   ) => unknown;
 }): void {
+  server.registerResource(
+    "mcp-governance",
+    GOVERNANCE_GUIDE_URI,
+    {
+      title: "MCP knowledge governance",
+      description: "The canonical agent workflow for SHARED, MY WORK, PROPOSAL, REVIEW, and PROMOTION.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: GOVERNANCE_GUIDE }],
+    }),
+  );
   server.registerResource(
     "sequence-dsl",
     SEQUENCE_DSL_URI,

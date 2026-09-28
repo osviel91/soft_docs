@@ -20,6 +20,7 @@ import { createResourceTrajectoryService } from "../../src/application/resource-
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createPromotionService } from "../../src/application/promotion-service";
 import { createAuthorizationPolicy } from "../../src/application/authorization";
+import { createCapabilityService } from "../../src/application/capability-service";
 import type { McpConfig } from "./config";
 import { createMcpAuthenticator, type McpAuthenticator } from "./auth/bearer";
 import { ProcessRateLimiter, type RateLimiter } from "./rate-limit";
@@ -55,6 +56,7 @@ export interface McpService {
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   promotion: ReturnType<typeof createPromotionService>;
+  capabilities: ReturnType<typeof createCapabilityService>;
   authenticator: McpAuthenticator;
   limiter: RateLimiter;
   observability: Observability;
@@ -121,6 +123,7 @@ export async function createMcpService(
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
   const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy: createAuthorizationPolicy(runtime.projects) });
+  const capabilities = createCapabilityService({ policy: createAuthorizationPolicy(runtime.projects), knowledgeContexts: runtime.knowledgeContexts, proposals: runtime.architecturalProposals, promotion });
 
   const deps: McpHandlerDeps = {
     config,
@@ -128,6 +131,7 @@ export async function createMcpService(
     proposals,
     architecturalProposals,
     promotion,
+    capabilities,
     trajectory,
     authenticator: createMcpAuthenticator({
       credentials: runtime.credentials,
@@ -166,6 +170,7 @@ export async function createMcpService(
     proposals,
     architecturalProposals,
     promotion,
+    capabilities,
     authenticator: deps.authenticator,
     limiter: deps.limiter,
     observability,

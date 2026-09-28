@@ -132,11 +132,40 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(names).toContain("list_resource_relationships");
     expect(names).toContain("create_resource_relationship");
     expect(names).toContain("find_retry_behavior");
+    expect(names).toContain("get_project_capabilities");
     // A write tool must not claim to be read-only.
     const update = tools.find((tool) => tool.name === "update_resource");
     expect(update?.annotations?.readOnlyHint).toBe(false);
     const read = tools.find((tool) => tool.name === "read_resource");
     expect(read?.annotations?.readOnlyHint).toBe(true);
+    await client.close();
+  });
+
+  it("exposes shared capability decisions without making them authorization", async () => {
+    const client = await connect(token);
+    const result = await client.callTool({
+      name: "get_project_capabilities",
+      arguments: { projectId, contextId },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(structured(result).project["shared.read"]).toMatchObject({
+      capability: "shared.read",
+      allowed: true,
+    });
+    expect(structured(result).target.kind).toBe("private-work");
+    expect(client.getInstructions()).toContain("Capability results are advisory");
+    await client.close();
+  });
+
+  it("describes the private publication boundary on mutation tools", async () => {
+    const client = await connect(token);
+    const { tools } = await client.listTools();
+    for (const name of ["create_resource", "update_resource", "move_resource", "delete_resource", "create_resource_relationship", "create_semantic_message"]) {
+      const description = tools.find((tool) => tool.name === name)?.description ?? "";
+      expect(description).toContain("MY WORK");
+      expect(description).toContain("never SHARED");
+      expect(description).toContain("Architectural Proposal");
+    }
     await client.close();
   });
 

@@ -42,6 +42,7 @@ import type { ProjectCatalog } from "../../../src/application/project-catalog";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
 import type { PromotionService } from "../../../src/application/promotion-service";
+import type { CapabilityService } from "../../../src/application/capability-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ResourceRecord } from "../../../src/application/ports/project-repository";
 import { invalid, notFound } from "../../../src/application/errors";
@@ -90,6 +91,7 @@ export interface ToolContext {
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
   promotion: PromotionService;
+  capabilities: CapabilityService;
   trajectory: ResourceTrajectoryService;
   config: McpConfig;
   /** Aborted when the client disconnects or the tool deadline elapses. */
@@ -624,6 +626,35 @@ export function createMcpTools(): McpTool[] {
       },
     },
     {
+      name: "get_project_capabilities",
+      title: "Get project capabilities",
+      description:
+        "Read shared advisory governance decisions for this credential, project role, and target state. Capability metadata is not authorization: the application use case re-checks permission, ownership, state, and revisions when called.",
+      inputSchema: {
+        projectId: projectId(),
+        contextId: z.string().uuid().optional().describe("An owned MY WORK context to inspect."),
+        proposalId: z.string().uuid().optional().describe("A submitted Architectural Proposal to inspect."),
+      },
+      annotations: { ...READ_ONLY, title: "Get project capabilities" },
+      requiredPermissions: ["project:read"],
+      async run(args, toolContext) {
+        const id = stringArg(args, "projectId");
+        if (args.contextId !== undefined && args.proposalId !== undefined) {
+          throw invalid("Provide contextId or proposalId, not both.");
+        }
+        const project = await toolContext.capabilities.project(toolContext.context, id);
+        const target = typeof args.contextId === "string"
+          ? { kind: "private-work", capabilities: await toolContext.capabilities.privateWork(toolContext.context, id, args.contextId) }
+          : typeof args.proposalId === "string"
+            ? { kind: "architectural-proposal", capabilities: await toolContext.capabilities.proposal(toolContext.context, id, args.proposalId) }
+            : undefined;
+        return {
+          text: "Capability decisions are advisory; the application re-checks every operation.",
+          structured: { project, ...(target === undefined ? {} : { target }) },
+        };
+      },
+    },
+    {
       name: "inspect_effective_knowledge",
       title: "Inspect effective knowledge",
       description: "Inspect the authorized effective view: SHARED plus one owner's private MY WORK context. Provenance remains on each resource.",
@@ -701,7 +732,7 @@ export function createMcpTools(): McpTool[] {
       name: "create_resource_relationship",
       title: "Create resource relationship",
       description:
-        "Create a typed complementary-view relationship between two existing resources. Use only when a Sequence and Event Flow are complementary projections of substantially the same behavior and both add materially different information; do not relate merely similar topics or downstream sub-flows. Stable resource ids and optional execution/causal roles are returned.",
+        "Create a typed relationship in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Publication requires an Architectural Proposal and promotion. Use only for complementary Sequence/Event Flow projections.",
       inputSchema: {
         projectId: projectId(),
          contextId: z.string().uuid().describe("Private MY WORK context id."),
@@ -943,7 +974,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "review_architectural_proposal",
       title: "Review architectural proposal",
-      description: "Explicitly record APPROVE or REQUEST_CHANGES for an immutable Proposal. Never infer approval from analysis and never mutate SHARED.",
+       description: "Explicitly record APPROVE or REQUEST_CHANGES for an immutable PROPOSAL. Review is not publication and never mutates SHARED; promotion remains a separate explicit, authorized operation.",
       inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), decision: z.enum(["APPROVE", "REQUEST_CHANGES"]), summary: z.string().max(4000).optional() },
       annotations: { ...WRITE, title: "Review architectural proposal" },
       requiredPermissions: ["resource:update"],
@@ -955,7 +986,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "submit_architectural_proposal",
       title: "Submit architectural proposal",
-      description: "Explicitly submit selected MY WORK resources as an immutable, non-authoritative team-visible proposal. This never changes SHARED.",
+       description: "Submit selected owned MY WORK resources as an immutable, non-authoritative PROPOSAL. Submit is not publish and never changes SHARED; promotion requires a separate explicit authorized command.",
       inputSchema: {
         projectId: projectId(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(),
         title: z.string().min(1), description: z.string().optional(),
@@ -975,7 +1006,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "preview_architectural_proposal_promotion",
       title: "Preview architectural proposal promotion",
-      description: "Inspect the deterministic promotion plan and blockers without changing SHARED.",
+       description: "Preview the deterministic promotion plan and blockers without changing SHARED. Preview is not publication; current state is revalidated by PromotionService on execution.",
       inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
       annotations: { ...READ_ONLY, title: "Preview proposal promotion" },
       requiredPermissions: ["project:read"],
@@ -987,7 +1018,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "promote_architectural_proposal",
       title: "Promote architectural proposal",
-      description: "Apply an approved proposal to SHARED as one explicit atomic promotion.",
+       description: "Promote an eligible Architectural Proposal to authoritative SHARED state through PromotionService. Promotion is explicit and independently re-authorized with promotion:execute and the OWNER invariant; approval or capability metadata alone cannot publish.",
       inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), idempotencyKey: z.string().optional() },
       annotations: { ...WRITE, title: "Promote architectural proposal", destructiveHint: true },
       requiredPermissions: ["promotion:execute"],
@@ -1401,7 +1432,7 @@ export function createMcpTools(): McpTool[] {
       name: "create_resource",
       title: "Create a resource",
       description:
-        "Create a new document at a project-relative path. Fails if something already exists there: to change an existing document, read it and call update_resource with its revision. Send an `idempotencyKey` to make a retry safe.",
+        "Create a new document in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Publication requires an Architectural Proposal and promotion. Send an idempotencyKey for safe retries.",
       inputSchema: {
         projectId: projectId(),
          contextId: z.string().uuid().describe("Private MY WORK context id."),
@@ -1448,7 +1479,7 @@ export function createMcpTools(): McpTool[] {
       name: "update_resource",
       title: "Update a resource",
       description:
-        "Replace a resource's text. `expectedRevision` must be the revision you last read: a stale value is refused with a conflict instead of overwriting a concurrent edit. On conflict, re-read and retry. Send an `idempotencyKey` to make a retry safe.",
+        "Replace a resource in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Publication requires an Architectural Proposal and promotion. expectedRevision must be the revision you last read; re-read on conflict.",
       inputSchema: {
         projectId: projectId(),
            contextId: z.string().uuid().describe("Private MY WORK context id."),
@@ -1499,7 +1530,7 @@ export function createMcpTools(): McpTool[] {
       name: "move_resource",
       title: "Move or rename a resource",
       description:
-        "Move a resource to another project-relative path, keeping its id and revision history. `expectedRevision` is required and a stale value is refused with a conflict.",
+        "Move a resource within the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Publication requires an Architectural Proposal and promotion. expectedRevision is required and stale writes are rejected.",
       inputSchema: {
         projectId: projectId(),
          contextId: z.string().uuid().describe("Private MY WORK context id."),
@@ -1546,7 +1577,7 @@ export function createMcpTools(): McpTool[] {
       name: "delete_resource",
       title: "Delete a resource",
       description:
-        "Retire a shared resource from current authoritative knowledge without destroying its revision history. Requires `confirm: true`.",
+        "Delete a resource from the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. SHARED retirement requires an Architectural Proposal and promotion. Requires confirm: true.",
       inputSchema: {
         projectId: projectId(),
         contextId: z.string().uuid().describe("Private MY WORK context id."),
@@ -1985,7 +2016,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "create_semantic_message",
       title: "Create semantic message identity",
-      description: "Create an explicit project-scoped event or command identity. The server generates the stable id and returns it; callers must never invent an id. This operation never infers bindings from equal names.",
+       description: "Create an event or command identity in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Authoritative publication requires an Architectural Proposal and promotion. The server generates the id and never infers bindings.",
          inputSchema: { projectId: projectId(), contextId: z.string().uuid(), name: z.string().min(1), kind: z.enum(["event", "command"]) },
       annotations: { ...WRITE, title: "Create semantic message identity" },
       requiredPermissions: ["project:update"],
@@ -2018,7 +2049,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "update_semantic_message",
       title: "Rename semantic message identity",
-      description: "Update the display name of an existing semantic identity without changing its stable id or bindings.",
+       description: "Rename a semantic identity in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED. Authoritative changes require an Architectural Proposal and promotion.",
        inputSchema: { projectId: projectId(), contextId: z.string().uuid(), messageId: z.string().min(1), name: z.string().min(1), expectedManifestRevision: z.number().int().min(0).optional() },
       annotations: { ...WRITE, title: "Rename semantic message identity" },
       requiredPermissions: ["project:update"],
@@ -2037,7 +2068,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "bind_semantic_message",
       title: "Bind semantic message occurrence",
-      description: "Bind one exact Sequence occurrence or Event Flow event entity to an existing identity through the normal resource revision path.",
+       description: "Bind one exact occurrence in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED, through the normal resource revision path. Authoritative publication requires an Architectural Proposal and promotion.",
        inputSchema: { projectId: projectId(), contextId: z.string().uuid(), resource: resourceReference(), messageId: z.string().min(1), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
       annotations: { ...WRITE, title: "Bind semantic message occurrence" },
       requiredPermissions: ["resource:update"],
@@ -2056,7 +2087,7 @@ export function createMcpTools(): McpTool[] {
     {
       name: "unbind_semantic_message",
       title: "Unbind semantic message occurrence",
-      description: "Remove one explicit messageRef from a Sequence occurrence or Event Flow event entity through the normal resource revision path.",
+       description: "Unbind one exact occurrence in the caller's owned MY WORK context. contextId is required; this modifies MY WORK only, never SHARED, through the normal resource revision path. Authoritative publication requires an Architectural Proposal and promotion.",
        inputSchema: { projectId: projectId(), contextId: z.string().uuid(), resource: resourceReference(), name: z.string().min(1), step: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1) },
       annotations: { ...WRITE, title: "Unbind semantic message occurrence" },
       requiredPermissions: ["resource:update"],

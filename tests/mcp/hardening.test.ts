@@ -415,6 +415,51 @@ describe("protocol hardening", () => {
   });
 });
 
+describe("governance boundaries", () => {
+  let harness: McpHarness;
+
+  beforeAll(async () => {
+    harness = await startHarness();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+  });
+
+  it("rejects contextless resource, relationship, and semantic writes", async () => {
+    const ownerId = await harness.aUser();
+    const projectId = await harness.aProject(ownerId);
+    const { token } = await harness.aToken(ownerId, ["project:read", "project:update", "resource:create", "resource:update"]);
+    for (const [name, arguments_] of [
+      ["create_resource", { projectId, path: "missing-context.seq", type: "sequence-diagram", content: "" }],
+      ["create_resource_relationship", { projectId, source: "missing", target: "missing" }],
+      ["create_semantic_message", { projectId, name: "MissingContext", kind: "event" }],
+    ] as const) {
+      const response = await post(harness.origin, call(name, arguments_), { token });
+      const body = (await response.json()) as any;
+      expect(body.result.isError).toBe(true);
+    }
+  });
+
+  it("does not treat an earlier capability as an authorization token", async () => {
+    const ownerId = await harness.aUser();
+    const projectId = await harness.aProject(ownerId);
+    const editorId = await harness.aUser();
+    await harness.service.runtime.projects.setMember(projectId, editorId, "EDITOR");
+    const contextId = await harness.aPrivateWork(projectId, editorId);
+    const { token } = await harness.aToken(editorId, ["project:read", "resource:create"]);
+    const capability = await post(harness.origin, call("get_project_capabilities", { projectId }), { token });
+    expect((await capability.json() as any).result.structuredContent.project["privateWork.create"].allowed).toBe(true);
+    await harness.service.runtime.projects.setMember(projectId, editorId, "VIEWER");
+    const mutation = await post(harness.origin, call("create_resource", {
+      projectId, contextId, path: "after-revocation.seq", type: "sequence-diagram", content: "",
+    }), { token });
+    const body = (await mutation.json()) as any;
+    expect(body.result.isError).toBe(true);
+    expect(body.result.structuredContent.error.code).toBe("forbidden");
+  });
+});
+
 describe("statelessness across instances", () => {
   let harness: McpHarness;
 
