@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseEventFlow } from "../../src/language/eventflow/parser";
 import { projectEventFlowToCausalView } from "../../src/domain/eventflow/causal-projection";
-import { layoutCausalView, selectCausalDensity } from "../../src/layout/causal-layout";
+import { classifyEffects, layoutCausalView, orthogonalEdgeIntersectsNode, selectCausalDensity } from "../../src/layout/causal-layout";
 
 async function layout(source: string) {
   return layoutCausalView(projectEventFlowToCausalView(parseEventFlow(source).flow));
@@ -138,6 +138,46 @@ describe("layoutCausalView", () => {
     expect(result.edges.some((entry) => entry.backEdge)).toBe(true);
   });
 
+  it.each([
+    ["handler", "failure handler-failed on handler H"],
+    ["message", "failure message-failed on message B"],
+    ["effect", "failure effect-failed on effect save"],
+  ])("routes failure targeting a %s and its retry", async (_target, failure) => {
+    const result = await layout([
+      "event A", "event B", "handler H", "A handled by H", "H causes B",
+      "effect save on H: save state", failure,
+      "retry again for "+failure.split(" ")[1]+" {", "  mechanism: handler", "  target: same-execution", "}",
+    ].join("\n"));
+    expect(result.nodes.length).toBeGreaterThan(3);
+    expect(result.edges.some((entry) => entry.edge.type === "ENTITY_FAILED")).toBe(true);
+    expect(result.edges.some((entry) => entry.edge.type === "FAILURE_RETRIED")).toBe(true);
+  });
+
+  it("supports retry reinitiating a message and retry targeting a handler", async () => {
+    const result = await layout([
+      "event Delivery", "event Retried", "handler Webhook", "Delivery handled by Webhook", "Webhook causes Retried",
+      "failure delivery-failed on handler Webhook", "failure delivery-failed-again on handler Webhook",
+      "retry delivery-again for delivery-failed {", "  mechanism: handler", "  target: same-execution", "  initiates: Delivery", "}",
+      "retry delivery-handler-again for delivery-failed-again {", "  mechanism: handler", "  target: same-execution", "}",
+    ].join("\n"));
+    expect(result.edges.some((entry) => entry.edge.type === "RETRY_INITIATES_MESSAGE")).toBe(true);
+    expect(result.edges.some((entry) => entry.edge.type === "RETRY_TARGETS_HANDLER")).toBe(true);
+  });
+
+  it("classifies an effect with a failure edge as structural", async () => {
+    const result = await layout([
+      "event A", "handler H", "A handled by H", "effect save on H: save state",
+      "failure save-failed on effect save",
+    ].join("\n"));
+    const effect = result.nodes.find((node) => node.id === "effect:save")!;
+    const failure = result.nodes.find((node) => node.id === "failure:save-failed")!;
+    expect(effect.box).toBeDefined();
+    expect(result.edges.some((entry) => entry.edge.from === effect.id && entry.edge.to === failure.id)).toBe(true);
+    expect(classifyEffects([effect.id], projectEventFlowToCausalView(parseEventFlow([
+      "event A", "handler H", "A handled by H", "effect save on H: save state", "failure save-failed on effect save",
+    ].join("\n")).flow).edges).structural.has(effect.id)).toBe(true);
+  });
+
   it("packs disconnected components and preserves isolated messages", async () => {
     const result = await layout(["event A", "event B", "handler H", "A handled by H", "H causes B", "event Isolated"].join("\n"));
     const isolated = result.nodes.find((node) => node.id === "message:Isolated")!;
@@ -194,5 +234,48 @@ describe("layoutCausalView", () => {
     }
     expect(result.width).toBeGreaterThan(Math.max(...boxes.map((box) => box.width)) + 100);
     expect(result.height).toBeLessThan(result.nodes.length * 180);
+  });
+
+  it("keeps a wide dominant component from spreading secondary components", async () => {
+    const result = await layout([
+      "event A", "event B", "event C", "event D", "event E", "handler H",
+      "A handled by H", "H causes B", "B handled by H", "H causes C", "C handled by H", "H causes D", "D handled by H", "H causes E",
+      "event SmallOne", "event SmallTwo", "event SmallThree",
+    ].join("\n"));
+    const primary = result.nodes.filter((node) => ["message:A", "message:B", "message:C", "message:D", "message:E", "handler:H"].includes(node.id));
+    const secondary = result.nodes.filter((node) => ["message:SmallOne", "message:SmallTwo", "message:SmallThree"].includes(node.id));
+    const primaryWidth = Math.max(...primary.map((node) => node.box.x + node.box.width)) - Math.min(...primary.map((node) => node.box.x));
+    const secondaryWidth = Math.max(...secondary.map((node) => node.box.x + node.box.width)) - Math.min(...secondary.map((node) => node.box.x));
+    expect(secondaryWidth).toBeLessThan(primaryWidth);
+  });
+
+  it("has no unintended orthogonal edge-through-node intersections", async () => {
+    const result = await layout([
+      "event A", "event B", "event C", "handler H", "handler J", "A handled by H", "H causes B",
+      "B handled by J", "J causes C", "effect save on H: save state", "effect audit on J: audit state",
+    ].join("\n"));
+    for (const entry of result.edges) {
+      for (const node of result.nodes) {
+        if (node.id !== entry.edge.from && node.id !== entry.edge.to) {
+          expect(orthogonalEdgeIntersectsNode(entry.points, node.box)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it.each([
+    ["Monthly Billing", ["event InvoiceDue", "event InvoiceIssued", "handler Billing", "InvoiceDue handled by Billing", "Billing causes InvoiceIssued", "effect ledger on Billing: update ledger"]],
+    ["Export Completion", ["event ExportRequested", "event ExportCompleted", "handler Export", "ExportRequested handled by Export", "Export causes ExportCompleted", "effect archive on Export: archive export"]],
+    ["Webhook Delivery Retry", ["event Delivery", "event Retried", "handler Webhook", "Delivery handled by Webhook", "Webhook causes Retried", "effect notify on Webhook: notify webhook", "failure notify-failed on effect notify", "retry notify-again for notify-failed {", "  mechanism: handler", "  target: same-execution", "}"]],
+  ])("renders %s without node or edge-through-node collisions", async (_name, lines) => {
+    const result = await layout(lines.join("\n"));
+    for (let left = 0; left < result.nodes.length; left++) {
+      for (let right = left + 1; right < result.nodes.length; right++) expect(overlaps(result.nodes[left].box, result.nodes[right].box)).toBe(false);
+    }
+    for (const entry of result.edges) {
+      for (const node of result.nodes) {
+        if (node.id !== entry.edge.from && node.id !== entry.edge.to) expect(orthogonalEdgeIntersectsNode(entry.points, node.box)).toBe(false);
+      }
+    }
   });
 });
