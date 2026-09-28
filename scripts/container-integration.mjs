@@ -7,8 +7,8 @@
  * property the mission cares about most: **the API and the MCP service read and
  * write the same project**.
  *
- *   MCP creates a resource  → the API reads it immediately
- *   the API creates one     → the MCP reads it immediately
+ *   MCP creates a MY WORK resource  → the API reads it immediately
+ *   the API creates one             → the MCP reads it immediately
  *
  * The fixture identity is seeded by direct SQL, because a container has no
  * identity provider. The credential is hashed with the deployment's own
@@ -171,7 +171,10 @@ async function callTool(client, name, args) {
   const result = await client.callTool({ name, arguments: args });
   if (result.isError) {
     throw new Error(
-      `MCP tool ${name} failed: ${JSON.stringify(result.structuredContent)}`,
+      `MCP tool ${name} failed: ${JSON.stringify({
+        content: result.content,
+        structuredContent: result.structuredContent,
+      })}`,
     );
   }
   return result.structuredContent;
@@ -194,14 +197,24 @@ async function main() {
         requestInit: { headers: { Authorization: `Bearer ${token}` } },
       }),
     );
+    const privateWork = await callTool(client, "create_private_work_context", {
+      projectId,
+      name: "Container integration work",
+    });
+    const contextId = privateWork.context.id;
     await callTool(client, "create_resource", {
       projectId,
+      contextId,
       path: "from-mcp.seq",
       type: "sequence-diagram",
       content: "title From MCP\n",
     });
 
-    const listed = await api(token, `/api/projects/${projectId}/resources`);
+    const contextQuery = `?contextId=${encodeURIComponent(contextId)}`;
+    const listed = await api(
+      token,
+      `/api/projects/${projectId}/resources${contextQuery}`,
+    );
     if (!listed.ok) {
       throw new Error(`the API could not list resources: ${listed.status}`);
     }
@@ -216,7 +229,7 @@ async function main() {
 
     const readBack = await api(
       token,
-      `/api/projects/${projectId}/resources/${fromMcp.id}`,
+      `/api/projects/${projectId}/resources/${fromMcp.id}${contextQuery}`,
     );
     const body = await readBack.json();
     if (body.content !== "title From MCP\n") {
@@ -230,6 +243,7 @@ async function main() {
     const created = await api(token, `/api/projects/${projectId}/resources`, {
       method: "POST",
       body: JSON.stringify({
+        contextId,
         path: "from-api.seq",
         type: "sequence-diagram",
         content: "title From API\n",
@@ -242,6 +256,7 @@ async function main() {
     const seen = await callTool(client, "read_resource", {
       projectId,
       resource: "from-api.seq",
+      contextId,
     });
     if (seen.content !== "title From API\n") {
       throw new Error(`MCP read different content: ${JSON.stringify(seen)}`);
@@ -251,12 +266,13 @@ async function main() {
     // ---- The revision contract holds across both hosts ----------------------
     const viaApi = await api(
       token,
-      `/api/projects/${projectId}/resources/${fromMcp.id}`,
+      `/api/projects/${projectId}/resources/${fromMcp.id}${contextQuery}`,
     );
     const current = (await viaApi.json()).resource.revision;
     const update = await callTool(client, "update_resource", {
       projectId,
       resource: "from-mcp.seq",
+      contextId,
       content: "title Updated by MCP\n",
       expectedRevision: current,
     });
@@ -265,11 +281,12 @@ async function main() {
     }
     const stale = await api(
       token,
-      `/api/projects/${projectId}/resources/${fromMcp.id}`,
+      `/api/projects/${projectId}/resources/${fromMcp.id}${contextQuery}`,
       {
         method: "PUT",
         body: JSON.stringify({
           content: "title Stale\n",
+          contextId,
           expectedRevision: current,
         }),
       },
