@@ -46,6 +46,7 @@ ENV NODE_ENV=production
 # deployment always sets DATABASE_URL, and a WebAssembly database that will
 # never be loaded is weight and attack surface for nothing.
 COPY --from=build --chown=node:node /app/dist-mcp-service ./dist-mcp-service
+COPY --from=build --chown=node:node /app/docs/skills ./docs/skills
 
 # The project volume: user documents live here, never in the image. The service
 # also uses a hidden staging directory inside each project for the operation

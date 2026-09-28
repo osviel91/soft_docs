@@ -9,9 +9,11 @@
  */
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MCP_INSTRUCTIONS } from "../../apps/mcp/mcp/server";
+import { GOVERNANCE_GUIDE_URI } from "../../apps/mcp/mcp/reference";
 import { createMcpTools } from "../../apps/mcp/mcp/tools";
 import { startHarness, type McpHarness } from "./harness";
 
@@ -108,6 +110,42 @@ describe("the remote MCP service over Streamable HTTP", () => {
       "semantic command dispatch BulkUpdateCardsCommand messageRef <command-identity-id>",
     );
     expect(guidance).toContain("Sharing a `messageRef` correlates semantic messages");
+    await client.close();
+  });
+
+  it("lets a governed agent discover and read the canonical governance skill", async () => {
+    const client = await connect(token);
+    expect(client.getServerCapabilities()?.resources).toBeDefined();
+    const listed = await client.listResources();
+    const governance = listed.resources.find(
+      (entry) => entry.uri === GOVERNANCE_GUIDE_URI,
+    );
+    expect(governance).toMatchObject({
+      uri: GOVERNANCE_GUIDE_URI,
+      mimeType: "text/markdown",
+    });
+    const read = await client.readResource({ uri: GOVERNANCE_GUIDE_URI });
+    const content = (read.contents[0] as { text: string }).text;
+    expect(content).toBe(
+      await readFile(
+        new URL("../../docs/skills/mcp-governance.md", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(content).toContain("SHARED** is authoritative project knowledge");
+    await client.close();
+  });
+
+  it("returns a not-found protocol error for an unknown remote resource", async () => {
+    const client = await connect(token);
+    let error: unknown;
+    try {
+      await client.readResource({ uri: "seqdocs://reference/unknown" });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(String(error)).toMatch(/MCP error -32602/i);
+    expect(String(error)).toMatch(/not found/i);
     await client.close();
   });
 
