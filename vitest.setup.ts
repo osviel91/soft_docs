@@ -2,6 +2,8 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
+import ELK from "elkjs/lib/elk.bundled.js";
+import type { ElkNode } from "elkjs/lib/elk-api";
 
 // Ensure the DOM is clean between tests to avoid state leaking across cases.
 afterEach(() => {
@@ -18,6 +20,33 @@ if (typeof URL.revokeObjectURL !== "function") {
   URL.revokeObjectURL = () => {
     /* no-op */
   };
+}
+
+// jsdom has no module Worker. Keep browser integration tests on the same worker
+// protocol without weakening the production boundary; the real browser uses the
+// worker module from causal-elk-layout.ts.
+if (typeof globalThis.Worker === "undefined") {
+  Object.defineProperty(globalThis, "Worker", {
+    configurable: true,
+    value: class TestWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      postMessage(message: { id: number; graph: ElkNode }) {
+        void new ELK().layout(message.graph).then((graph) => this.onmessage?.({ data: { id: message.id, graph } } as MessageEvent)).catch(() => this.onerror?.(new ErrorEvent("error")));
+      }
+      terminate() { /* test worker */ }
+    },
+  });
+}
+if (typeof globalThis.ResizeObserver === "undefined") {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: class TestResizeObserver {
+      observe() { /* test observer */ }
+      unobserve() { /* test observer */ }
+      disconnect() { /* test observer */ }
+    },
+  });
 }
 
 // Convenience aliases so test files can stay terse.

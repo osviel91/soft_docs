@@ -35,6 +35,14 @@ const FLOW = [
   "PaymentService consumes PaymentRequested from orders",
 ].join("\n");
 
+async function findCausalNode(id: string): Promise<HTMLElement> {
+  return waitFor(() => {
+    const node = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`);
+    expect(node).not.toBeNull();
+    return node!;
+  });
+}
+
 describe("App — event flows", () => {
   async function createProject(): Promise<void> {
     fireEvent.click(screen.getByTestId("local-create-toggle"));
@@ -253,11 +261,8 @@ describe("App — event flows", () => {
     ].join("\n");
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: source } });
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
-    const causalSvg = await screen.findByTestId("causal-svg");
-    expect(causalSvg.querySelector("svg")).toHaveAttribute("aria-label", "Causal event flow");
-    const handler = causalSvg.querySelector('[data-causal-id="handler:TransactionHandler"]');
-    expect(handler).not.toBeNull();
-    fireEvent.click(handler!);
+    const handler = await findCausalNode("handler:TransactionHandler");
+    fireEvent.click(handler);
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent("TransactionHandler");
   });
 
@@ -287,8 +292,8 @@ describe("App — event flows", () => {
     ].join("\n");
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: source } });
     fireEvent.click(screen.getByRole("button", { name: "Causal" }));
-    const handler = (await screen.findByTestId("causal-svg")).querySelector('[data-causal-id="handler:TransactionHandler"]');
-    fireEvent.click(handler!);
+    const handler = await findCausalNode("handler:TransactionHandler");
+    fireEvent.click(handler);
     expect(screen.getByLabelText("Causal selection details")).toHaveTextContent(
       "Validates and transforms the received record.",
     );
@@ -303,7 +308,7 @@ describe("App — event flows", () => {
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: [
       "event Input", "event Output", "handler Handle", "Input handled by Handle", "Handle causes Output",
     ].join("\n") } });
-    await waitFor(() => expect(screen.getByTestId("causal-svg")).toBeInTheDocument());
+    await findCausalNode("handler:Handle");
     fireEvent.click(screen.getByRole("button", { name: "Flow" }));
     expect(screen.getByTestId("preview-svg")).toBeInTheDocument();
   });
