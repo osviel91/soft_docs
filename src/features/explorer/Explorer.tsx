@@ -116,6 +116,7 @@ export interface ExplorerProps {
   onSubmitArchitecturalProposal?: (contextId: string) => void;
   /** Create a resource in a private MY WORK context. */
   onCreateMyWork?: () => void;
+  onOpenMyWork?: (contextId: string) => void;
   /** Create a resource and submit it as a proposal without changing SHARED. */
   onCreateProposal?: () => void;
   projectBrowser?: boolean;
@@ -215,6 +216,7 @@ function ServerWorkspaceExplorer({
   onOpenArchitecturalProposal,
   onSubmitArchitecturalProposal,
   onCreateMyWork,
+  onOpenMyWork,
   onCreateProposal,
   activeContextId = null,
   folderName = null,
@@ -242,7 +244,7 @@ function ServerWorkspaceExplorer({
         </section>
         <section className="explorer__provenance-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => setMyWorkExpanded((expanded) => !expanded)}>MY WORK <span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={onCreateMyWork}>+</button> : null}</h2>
-           {myWorkExpanded ? activeContextId !== null ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : <ul className="explorer__context-list">{privateWorkContexts.length > 0 ? privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context"><span>{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</span>{work.lifecycle === "active" ? <button type="button" onClick={() => onSubmitArchitecturalProposal?.(work.id)}>Submit</button> : null}</li>) : <li className="explorer__diagram-empty">No private work contexts.</li>}</ul> : null}
+            {myWorkExpanded ? activeContextId !== null ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : <ul className="explorer__context-list">{privateWorkContexts.length > 0 ? privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context"><button type="button" data-testid={`explorer-private-context-open-${work.id}`} onClick={() => onOpenMyWork?.(work.id)}>{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</button>{work.lifecycle === "active" ? <button type="button" onClick={() => onSubmitArchitecturalProposal?.(work.id)}>Submit</button> : null}</li>) : <li className="explorer__diagram-empty">No private work contexts.</li>}</ul> : null}
         </section>
         <section className="explorer__provenance-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => setProposalsExpanded((expanded) => !expanded)}>PROPOSALS <span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button>{onCreateProposal ? <button type="button" className="explorer__section-add" data-testid="explorer-proposal-create" aria-label="Create proposal" title="Create proposal" onClick={onCreateProposal}>+</button> : null}</h2>

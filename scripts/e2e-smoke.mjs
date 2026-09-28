@@ -454,20 +454,32 @@ async function remoteTool(baseUrl, token, id, name, args) {
  * from its own optimistic bookkeeping, while this reads what a second browser
  * would see.
  */
-async function waitForServerContent(page, projectName, predicate, description) {
+async function waitForServerContent(
+  page,
+  projectName,
+  predicate,
+  description,
+  contextId = null,
+) {
   const deadline = Date.now() + UI_TIMEOUT_MS;
   let last = "";
   while (Date.now() < deadline) {
     const project = await serverProjectByName(page, projectName);
     if (project !== null) {
+      const contextQuery = contextId
+        ? `?contextId=${encodeURIComponent(contextId)}`
+        : "";
       const list = await apiRequest(
         page,
-        `/api/projects/${project.id}/resources`,
+        `/api/projects/${project.id}/resources${contextQuery}`,
       );
       for (const resource of list.json?.resources ?? []) {
+        const resourceQuery = contextId
+          ? `?contextId=${encodeURIComponent(contextId)}`
+          : "";
         const read = await apiRequest(
           page,
-          `/api/projects/${project.id}/resources/${resource.id}`,
+          `/api/projects/${project.id}/resources/${resource.id}${resourceQuery}`,
         );
         last = read.json?.content ?? "";
         if (predicate(last)) {
@@ -488,20 +500,84 @@ async function waitForServerContent(page, projectName, predicate, description) {
   );
 }
 
+/** Create and open the first editable MY WORK document for the active project. */
+async function createMyWorkDocument(page, projectName) {
+  const tabsBefore = await page.locator('[data-testid="tab"]').count();
+  await page.locator('[data-testid="explorer-my-work-create"]').click();
+  await page.waitForFunction(
+    (expected) =>
+      document.querySelectorAll('[data-testid="tab"]').length === expected,
+    tabsBefore + 1,
+    { timeout: UI_TIMEOUT_MS },
+  );
+  const project = await serverProjectByName(page, projectName);
+  if (project === null) throw new Error(`no server project named ${projectName}`);
+  const contexts = await apiRequest(
+    page,
+    `/api/projects/${project.id}/private-work`,
+  );
+  const context = (contexts.json?.contexts ?? []).find((entry) =>
+    entry.name.startsWith("work-"),
+  );
+  if (!context) throw new Error(`no MY WORK context was created for ${projectName}`);
+  return context.id;
+}
+
+/** Reopen an existing MY WORK context after a browser reload. */
+async function openMyWorkContext(page, contextId) {
+  const toggle = page.locator('[data-testid="explorer-my-work-toggle"]');
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  await page
+    .locator(`[data-testid="explorer-private-context-open-${contextId}"]`)
+    .click();
+}
+
+/** Seed authoritative SHARED content for a read-only consumer scenario. */
+async function bootstrapSharedProject(page, name, content) {
+  const workspaces = await apiRequest(page, "/api/workspaces");
+  const workspace = workspaces.json?.workspaces?.[0];
+  if (!workspace) throw new Error("no server workspace is available");
+  const created = await apiRequest(page, "/api/projects/bootstrap", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceId: workspace.id,
+      name,
+      resources: [
+        {
+          path: "Untitled.seq",
+          type: "sequence-diagram",
+          content,
+        },
+      ],
+    }),
+  });
+  if (created.status !== 201) {
+    throw new Error(`shared project bootstrap failed: ${created.status}`);
+  }
+}
+
 /** Read a project's first resource, with its id, revision and content. */
-async function currentServerResource(page, projectName) {
+async function currentServerResource(page, projectName, contextId = null) {
   const project = await serverProjectByName(page, projectName);
   if (project === null) {
     throw new Error(`no server project named ${JSON.stringify(projectName)}`);
   }
-  const list = await apiRequest(page, `/api/projects/${project.id}/resources`);
+  const contextQuery = contextId
+    ? `?contextId=${encodeURIComponent(contextId)}`
+    : "";
+  const list = await apiRequest(
+    page,
+    `/api/projects/${project.id}/resources${contextQuery}`,
+  );
   const resource = (list.json?.resources ?? [])[0];
   if (resource === undefined) {
     throw new Error(`server project ${projectName} has no resources`);
   }
   const read = await apiRequest(
     page,
-    `/api/projects/${project.id}/resources/${resource.id}`,
+    `/api/projects/${project.id}/resources/${resource.id}${contextQuery}`,
   );
   return {
     projectId: project.id,
@@ -2049,9 +2125,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
 
         await createServerProject(page, "Alpha Server");
+        const contextId = await createMyWorkDocument(page, "Alpha Server");
         check("creating a server project opens it in the explorer", true);
-
-        await createDocument(page, "Alpha Server", "context-menu-new-diagram");
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2074,6 +2149,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "Alpha Server",
           (content) => content.includes(SERVER_MARKER),
           "the server-side save",
+          contextId,
         );
         check(
           "the edit reaches the server, not just the browser",
@@ -2082,6 +2158,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(page, "Alpha Server");
+        await openMyWorkContext(page, contextId);
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2112,6 +2189,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await signIn(page, idp, owner);
 
         await createServerProject(page, "Docs Server");
+        const contextId = await createMyWorkDocument(page, "Docs Server");
         await createDocument(page, "Docs Server", "context-menu-new-note");
         await page.locator('[data-testid="markdown-textarea"]').waitFor({
           state: "visible",
@@ -2129,6 +2207,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "Docs Server",
           (content) => content.includes(MARKDOWN_MARKER),
           "the markdown save",
+          contextId,
         );
         check(
           "the markdown edit reaches the server",
@@ -2137,6 +2216,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(page, "Docs Server");
+        await openMyWorkContext(page, contextId);
+        await page.locator('[data-testid="select-note-button"]').click();
         await page.locator('[data-testid="markdown-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2169,11 +2250,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await waitForAuthEntry(ownerPage);
         await signIn(ownerPage, idp, owner);
         await createServerProject(ownerPage, "Conflict Server");
-        await createDocument(
-          ownerPage,
-          "Conflict Server",
-          "context-menu-new-diagram",
-        );
+        const contextId = await createMyWorkDocument(ownerPage, "Conflict Server");
         await ownerPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2194,6 +2271,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "Conflict Server",
           (content) => content.includes(CONFLICT_BASE),
           "the first save",
+          contextId,
         );
 
         // The second context reads the same document, and so holds the revision
@@ -2202,6 +2280,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await waitForAuthEntry(otherPage);
         await signIn(otherPage, idp, owner);
         await openServerProject(otherPage, "Conflict Server");
+        await openMyWorkContext(otherPage, contextId);
         await otherPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2231,6 +2310,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "Conflict Server",
           (content) => content.includes(CONFLICT_OWNER),
           "the owner's second save",
+          contextId,
         );
 
         // The second context saves from its now-stale revision.
@@ -2264,6 +2344,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "Conflict Server",
           (content) => content.includes(CONFLICT_OWNER),
           "the owner's content after the refused write",
+          contextId,
         );
         check(
           "the refused write did not reach the server",
@@ -2305,27 +2386,23 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await ownerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
         await waitForAuthEntry(ownerPage);
         await signIn(ownerPage, idp, owner);
-        await createServerProject(ownerPage, "Viewer Server");
-        await createDocument(
+        await bootstrapSharedProject(
           ownerPage,
           "Viewer Server",
-          "context-menu-new-diagram",
+          [
+            "title Viewer",
+            "participant A",
+            "participant B",
+            `A ->> B: ${VIEWER_MARKER}`,
+            "",
+          ].join("\n"),
         );
+        await ownerPage.reload({ waitUntil: "domcontentloaded" });
+        await openServerProject(ownerPage, "Viewer Server");
         await ownerPage.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
         });
-        await ownerPage
-          .locator('[data-testid="dsl-textarea"]')
-          .fill(
-            [
-              "title Viewer",
-              "participant A",
-              "participant B",
-              `A ->> B: ${VIEWER_MARKER}`,
-              "",
-            ].join("\n"),
-          );
         await waitForServerContent(
           ownerPage,
           "Viewer Server",
@@ -2511,31 +2588,32 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await waitForAuthEntry(page);
         await signIn(page, idp, owner);
 
-        // The browser writes a document the agent will read.
-        await createServerProject(page, "Agent Project");
-        await createDocument(page, "Agent Project", "context-menu-new-diagram");
+        // Bootstrap authoritative content the agent will read. Agent credentials
+        // intentionally cannot see a user's private MY WORK context.
+        await bootstrapSharedProject(
+          page,
+          "Agent Project",
+          [
+            "title Agent Project",
+            "participant One",
+            "participant Two",
+            `One ->> Two: ${AGENT_MARKER}`,
+            "",
+          ].join("\n"),
+        );
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await openServerProject(page, "Agent Project");
         await page.locator('[data-testid="dsl-textarea"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
         });
-        await page
-          .locator('[data-testid="dsl-textarea"]')
-          .fill(
-            [
-              "title Agent Project",
-              "participant One",
-              "participant Two",
-              `One ->> Two: ${AGENT_MARKER}`,
-              "",
-            ].join("\n"),
-          );
         await waitForServerContent(
           page,
           "Agent Project",
           (content) => content.includes(AGENT_MARKER),
           "the browser's save",
         );
-        check("the browser saves a document the agent will read", true);
+        check("the browser opens a document the agent will read", true);
 
         // 1. The user creates an agent and a read-only credential.
         await page.locator('[data-testid="open-agents"]').click();

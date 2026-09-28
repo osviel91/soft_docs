@@ -2753,8 +2753,9 @@ export default function App() {
                   architecturalProposals={server.architecturalProposals}
                    onOpenArchitecturalProposal={setArchitecturalProposalId}
                    onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
-                   onCreateMyWork={() => { void createServerKnowledge(false); }}
-                   onCreateProposal={() => { void createServerKnowledge(true); }}
+                    onCreateMyWork={() => { void createServerKnowledge(false); }}
+                    onOpenMyWork={(contextId) => { void server.openPrivateWork(contextId); }}
+                    onCreateProposal={() => { void createServerKnowledge(true); }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
                    activeContextId={server.active?.contextId ?? null}
