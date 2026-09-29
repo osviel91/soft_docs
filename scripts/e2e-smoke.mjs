@@ -2782,10 +2782,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
   }
 
   await scenario(
-    "Server scenario 7: governed proposal revision and withdrawal stays durable",
+    "Server scenario 7: governed proposal revision and independent review stays durable",
     async () => {
       const context = await browser.newContext();
+      const reviewerContext = await browser.newContext();
       const page = await context.newPage();
+      const reviewerPage = await reviewerContext.newPage();
       const projectName = "Governed Proposal Lifecycle";
       const proposalTitle = "Governed proposal lifecycle";
       const sharedMarker = "GOVERNEDSHAREDBASE";
@@ -3023,49 +3025,224 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await page.locator('section[aria-label="Architectural Proposal"]')
           .getByRole("button", { name: proposalTitle })
           .click();
-        await waitForText(
-          page.locator('section[aria-label="Architectural Proposal"]'),
-          (text) => text.includes("OPEN"),
-          "v2 open detail",
+         await waitForText(
+           page.locator('section[aria-label="Architectural Proposal"]'),
+           (text) => text.includes("OPEN"),
+           "v2 open detail",
+         );
+        const v2AuthorDetail = page.locator('section[aria-label="Architectural Proposal"]');
+        check(
+          "author cannot approve v2",
+          (await v2AuthorDetail.getByRole("button", { name: "Record approval" }).count()) === 0,
         );
-        await page.getByRole("button", { name: "Withdraw proposal" }).click();
-        await page.locator('section[role="dialog"][aria-label="Withdraw proposal confirmation"]').waitFor({
-          state: "visible",
+        check(
+          "v2 communicates independent review is required",
+          (await page.locator('section[aria-label="Proposal review"]').textContent() ?? "").includes("cannot approve your own proposal"),
+        );
+        check(
+          "v2 exposes its canonical diff to the author",
+          await page.locator('[aria-label^="Comparison for "]').count() > 0,
+        );
+        await page.getByRole("button", { name: "Preview promotion" }).click();
+        await waitForText(
+          page.locator('section[aria-label="Proposal promotion"]'),
+          (text) => text.includes("REVIEW REQUIRED"),
+          "pre-review promotion preview",
+        );
+        check("promotion is blocked by REVIEW_REQUIRED before independent approval", true);
+
+        await reviewerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+        await waitForAuthEntry(reviewerPage);
+        await signIn(reviewerPage, idp, viewer);
+        const reviewerMe = await apiRequest(reviewerPage, "/api/me");
+        const reviewerId = reviewerMe.json?.user?.id;
+        check(
+          "Reviewer B is a distinct authenticated identity",
+          typeof reviewerId === "string" && reviewerId !== "" && reviewerId !== v1.authorUserId,
+        );
+        const projectDetails = await apiRequest(
+          page,
+          `/api/projects/${project.id}`,
+        );
+        const workspaceId = projectDetails.json?.project?.workspaceId;
+        const reviewerWorkspaceMembership = await apiRequest(
+          page,
+          `/api/workspaces/${workspaceId}/members/${reviewerId}`,
+          { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) },
+        );
+        check(
+          "the owner establishes Reviewer B workspace authority",
+          reviewerWorkspaceMembership.status === 200,
+          `status ${reviewerWorkspaceMembership.status}`,
+        );
+        const reviewerMembership = await apiRequest(
+          page,
+          `/api/projects/${project.id}/members/${reviewerId}`,
+          { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) },
+        );
+        check(
+          "the owner establishes Reviewer B project authority",
+          reviewerMembership.status === 204,
+          `status ${reviewerMembership.status}`,
+        );
+
+        await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+        await openServerProject(reviewerPage, projectName);
+        const reviewerProposalsToggle = reviewerPage.locator('[data-testid="explorer-proposals-toggle"]');
+        if ((await reviewerProposalsToggle.getAttribute("aria-expanded")) !== "true") await reviewerProposalsToggle.click();
+        const reviewerRow = reviewerPage
+          .locator('[data-testid="explorer-proposal"]')
+          .filter({ hasText: proposalTitle })
+          .filter({ hasText: "OPEN" });
+        await reviewerRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await reviewerRow.locator('[data-testid="explorer-proposal-open"]').click();
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Architectural Proposal"]'),
+          (text) => text.includes("OPEN"),
+          "Reviewer B opens v2",
+        );
+        const reviewerDetail = reviewerPage.locator('section[aria-label="Architectural Proposal"]');
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("Review evidence"),
+          "Reviewer B proposal review hydration",
+        );
+        await reviewerPage.locator('[aria-label^="Comparison for "]').waitFor({
+          state: "attached",
           timeout: UI_TIMEOUT_MS,
         });
-        await page.locator('section[role="dialog"] textarea').fill("No longer needed");
-        await page
-          .locator('section[role="dialog"]')
-          .getByRole("button", { name: "Withdraw proposal" })
-          .click();
-        await waitForText(
-          page.locator('section[aria-label="Architectural Proposal"]'),
-          (text) => text.includes("WITHDRAWN"),
-          "withdrawn v2 detail",
-        );
-        const withdrawn = await proposalById(project.id, v2.id);
-        check("withdrawal changes v2 to WITHDRAWN", withdrawn.lifecycle?.state === "WITHDRAWN");
-        check("withdrawal preserves v2 history", withdrawn.resources.length > 0);
         check(
-          "withdrawal leaves SHARED unchanged",
-          (await currentServerResource(page, projectName)).content === sharedBefore.content,
+          "Reviewer B opens exactly v2",
+          (await reviewerDetail.textContent() ?? "").includes("GOVERNEDV2"),
+        );
+        check(
+          "Reviewer B sees the canonical proposal diff",
+          await reviewerPage.locator('[aria-label^="Comparison for "]').count() > 0,
+        );
+        const reviewerProposal = await apiRequest(
+          reviewerPage,
+          `/api/architectural-proposals/${v2.id}?projectId=${project.id}`,
+        );
+        check(
+          "Reviewer B has the existing review capability",
+          reviewerProposal.json?.proposal?.capabilities?.["proposal.review"]?.allowed === true,
+          JSON.stringify(reviewerProposal.json?.proposal?.capabilities?.["proposal.review"] ?? null),
+        );
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("Record approval") || text.includes("Record change request") || text.includes("Review unavailable"),
+          "Reviewer B review action hydration",
+        );
+        await reviewerPage.getByLabel("Approve", { exact: true }).evaluate((input) => {
+          input.click();
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("Record approval"),
+          "Reviewer B approval decision selection",
+        );
+        const reviewButtonTexts = await reviewerPage.locator('section[aria-label="Proposal review"] button').allTextContents();
+        check("Reviewer B can approve v2", reviewButtonTexts.includes("Record approval"), JSON.stringify(reviewButtonTexts));
+        await reviewerDetail.locator("textarea").fill("Independent review approved.", { force: true });
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("Record approval"),
+          "Reviewer B approval form after summary",
+        );
+        await reviewerPage
+          .locator('section[aria-label="Proposal review"] button')
+          .filter({ hasText: "Record approval" })
+          .evaluate((button) => button.click());
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("1 approvals"),
+          "Reviewer B approval evidence",
+        );
+        const approvedReviews = await apiRequest(
+          reviewerPage,
+          `/api/architectural-proposals/${v2.id}/reviews?projectId=${project.id}`,
+        );
+        const reviewEntries = approvedReviews.json?.reviews?.reviews ?? [];
+        check("approval is recorded against v2", reviewEntries.length === 1 && reviewEntries[0].decision === "APPROVE");
+        check(
+          "approval identifies Reviewer B",
+          reviewEntries[0]?.reviewerUserId === reviewerId &&
+            (reviewEntries[0]?.reviewerDisplayName === viewer.name || reviewEntries[0]?.reviewerDisplayName === undefined),
+        );
+        check(
+          "v1 has no transferred reviews",
+          ((await apiRequest(page, `/api/architectural-proposals/${v1.id}/reviews?projectId=${project.id}`)).json?.reviews?.reviews ?? []).length === 0,
+        );
+        await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+        await waitForAuthEntry(reviewerPage);
+        await reviewerPage.waitForFunction(
+          (name) => {
+            const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
+              .find((candidate) => candidate.textContent?.includes(name));
+            if (!entry) return false;
+            entry.click();
+            return true;
+          },
+          projectName,
+          { timeout: UI_TIMEOUT_MS },
+        );
+        await reviewerPage
+          .locator('[data-testid="workspace-active-project"]')
+          .filter({ hasText: projectName })
+          .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const reloadedReviewerToggle = reviewerPage.locator('[data-testid="explorer-proposals-toggle"]');
+        if ((await reloadedReviewerToggle.getAttribute("aria-expanded")) !== "true") await reloadedReviewerToggle.click();
+        const reloadedReviewerRow = reviewerPage
+          .locator('[data-testid="explorer-proposal"]')
+          .filter({ hasText: proposalTitle })
+          .filter({ hasText: "APPROVED" });
+        await reloadedReviewerRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await reloadedReviewerRow.locator('[data-testid="explorer-proposal-open"]').evaluate((button) => button.click());
+        await waitForText(
+          reviewerPage.locator('section[aria-label="Proposal review"]'),
+          (text) => text.includes("1 approvals"),
+          "approval evidence after reload",
+        );
+        check("approval survives Reviewer B reload", true);
+        check(
+          "approval leaves SHARED unchanged",
+          (await currentServerResource(reviewerPage, projectName)).content === sharedBefore.content,
         );
 
         await page.reload({ waitUntil: "domcontentloaded" });
+        await waitForAuthEntry(page);
+        await page.waitForFunction(
+          (name) => {
+            const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
+              .find((candidate) => candidate.textContent?.includes(name));
+            if (!entry) return false;
+            entry.click();
+            return true;
+          },
+          projectName,
+          { timeout: UI_TIMEOUT_MS },
+        );
         await page
           .locator('[data-testid="workspace-active-project"]')
           .filter({ hasText: projectName })
           .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        await openProposalFromExplorer("WITHDRAWN");
-        const reloadedV2 = await proposalById(project.id, v2.id);
-        check("reload preserves withdrawn v2 state", reloadedV2.lifecycle?.state === "WITHDRAWN");
-        check("reload preserves v2 predecessor lineage", reloadedV2.supersedes?.id === v1.id);
-        check(
-          "withdrawn proposal remains readable after reload",
-          (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes(proposalTitle),
+        await openProposalFromExplorer("APPROVED");
+        const postReviewPreview = await apiRequest(
+          page,
+          `/api/architectural-proposals/${v2.id}/promotion?projectId=${project.id}`,
         );
+        const promotion = postReviewPreview.json?.promotion;
+        check("promotion preview is available after independent approval", postReviewPreview.status === 200);
+        check(
+          "REVIEW_REQUIRED is absent after independent approval",
+          !promotion?.blockers?.some((blocker) => blocker.code === "REVIEW_REQUIRED"),
+        );
+        check("promotion was not executed", !(await proposalById(project.id, v2.id)).promotion);
+
       } finally {
         await context.close();
+        await reviewerContext.close();
       }
     },
   );
