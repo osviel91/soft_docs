@@ -694,6 +694,8 @@ async function openServerCreation(page) {
 
 /** Open a server project from the switcher and wait for its explorer row. */
 async function openServerProject(page, name) {
+  const back = page.locator('[data-testid="workspace-back-to-projects"]');
+  if (await back.count() > 0 && await back.isVisible()) await back.click();
   const entry = page
     .locator('[data-testid="workspace-server-project"]')
     .filter({ hasText: name });
@@ -2123,6 +2125,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     email: "viewer@e2e.test",
   };
 
+  if (process.env.E2E_SCENARIO !== "governed-proposal") {
   await scenario(
     "Server scenario 1: a server project's diagram survives a reload",
     async () => {
@@ -2769,6 +2772,277 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
     },
   );
+  }
+
+  await scenario(
+    "Server scenario 7: governed proposal revision and withdrawal stays durable",
+    async () => {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      const projectName = "Governed Proposal Lifecycle";
+      const proposalTitle = "Governed proposal lifecycle";
+      const sharedMarker = "GOVERNEDSHAREDBASE";
+      const v1Marker = "GOVERNEDV1";
+      const v2Marker = "GOVERNEDV2";
+
+      const projectProposals = async (projectId) => {
+        const response = await apiRequest(
+          page,
+          `/api/projects/${projectId}/architectural-proposals`,
+        );
+        return response.json?.proposals ?? [];
+      };
+      const proposalById = async (projectId, proposalId) => {
+        const response = await apiRequest(
+          page,
+          `/api/architectural-proposals/${proposalId}?projectId=${projectId}`,
+        );
+        if (response.status !== 200) {
+          throw new Error(`proposal ${proposalId} read failed: ${response.status}`);
+        }
+        return response.json?.proposal;
+      };
+      const openProposalFromExplorer = async (state) => {
+        await page.locator('[data-testid="explorer-proposals-toggle"]').click();
+        const row = page
+          .locator('[data-testid="explorer-proposal"]')
+          .filter({ hasText: proposalTitle })
+          .filter({ hasText: state });
+        await row.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await row.locator('[data-testid="explorer-proposal-open"]').click();
+        await waitForText(
+          page.locator('section[aria-label="Architectural Proposal"]'),
+          (text) => text.includes(state),
+          `${state} proposal detail`,
+        );
+      };
+      const submitFromMyWork = async (title, description, revision = false) => {
+        await page.locator('[data-testid="explorer-my-work-toggle"]').click();
+        const work = page.locator('[data-testid="explorer-private-context"]');
+        await work.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await work.getByRole("button", { name: "Submit for review" }).click();
+        await page.locator('section[aria-label="Submit architectural proposal"]').waitFor({
+          state: "visible",
+          timeout: UI_TIMEOUT_MS,
+        });
+        await page.getByLabel("Proposal title").fill(title);
+        await page.getByLabel("Proposal description").fill(description);
+        await page.locator('section[aria-label="Submit architectural proposal"] input[type="checkbox"]').check();
+        await page
+          .getByRole("button", { name: revision ? "Submit revision" : "Submit proposal for review" })
+          .click();
+        if (revision) {
+          await page.getByRole("button", { name: "Confirm revision" }).click();
+        }
+        await page.locator('section[aria-label="Architectural Proposal"] h2').waitFor({
+          state: "visible",
+          timeout: UI_TIMEOUT_MS,
+        });
+      };
+      const createGovernedMyWorkDocument = async () => {
+        await page.locator('[data-testid="explorer-my-work-create"]').click();
+        const deadline = Date.now() + UI_TIMEOUT_MS;
+        while (Date.now() < deadline) {
+          const contexts = await apiRequest(
+            page,
+            `/api/projects/${(await serverProjectByName(page, projectName)).id}/private-work`,
+          );
+          const context = (contexts.json?.contexts ?? []).find((entry) =>
+            entry.name.startsWith("work-"),
+          );
+          if (context) return context.id;
+          await delay(100);
+        }
+        throw new Error("the governed MY WORK context was not created");
+      };
+
+      try {
+        await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+        await waitForAuthEntry(page);
+        await signIn(page, idp, owner);
+        await bootstrapSharedProject(
+          page,
+          projectName,
+          [
+            "title Governed shared base",
+            "participant Shared",
+            "participant Authority",
+            `Shared ->> Authority: ${sharedMarker}`,
+            "",
+          ].join("\n"),
+        );
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await openServerProject(page, projectName);
+        const sharedBefore = await currentServerResource(page, projectName);
+        const contextId = await createGovernedMyWorkDocument();
+        const initialMyWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
+        if ((await initialMyWorkToggle.getAttribute("aria-expanded")) !== "true") await initialMyWorkToggle.click();
+        await page.locator('.explorer__context-note').waitFor({
+          state: "visible",
+          timeout: UI_TIMEOUT_MS,
+        });
+        await page.locator('[data-testid="explorer-diagram"]').first().click();
+        await showEditor(page);
+        const editor = page.locator('[data-testid="dsl-textarea"]');
+        await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await editor.fill(
+          [
+            "title Governed proposal v1",
+            "participant Browser",
+            "participant Service",
+            `Browser ->> Service: ${v1Marker}`,
+            "",
+          ].join("\n"),
+        );
+        await waitForServerContent(
+          page,
+          projectName,
+          (content) => content.includes(v1Marker),
+          "the v1 MY WORK edit",
+          contextId,
+        );
+
+        await openServerProject(page, projectName);
+        await submitFromMyWork(proposalTitle, "Initial governed snapshot");
+        const project = await serverProjectByName(page, projectName);
+        if (project === null) throw new Error(`no server project named ${projectName}`);
+        const v1 = (await projectProposals(project.id)).find(
+          (proposal) => proposal.title === proposalTitle,
+        );
+        if (!v1?.id) throw new Error("v1 proposal id was not returned by the API");
+        check("v1 is tracked by its proposal id", typeof v1.id === "string");
+        check(
+          "SHARED is unchanged after v1 submission",
+          (await currentServerResource(page, projectName)).content === sharedBefore.content,
+        );
+
+        await openServerProject(page, projectName);
+        await openProposalFromExplorer("OPEN");
+        check(
+          "v1 opens from PROPOSALS as OPEN",
+          (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("OPEN"),
+        );
+        check(
+          "v1 has no reviews",
+          (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("none · 0 approvals"),
+        );
+
+        await page.getByRole("button", { name: "Revise proposal" }).click();
+        const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
+        if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
+        await page.locator('.explorer__context-note').waitFor({
+          state: "visible",
+          timeout: UI_TIMEOUT_MS,
+        });
+        await page.locator('[data-testid="explorer-diagram"]').first().click();
+        await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const afterRevise = await proposalById(project.id, v1.id);
+        check("Revise opens MY WORK for editing", await editor.isVisible());
+        check("Revise alone leaves v1 OPEN", afterRevise.lifecycle?.state === "OPEN");
+        check(
+          "Revise alone leaves SHARED unchanged",
+          (await currentServerResource(page, projectName)).content === sharedBefore.content,
+        );
+
+        await editor.fill(
+          [
+            "title Governed proposal v2",
+            "participant Browser",
+            "participant Service",
+            `Browser ->> Service: ${v2Marker}`,
+            "",
+          ].join("\n"),
+        );
+        await waitForServerContent(
+          page,
+          projectName,
+          (content) => content.includes(v2Marker),
+          "the v2 MY WORK edit",
+          contextId,
+        );
+        await openServerProject(page, projectName);
+        await submitFromMyWork(proposalTitle, "Revised governed snapshot", true);
+        const proposalsAfterRevision = await projectProposals(project.id);
+        const v2 = proposalsAfterRevision.find(
+          (proposal) => proposal.supersedesProposalId === v1.id,
+        );
+        if (!v2?.id) throw new Error("v2 proposal id was not linked to v1");
+        check("v2 is tracked by a distinct proposal id", v2.id !== v1.id);
+        const v1AfterRevision = await proposalById(project.id, v1.id);
+        const v2AfterRevision = await proposalById(project.id, v2.id);
+        check("revised submission supersedes v1", v1AfterRevision.lifecycle?.state === "SUPERSEDED");
+        check("revised submission leaves v2 OPEN", v2AfterRevision.lifecycle?.state === "OPEN");
+        check("v2 references predecessor v1", v2AfterRevision.supersedes?.id === v1.id);
+        const v2Reviews = await apiRequest(
+          page,
+          `/api/architectural-proposals/${v2.id}/reviews?projectId=${project.id}`,
+        );
+        check("v2 starts with zero reviews", (v2Reviews.json?.reviews?.reviews ?? []).length === 0);
+        check(
+          "SHARED is unchanged after revised submission",
+          (await currentServerResource(page, projectName)).content === sharedBefore.content,
+        );
+
+        await openServerProject(page, projectName);
+        await openProposalFromExplorer("OPEN");
+        await page.locator('section[aria-label="Architectural Proposal"]')
+          .getByRole("button", { name: proposalTitle })
+          .click();
+        await waitForText(
+          page.locator('section[aria-label="Architectural Proposal"]'),
+          (text) => text.includes("SUPERSEDED"),
+          "v1 superseded detail",
+        );
+        const v1Detail = await proposalById(project.id, v1.id);
+        check("v1 remains readable after supersession", v1Detail.resources.length > 0);
+        check("v1 references successor v2", v1Detail.supersededBy?.id === v2.id);
+
+        await page.locator('section[aria-label="Architectural Proposal"]')
+          .getByRole("button", { name: proposalTitle })
+          .click();
+        await waitForText(
+          page.locator('section[aria-label="Architectural Proposal"]'),
+          (text) => text.includes("OPEN"),
+          "v2 open detail",
+        );
+        await page.getByRole("button", { name: "Withdraw proposal" }).click();
+        await page.locator('section[role="dialog"][aria-label="Withdraw proposal confirmation"]').waitFor({
+          state: "visible",
+          timeout: UI_TIMEOUT_MS,
+        });
+        await page.locator('section[role="dialog"] textarea').fill("No longer needed");
+        await page
+          .locator('section[role="dialog"]')
+          .getByRole("button", { name: "Withdraw proposal" })
+          .click();
+        await waitForText(
+          page.locator('section[aria-label="Architectural Proposal"]'),
+          (text) => text.includes("WITHDRAWN"),
+          "withdrawn v2 detail",
+        );
+        const withdrawn = await proposalById(project.id, v2.id);
+        check("withdrawal changes v2 to WITHDRAWN", withdrawn.lifecycle?.state === "WITHDRAWN");
+        check("withdrawal preserves v2 history", withdrawn.resources.length > 0);
+        check(
+          "withdrawal leaves SHARED unchanged",
+          (await currentServerResource(page, projectName)).content === sharedBefore.content,
+        );
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await openServerProject(page, projectName);
+        await openProposalFromExplorer("WITHDRAWN");
+        const reloadedV2 = await proposalById(project.id, v2.id);
+        check("reload preserves withdrawn v2 state", reloadedV2.lifecycle?.state === "WITHDRAWN");
+        check("reload preserves v2 predecessor lineage", reloadedV2.supersedes?.id === v1.id);
+        check(
+          "withdrawn proposal remains readable after reload",
+          (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes(proposalTitle),
+        );
+      } finally {
+        await context.close();
+      }
+    },
+  );
 }
 
 async function main() {
@@ -2818,14 +3092,11 @@ async function main() {
       viewport: { width: 1440, height: 1600 },
     });
     const checksPage = await checksContext.newPage();
-    await runChecks(checksPage, idp);
+    if (process.env.E2E_SCENARIO !== "governed-proposal") {
+      await runChecks(checksPage, idp);
+    }
     await checksContext.close();
-    await runServerChecks(
-      browser,
-      idp,
-      `http://127.0.0.1:${apiPort}`,
-      mcp.mcpBase,
-    );
+    await runServerChecks(browser, idp, `http://127.0.0.1:${apiPort}`, mcp.mcpBase);
   } finally {
     await browser?.close().catch(() => {});
     server?.kill("SIGTERM");
