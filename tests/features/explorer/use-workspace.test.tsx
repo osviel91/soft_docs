@@ -144,3 +144,38 @@ describe("useWorkspace — a file in a project that is not selected", () => {
     ).toEqual({ description: "Note context", tags: ["note"] });
   });
 });
+
+describe("useWorkspace — repository switching", () => {
+  it("ignores a stale repository load that resolves after the replacement", async () => {
+    const oldRepo = createInMemoryWorkspaceRepository();
+    const newRepo = createInMemoryWorkspaceRepository();
+    await oldRepo.createProject("Old repository");
+    await newRepo.createProject("New repository");
+    const oldProjects = await oldRepo.listProjects();
+    let resolveOld!: (value: typeof oldProjects) => void;
+    const oldLoad = new Promise<typeof oldProjects>((resolve) => {
+      resolveOld = resolve;
+    });
+    const delayedOldRepo: WorkspaceRepository = {
+      ...oldRepo,
+      listProjects: () => oldLoad,
+    };
+    const hook = renderHook(({ repo }) => useWorkspace(repo), {
+      initialProps: { repo: delayedOldRepo },
+    });
+
+    hook.rerender({ repo: newRepo });
+    await waitFor(() => {
+      expect(hook.result.current.projects.map((project) => project.name)).toEqual([
+        "New repository",
+      ]);
+    });
+
+    await act(async () => {
+      resolveOld(oldProjects);
+    });
+    expect(hook.result.current.projects.map((project) => project.name)).toEqual([
+      "New repository",
+    ]);
+  });
+});

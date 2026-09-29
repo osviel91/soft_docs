@@ -181,6 +181,7 @@ import {
 } from "./workspace/fs-access/create-file-system-repository";
 import type { WorkspaceRepository } from "./workspace/WorkspaceRepository";
 import { ServerApiClient } from "./workspace/server/api-client";
+import { createServerWorkspaceRepository } from "./workspace/server/server-workspace-repository";
 import { useAuth } from "./features/server/use-auth";
 import { useServerWorkspaces } from "./features/server/use-server-workspaces";
 import AgentsAndTokens from "./features/server/AgentsAndTokens";
@@ -264,6 +265,23 @@ function findDiagramByLink(
 function wordCount(markdown: string): number {
   const trimmed = markdown.trim();
   return trimmed === "" ? 0 : trimmed.split(/\s+/).length;
+}
+
+type BrowserLocation = { projectId: string | null; contextId: string | null; resourceId: string | null; proposalId: string | null };
+
+function browserLocation(): BrowserLocation {
+  const params = new URLSearchParams(window.location.search);
+  return { projectId: params.get("project"), contextId: params.get("context"), resourceId: params.get("resource"), proposalId: params.get("proposal") };
+}
+
+function locationUrl(location: BrowserLocation): string {
+  const params = new URLSearchParams();
+  if (location.projectId) params.set("project", location.projectId);
+  if (location.contextId) params.set("context", location.contextId);
+  if (location.resourceId) params.set("resource", location.resourceId);
+  if (location.proposalId) params.set("proposal", location.proposalId);
+  const query = params.toString();
+  return `${window.location.pathname}${query ? `?${query}` : ""}`;
 }
 
 export default function App() {
@@ -468,12 +486,31 @@ export default function App() {
   const [reviewProposalId, setReviewProposalId] = useState<string | null>(null);
   const [reviewReadOnly, setReviewReadOnly] = useState(false);
   const [proposalRefreshKey, setProposalRefreshKey] = useState(0);
+  const [browserLocationState, setBrowserLocationState] = useState<BrowserLocation>(() => browserLocation());
+  const browserLocationHydrated = useRef(false);
+  const browserLocationLoaded = useRef(false);
+  const navigationProjectRequested = useRef<string | null>(null);
+
+  const setBrowserLocation = useCallback((next: BrowserLocation, replace = false): void => {
+    setBrowserLocationState(next);
+    window.history[replace ? "replaceState" : "pushState"]({}, "", locationUrl(next));
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setBrowserLocationState(browserLocation());
+      browserLocationLoaded.current = false;
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const openArchitecturalProposal = useCallback((proposalId: string): void => {
     setArchitecturalProposalContextId(null);
     setRevisionProposalId(null);
     setArchitecturalProposalId(proposalId);
-  }, []);
+    setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
+  }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
 
   const resizePane = useCallback(
     (pane: "explorer" | "editor", clientX: number): void => {
@@ -614,7 +651,19 @@ export default function App() {
     [openedFolder, server.active?.project.id],
   );
 
+  const sharedRepository = useMemo<WorkspaceRepository | null>(() => {
+    if (!server.active) return null;
+    return createServerWorkspaceRepository({
+      client: apiClient,
+      projectId: server.active.project.id,
+      projectName: server.active.project.name,
+      writable: false,
+    });
+  }, [apiClient, server.active?.project.id, server.active?.project.name]);
+  const sharedHiddenStore = useMemo(() => createInMemoryHiddenPathStore(), [server.active?.project.id]);
+
   const workspace = useWorkspace(activeRepo, hiddenStore);
+  const sharedWorkspace = useWorkspace(sharedRepository ?? defaultRepo, sharedHiddenStore);
   const {
     projects,
     diagrams,
@@ -639,6 +688,71 @@ export default function App() {
     hiddenPaths,
     unhidePath,
   } = workspace;
+  const { diagrams: sharedDiagrams, notes: sharedNotes } = sharedWorkspace;
+
+  useEffect(() => {
+    if (!browserLocationState.projectId || server.projects.length === 0 || server.opening) return;
+    if (server.active?.project.id === browserLocationState.projectId) {
+      browserLocationHydrated.current = true;
+      return;
+    }
+    if (navigationProjectRequested.current === browserLocationState.projectId) return;
+    const project = server.projects.find((entry) => entry.id === browserLocationState.projectId);
+    browserLocationHydrated.current = true;
+    navigationProjectRequested.current = browserLocationState.projectId;
+    if (project) void server.openProject(project);
+    else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
+  }, [browserLocationState.projectId, server.active?.project.id, server.opening, server.openProject, server.projects, setBrowserLocation]);
+
+  useEffect(() => {
+    if (!server.active || browserLocationLoaded.current) return;
+    const location = browserLocationState;
+    if (location.projectId !== server.active.project.id) return;
+    browserLocationLoaded.current = true;
+    if (location.contextId && server.active.contextId !== location.contextId) {
+      void server.openPrivateWork(location.contextId);
+    } else if (!location.contextId && !location.proposalId && server.active.contextId !== null) {
+      const project = server.projects.find((entry) => entry.id === server.active?.project.id);
+      if (project) void server.openProject(project);
+    }
+    if (location.proposalId && location.contextId) {
+      setArchitecturalProposalId(null);
+      setArchitecturalProposalContextId(location.contextId);
+      setRevisionProposalId(location.proposalId);
+    } else if (location.proposalId) {
+      setArchitecturalProposalContextId(null);
+      setRevisionProposalId(null);
+      setArchitecturalProposalId(location.proposalId);
+    } else {
+      setArchitecturalProposalId(null);
+      setArchitecturalProposalContextId(null);
+      setRevisionProposalId(null);
+    }
+  }, [architecturalProposalId, browserLocationState, revisionProposalId, server.active, server.openPrivateWork, server.openProject, server.projects]);
+
+  useEffect(() => {
+    if (!server.active || !browserLocationHydrated.current) return;
+    const resourceId = selectedDiagramId ?? selectedNoteId;
+    const next = {
+      projectId: server.active.project.id,
+      contextId: server.active.contextId,
+      resourceId: server.active.contextId ? resourceId : null,
+      proposalId: architecturalProposalId ?? revisionProposalId,
+    };
+    if (locationUrl(next) !== locationUrl(browserLocationState)) {
+      setBrowserLocationState(next);
+      window.history.replaceState({}, "", locationUrl(next));
+    }
+  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation]);
+
+  useEffect(() => {
+    if (!server.active?.contextId || !browserLocationState.resourceId) return;
+    if (selectedDiagramId === browserLocationState.resourceId || selectedNoteId === browserLocationState.resourceId) return;
+    const diagram = diagrams.find((file) => file.id === browserLocationState.resourceId);
+    const note = notes.find((file) => file.id === browserLocationState.resourceId);
+    if (diagram) loadDiagram(diagram);
+    else if (note) loadNote(note);
+  }, [browserLocationState.resourceId, diagrams, loadDiagram, loadNote, notes, selectedDiagramId, selectedNoteId, server.active?.contextId]);
 
   // The document the workspace has selected, in the shape the tab strip speaks.
   // A project holds diagrams and markdown documents; exactly one is loaded at a
@@ -2750,22 +2864,29 @@ export default function App() {
                 aria-label="Project explorer"
                 style={{ flexBasis: explorerWidth }}
               >
-                <Explorer
-                  projects={projects}
-                  diagrams={diagrams}
-                  notes={notes}
-                  privateWorkContexts={server.privateWorkContexts}
-                  architecturalProposals={server.architecturalProposals}
+                   <Explorer
+                   projects={projects}
+                    diagrams={diagrams}
+                    notes={notes}
+                   sharedDiagrams={server.active?.contextId ? sharedDiagrams : diagrams}
+                   sharedNotes={server.active?.contextId ? sharedNotes : notes}
+                   privateWorkContexts={server.privateWorkContexts}
+                   architecturalProposals={server.architecturalProposals}
+                   selectedProposalId={architecturalProposalId}
+                   revisingProposalId={revisionProposalId}
                     onOpenArchitecturalProposal={openArchitecturalProposal}
-                    onSubmitArchitecturalProposal={(contextId) => {
-                      setArchitecturalProposalId(null);
-                      setArchitecturalProposalContextId(contextId);
-                    }}
+                     onSubmitArchitecturalProposal={(contextId) => {
+                       setArchitecturalProposalId(null);
+                       setArchitecturalProposalContextId(contextId);
+                       setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null });
+                     }}
                      onCreateMyWork={() => { void createServerKnowledge(); }}
-                    onOpenMyWork={(contextId) => {
-                      setArchitecturalProposalId(null);
-                      setArchitecturalProposalContextId(null);
-                      void server.openPrivateWork(contextId);
+                     onOpenMyWork={(contextId) => {
+                       setArchitecturalProposalId(null);
+                       setArchitecturalProposalContextId(null);
+                       setRevisionProposalId(null);
+                       setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: null, proposalId: null });
+                       void server.openPrivateWork(contextId);
                     }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
@@ -2789,11 +2910,13 @@ export default function App() {
                       serverProjectsLoading={server.projectsLoading}
                       serverProjectsError={server.projectsError}
                       activeServerProjectId={server.active?.project.id ?? null}
+                      activeServerProjectName={server.active?.project.name ?? null}
                       serverOpenError={server.openError}
                       onOpenLocal={openLocalWorkspace}
                       onOpenFolder={openFolder}
-                      onOpenServerProject={(project) => {
-                        void server.openProject(project);
+                       onOpenServerProject={(project) => {
+                         setBrowserLocation({ projectId: project.id, contextId: null, resourceId: null, proposalId: null });
+                         void server.openProject(project);
                       }}
                       onCreateServerProject={(name) => {
                         void server.createProject(name);
@@ -2802,7 +2925,10 @@ export default function App() {
                       onReloadServerProjects={() => {
                         void syncServerWorkspace();
                       }}
-                      onBackToProjects={server.close}
+                       onBackToProjects={() => {
+                         setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null });
+                         server.close();
+                       }}
                     />
                   }
                   onAddMenu={(project, position) =>
@@ -2872,10 +2998,10 @@ export default function App() {
                 editorWidth === null ? undefined : { flexBasis: editorWidth }
               }
             >
-              {architecturalProposalContextId && server.active ? (
-                <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} onCancel={() => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); }} onDone={(newProposalId) => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); void syncServerWorkspace(); }} />
+                {architecturalProposalContextId && server.active ? (
+                  <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} onCancel={() => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
               ) : architecturalProposalId && server.active ? (
-                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId) => { setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                 <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId, resourceId) => { setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId: priorProposalId }); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}

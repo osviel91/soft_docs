@@ -81,30 +81,56 @@ export function useServerWorkspaces(
   const [openError, setOpenError] = useState<string | null>(null);
   const [privateWorkContexts, setPrivateWorkContexts] = useState<ServerPrivateWorkContext[]>([]);
   const [architecturalProposals, setArchitecturalProposals] = useState<ServerArchitecturalProposal[]>([]);
-  // A repository is bound to a project *and* to the session that opened it; a
-  // second open must not be overwritten by the first one's slower answer.
-  const openTicket = useRef(0);
+  const activeRef = useRef<ActiveServerWorkspace | null>(null);
+  // Repository authority changes only when the project/session/workspace changes.
+  // Same-project navigation refreshes the read model without replacing it.
+  const repositoryGeneration = useRef(0);
+  const projectReadModelGeneration = useRef(0);
   const authenticated = auth.status === "authenticated";
+  activeRef.current = active;
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!authenticated || selectedWorkspaceId === null) {
+      projectReadModelGeneration.current += 1;
       setProjects([]);
       setProjectsError(null);
+      setPrivateWorkContexts([]);
+      setArchitecturalProposals([]);
       return;
     }
+    const generation = ++projectReadModelGeneration.current;
+    const workspaceId = selectedWorkspaceId;
     setProjectsLoading(true);
     setProjectsError(null);
     try {
-      setProjects(await client.listProjects(selectedWorkspaceId));
+      const nextProjects = await client.listProjects(selectedWorkspaceId);
+      if (generation !== projectReadModelGeneration.current || workspaceId !== selectedWorkspaceId) return;
+      setProjects(nextProjects);
+      const current = activeRef.current;
+      if (current) {
+        const [contexts, proposals] = await Promise.all([
+          client.listPrivateWorkContexts(current.project.id),
+          client.listArchitecturalProposals(current.project.id),
+        ]);
+        if (
+          generation !== projectReadModelGeneration.current ||
+          workspaceId !== selectedWorkspaceId ||
+          activeRef.current?.project.id !== current.project.id
+        ) return;
+        setPrivateWorkContexts(contexts);
+        setArchitecturalProposals(proposals);
+      }
     } catch (error) {
-      setProjects([]);
-      setProjectsError(
-        error instanceof Error
-          ? error.message
-          : "The projects could not be loaded.",
-      );
+      if (generation === projectReadModelGeneration.current) setProjects([]);
+      if (generation === projectReadModelGeneration.current) {
+        setProjectsError(
+          error instanceof Error
+            ? error.message
+            : "The projects could not be loaded.",
+        );
+      }
     } finally {
-      setProjectsLoading(false);
+      if (generation === projectReadModelGeneration.current) setProjectsLoading(false);
     }
   }, [client, authenticated, selectedWorkspaceId]);
 
@@ -116,55 +142,92 @@ export function useServerWorkspaces(
   // leave one person's project rendered for the next person at the browser.
   useEffect(() => {
     if (!authenticated) {
-      openTicket.current += 1;
+      repositoryGeneration.current += 1;
+      projectReadModelGeneration.current += 1;
       setActive(null);
       setOpenError(null);
       setOpening(false);
+      setPrivateWorkContexts([]);
+      setArchitecturalProposals([]);
     }
   }, [authenticated]);
 
   useEffect(() => {
     if (active !== null && active.project.workspaceId !== selectedWorkspaceId) {
-      openTicket.current += 1;
+      repositoryGeneration.current += 1;
+      projectReadModelGeneration.current += 1;
       setActive(null);
       setOpenError(null);
+      setPrivateWorkContexts([]);
+      setArchitecturalProposals([]);
     }
   }, [active?.project.workspaceId, selectedWorkspaceId]);
 
   const openProject = useCallback(
     async (project: ServerProject): Promise<void> => {
-      const ticket = (openTicket.current += 1);
+      const sameProject = activeRef.current?.project.id === project.id;
+      const changesRepository =
+        !sameProject || activeRef.current?.contextId !== null;
+      const repositoryGenerationAtStart = changesRepository
+        ? ++repositoryGeneration.current
+        : repositoryGeneration.current;
+      const readModelGeneration = ++projectReadModelGeneration.current;
       setOpening(true);
       setOpenError(null);
       try {
          await client.access(project.id);
-        if (openTicket.current !== ticket) return;
+        if (
+          repositoryGeneration.current !== repositoryGenerationAtStart ||
+          readModelGeneration !== projectReadModelGeneration.current
+        ) return;
         // One decision, used twice: the UI's read-only affordances and the
         // repository's own refusal must never disagree.
          // SHARED is authoritative and is read-only in the ordinary workspace.
          // Editing requires an explicit MY WORK context.
          const writable = false;
-        setActive({
-          project,
-          writable,
-          contextId: null,
-          repository: createServerWorkspaceRepository({
-            client,
-            projectId: project.id,
-            projectName: project.name,
-            writable,
-          }),
-        });
-        try {
-           setPrivateWorkContexts(await client.listPrivateWorkContexts(project.id));
-           setArchitecturalProposals(await client.listArchitecturalProposals(project.id));
-        } catch {
-          // Older API clients may not expose private work yet; opening SHARED must remain independent.
-          setPrivateWorkContexts([]);
-          setArchitecturalProposals([]);
-        }
+         try {
+           const [contexts, proposals] = await Promise.all([
+             client.listPrivateWorkContexts(project.id),
+             client.listArchitecturalProposals(project.id),
+           ]);
+           if (
+             repositoryGeneration.current !== repositoryGenerationAtStart ||
+             readModelGeneration !== projectReadModelGeneration.current
+           ) return;
+           setPrivateWorkContexts(contexts);
+           setArchitecturalProposals(proposals);
+         } catch {
+           // Older API clients may not expose private work yet; SHARED remains readable.
+           if (
+             repositoryGeneration.current === repositoryGenerationAtStart &&
+             readModelGeneration === projectReadModelGeneration.current
+           ) {
+             setPrivateWorkContexts([]);
+             setArchitecturalProposals([]);
+           }
+         }
+         if (
+           repositoryGeneration.current !== repositoryGenerationAtStart ||
+           readModelGeneration !== projectReadModelGeneration.current
+         ) return;
+         if (changesRepository) {
+           setActive({
+             project,
+             writable,
+             contextId: null,
+             repository: createServerWorkspaceRepository({
+               client,
+               projectId: project.id,
+               projectName: project.name,
+               writable,
+             }),
+           });
+         }
       } catch (error) {
-        if (openTicket.current !== ticket) return;
+        if (
+          repositoryGeneration.current !== repositoryGenerationAtStart ||
+          readModelGeneration !== projectReadModelGeneration.current
+        ) return;
         setActive(null);
         setOpenError(
           error instanceof Error
@@ -172,7 +235,10 @@ export function useServerWorkspaces(
             : "The project could not be opened.",
         );
       } finally {
-        if (openTicket.current === ticket) setOpening(false);
+        if (
+          repositoryGeneration.current === repositoryGenerationAtStart &&
+          readModelGeneration === projectReadModelGeneration.current
+        ) setOpening(false);
       }
     },
     [client],
@@ -221,7 +287,8 @@ export function useServerWorkspaces(
   );
 
   const close = useCallback((): void => {
-    openTicket.current += 1;
+    repositoryGeneration.current += 1;
+    projectReadModelGeneration.current += 1;
     setActive(null);
     setOpenError(null);
     setPrivateWorkContexts([]);

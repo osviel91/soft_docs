@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ServerApiClient, ServerResource } from "../../workspace/server/api-client";
 
-export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; onDone: (proposalId: string) => void; onCancel: () => void }) {
+export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; onDone: (proposalId: string) => void | Promise<void>; onCancel: () => void }) {
   const [resources, setResources] = useState<ServerResource[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [title, setTitle] = useState("");
@@ -17,7 +17,7 @@ export function ArchitecturalProposalSubmit({ client, projectId, contextId, revi
        const proposal = revisionProposalId
          ? await client.reviseArchitecturalProposal(projectId, revisionProposalId, input)
          : await client.submitArchitecturalProposal(projectId, input);
-       onDone(proposal.id);
+        await onDone(proposal.id);
      }
     catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be submitted."); }
     finally { setSubmitting(false); }

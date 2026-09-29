@@ -14,6 +14,7 @@ export interface WorkspaceSwitcherProps {
   serverProjectsLoading?: boolean;
   serverProjectsError?: string | null;
   activeServerProjectId?: string | null;
+  activeServerProjectName?: string | null;
   serverOpenError?: string | null;
   onOpenLocal: () => void;
   onOpenFolder: () => void;
@@ -34,6 +35,7 @@ export default function WorkspaceSwitcher({
   serverProjectsLoading = false,
   serverProjectsError = null,
   activeServerProjectId = null,
+  activeServerProjectName = null,
   serverOpenError = null,
   onOpenLocal,
   onOpenFolder,
@@ -61,7 +63,7 @@ export default function WorkspaceSwitcher({
           ‹ Projects
         </button>
         <div className="workspaces__active-project" data-testid="workspace-active-project">
-          <strong title={activeProject?.name}>{activeProject?.name ?? "Project"}</strong>
+          <strong title={activeServerProjectName ?? activeProject?.name}>{activeServerProjectName ?? activeProject?.name ?? "Project"}</strong>
           <span>{workspace?.name ?? "Workspace"}</span>
         </div>
         {onReloadServerProjects ? (

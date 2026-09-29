@@ -60,6 +60,29 @@ describe("governance UI intent", () => {
     expect(onDone).toHaveBeenCalledWith("p2");
   });
 
+  it("waits for the proposal read-model refresh before completing a revision", async () => {
+    const revise = vi.fn().mockResolvedValue({ id: "p2" });
+    let completeRefresh!: () => void;
+    const refresh = new Promise<void>((resolve) => {
+      completeRefresh = resolve;
+    });
+    const onDone = vi.fn(() => refresh);
+    const client = clientWith({
+      listResources: vi.fn().mockResolvedValue([{ id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 3 }]),
+      reviseArchitecturalProposal: revise,
+    });
+    render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" revisionProposalId="p1" onCancel={vi.fn()} onDone={onDone} />);
+    await screen.findByText("checkout.seq");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.change(screen.getByLabelText("Proposal title"), { target: { value: "Checkout v2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit revision" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm revision" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith("p2"));
+    expect(screen.getByRole("button", { name: "Submit revision" })).toBeDisabled();
+    completeRefresh();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Submit revision" })).not.toBeDisabled());
+  });
+
   it.each(["PROMOTED", "PROMOTING"] as const)("reconstructs %s from the detail read model after reload", async (state) => {
     const get = vi.fn().mockResolvedValue({ id: "p1", projectId: "p1", authorUserId: "u1", title: "Checkout", status: "open", lifecycle: { state }, baseSharedRevision: "r1", baseSharedResourceRevisions: {}, createdAt: "2026-01-01", submittedAt: "2026-01-01", resources: [], semanticMessages: [], relationships: [], capabilities: {} });
     const client = clientWith({ getArchitecturalProposal: get, getArchitecturalProposalReviews: vi.fn().mockResolvedValue({ status: "none", approvals: 0, changesRequested: 0, reviews: [] }) });

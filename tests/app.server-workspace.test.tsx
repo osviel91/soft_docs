@@ -17,6 +17,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
@@ -255,6 +256,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   state.signedIn = false;
   state.contextId = null;
   state.resources = new Map();
@@ -339,7 +341,7 @@ describe("App — authenticated browser", () => {
     // The explorer tree is the server project's, and the editor is the one
     // editor — not a server-specific pane. The row shows the diagram's title,
     // which the server resource's content supplies.
-    expect(screen.getByTestId("explorer-diagram")).toHaveTextContent(
+    expect(within(screen.getByTestId("explorer-shared-section")).getByTestId("explorer-diagram")).toHaveTextContent(
       "Checkout",
     );
     expect(screen.getByTestId("workspace-active-project")).toHaveTextContent(
@@ -395,10 +397,15 @@ describe("App — authenticated browser", () => {
   });
 
   it("renames a server resource through the move endpoint", async () => {
+    state.contextId = "work1";
     await openServerProject();
+    window.history.replaceState({}, "", "/?project=p1&context=work1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    const myWork = screen.getByTestId("explorer-my-work-section");
+    await waitFor(() => expect(within(myWork).getByTestId("explorer-diagram")).toBeInTheDocument());
 
     // Right-click the row, choose Rename, and confirm the new name.
-    fireEvent.contextMenu(screen.getByTestId("explorer-diagram"));
+    fireEvent.contextMenu(within(myWork).getByTestId("explorer-diagram"));
     await act(async () => {
       fireEvent.click(screen.getByTestId("context-menu-rename"));
     });

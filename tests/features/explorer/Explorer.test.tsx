@@ -136,8 +136,6 @@ describe("Explorer", () => {
         architecturalProposals={[{ id: "proposal-1", title: "Retry", authorUserId: "u1", status: "open", baseSharedRevision: "1", reviewStatus: "approved" }]}
       />,
     );
-    fireEvent.click(screen.getByTestId("explorer-my-work-toggle"));
-    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
     expect(screen.getByTestId("explorer-private-context")).toBeInTheDocument();
     expect(screen.getByTestId("explorer-proposal")).toHaveTextContent("APPROVED");
     fireEvent.click(screen.getByTestId("explorer-shared-toggle"));
@@ -170,7 +168,6 @@ describe("Explorer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "Open proposal Document governed publication model" }));
 
     expect(onOpenArchitecturalProposal).toHaveBeenCalledWith("proposal-42");

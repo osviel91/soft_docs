@@ -262,6 +262,7 @@ async function selectProject(
   setters: ProjectSetters,
   mergeDiagrams: (diagrams: DiagramFile[]) => void,
   mergeNotes: (notes: NoteFile[]) => void,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
   setters.setSelectedProjectId(projectId);
   setters.setSelectedDiagramId(null);
@@ -274,6 +275,7 @@ async function selectProject(
 
   const nextDiagrams = isOk(diagramsResult) ? diagramsResult.value : [];
   const nextNotes = isOk(notesResult) ? notesResult.value : [];
+  if (!isCurrent()) return;
   setters.setDiagrams(nextDiagrams);
   setters.setNotes(nextNotes);
   setters.markFilesLoaded(projectId);
@@ -357,6 +359,7 @@ export function useWorkspace(
   // so the lists refresh asynchronously and nothing reconciles identity against
   // a list that still belongs to the previous project.
   const filesProject = useRef<string | null>(null);
+  const repositoryGeneration = useRef(0);
 
   // A stable fallback store for callers that do not supply one. A ref keeps the
   // same instance across renders instead of creating a fresh store each time.
@@ -429,15 +432,26 @@ export function useWorkspace(
   // previous store's entries would let the explorer's search and a note's
   // `[[Diagram]]` links resolve to documents that are no longer reachable.
   useEffect(() => {
+    const generation = ++repositoryGeneration.current;
+    const isCurrent = () => generation === repositoryGeneration.current;
     let active = true;
     (async () => {
       setIsLoading(true);
       setError(null);
+      setProjects([]);
+      setDiagrams([]);
+      setNotes([]);
       setAllDiagrams([]);
       setAllNotes([]);
+      setSelectedProjectId(null);
+      setSelectedDiagramId(null);
+      setSelectedNoteId(null);
+      metadataProject.current = null;
+      filesProject.current = null;
+      setMetadata(null);
       const projectsResult: Result<Project[], Error> =
         await repo.listProjects();
-      if (!active) return;
+      if (!active || !isCurrent()) return;
       if (isOk(projectsResult)) {
         // Paths the user removed from the app are skipped here, so a hidden
         // project neither appears in the explorer nor gets auto-selected.
@@ -453,6 +467,7 @@ export function useWorkspace(
             repo.listDiagramFiles(project.id),
             repo.listNoteFiles(project.id),
           ]);
+          if (!active || !isCurrent()) return;
           if (isOk(files)) {
             allD.push(
               ...files.value.filter((file) => !isHidden(hiddenNow, file.id)),
@@ -466,6 +481,7 @@ export function useWorkspace(
             );
           }
         }
+        if (!active || !isCurrent()) return;
         mergeDiagrams(allD);
         mergeNotes(allN);
         if (visible.length > 0) {
@@ -475,6 +491,7 @@ export function useWorkspace(
             setters,
             mergeDiagrams,
             mergeNotes,
+            isCurrent,
           );
         } else {
           setters.setDiagrams([]);
@@ -483,7 +500,7 @@ export function useWorkspace(
       } else {
         setError(projectsResult.error);
       }
-      setIsLoading(false);
+      if (active && isCurrent()) setIsLoading(false);
     })();
     return () => {
       active = false;
@@ -794,6 +811,8 @@ export function useWorkspace(
    */
   const importProject = useCallback(
     async (imported: ImportedProject): Promise<Project | null> => {
+      // Do not let the initial repository hydration overwrite imported files.
+      repositoryGeneration.current += 1;
       const created: Result<Project, Error> = await repo.createProject(
         imported.name,
       );

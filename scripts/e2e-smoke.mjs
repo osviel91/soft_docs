@@ -529,9 +529,8 @@ async function openMyWorkContext(page, contextId) {
   if ((await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
   }
-  await page
-    .locator(`[data-testid="explorer-private-context-open-${contextId}"]`)
-    .click();
+  const contextButton = page.locator(`[data-testid="explorer-private-context-open-${contextId}"]`);
+  if (await contextButton.count() > 0 && await contextButton.isVisible()) await contextButton.click();
 }
 
 /** Seed authoritative SHARED content for a read-only consumer scenario. */
@@ -695,7 +694,15 @@ async function openServerCreation(page) {
 /** Open a server project from the switcher and wait for its explorer row. */
 async function openServerProject(page, name) {
   const back = page.locator('[data-testid="workspace-back-to-projects"]');
-  if (await back.count() > 0 && await back.isVisible()) await back.click();
+  const active = page.locator('[data-testid="workspace-active-project"]');
+  if (await active.count() > 0 && await active.isVisible()) {
+    if ((await active.textContent())?.includes(name) && await page.locator('.explorer__context-note').count() === 0) return;
+    await back.click();
+  }
+  await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({
+    state: "detached",
+    timeout: UI_TIMEOUT_MS,
+  });
   const entry = page
     .locator('[data-testid="workspace-server-project"]')
     .filter({ hasText: name });
@@ -2803,7 +2810,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         return response.json?.proposal;
       };
       const openProposalFromExplorer = async (state) => {
-        await page.locator('[data-testid="explorer-proposals-toggle"]').click();
+        const proposalsToggle = page.locator('[data-testid="explorer-proposals-toggle"]');
+        if ((await proposalsToggle.getAttribute("aria-expanded")) !== "true") await proposalsToggle.click();
         const row = page
           .locator('[data-testid="explorer-proposal"]')
           .filter({ hasText: proposalTitle })
@@ -2817,7 +2825,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
       };
       const submitFromMyWork = async (title, description, revision = false) => {
-        await page.locator('[data-testid="explorer-my-work-toggle"]').click();
+        const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
+        if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         const work = page.locator('[data-testid="explorer-private-context"]');
         await work.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await work.getByRole("button", { name: "Submit for review" }).click();
@@ -2881,7 +2890,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           state: "visible",
           timeout: UI_TIMEOUT_MS,
         });
-        await page.locator('[data-testid="explorer-diagram"]').first().click();
+         await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
         await showEditor(page);
         const editor = page.locator('[data-testid="dsl-textarea"]');
         await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2934,7 +2943,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           state: "visible",
           timeout: UI_TIMEOUT_MS,
         });
-        await page.locator('[data-testid="explorer-diagram"]').first().click();
+         await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
         await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         const afterRevise = await proposalById(project.id, v1.id);
         check("Revise opens MY WORK for editing", await editor.isVisible());
@@ -3029,7 +3038,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
 
         await page.reload({ waitUntil: "domcontentloaded" });
-        await openServerProject(page, projectName);
+        await page
+          .locator('[data-testid="workspace-active-project"]')
+          .filter({ hasText: projectName })
+          .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await openProposalFromExplorer("WITHDRAWN");
         const reloadedV2 = await proposalById(project.id, v2.id);
         check("reload preserves withdrawn v2 state", reloadedV2.lifecycle?.state === "WITHDRAWN");

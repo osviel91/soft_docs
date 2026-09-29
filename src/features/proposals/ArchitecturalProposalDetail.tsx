@@ -8,10 +8,10 @@ interface Props {
   projectId: string;
   proposalId: string;
   onBack: () => void;
-  onChanged?: () => void;
+  onChanged?: () => void | Promise<void>;
   onOpenShared?: () => void;
   onOpenProposal?: (proposalId: string) => void;
-  onRevise?: (contextId: string, proposalId: string) => void;
+  onRevise?: (contextId: string, proposalId: string, resourceId: string | null) => void;
 }
 
 export function ArchitecturalProposalDetail({ client, projectId, proposalId, onBack, onChanged, onOpenShared, onOpenProposal, onRevise }: Props) {
@@ -48,10 +48,10 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
   const previewCapability = proposal.capabilities?.["proposal.previewPromotion"];
   const promoteCapability = proposal.capabilities?.["proposal.promote"];
 
-  const submitReview = async () => { try { await client.reviewArchitecturalProposal(projectId, proposalId, { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) }); setSummary(""); await reload(); onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The review could not be submitted."); } };
+  const submitReview = async () => { try { await client.reviewArchitecturalProposal(projectId, proposalId, { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) }); setSummary(""); await reload(); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The review could not be submitted."); } };
   const previewPromotion = async () => { try { setPromotion(await client.previewArchitecturalProposalPromotion(projectId, proposalId)); } catch (reason) { setError(reason instanceof Error ? reason.message : "The promotion preview could not be loaded."); } };
-  const promote = async () => { try { await client.promoteArchitecturalProposal(projectId, proposalId); await reload(); setPromotion(await client.previewArchitecturalProposalPromotion(projectId, proposalId)); onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be promoted."); } };
-  const withdraw = async () => { try { await client.withdrawArchitecturalProposal(projectId, proposalId, withdrawReason.trim()); setWithdrawOpen(false); setWithdrawReason(""); await reload(); onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be withdrawn."); } };
+  const promote = async () => { try { await client.promoteArchitecturalProposal(projectId, proposalId); await reload(); setPromotion(await client.previewArchitecturalProposalPromotion(projectId, proposalId)); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be promoted."); } };
+  const withdraw = async () => { try { await client.withdrawArchitecturalProposal(projectId, proposalId, withdrawReason.trim()); setWithdrawOpen(false); setWithdrawReason(""); await reload(); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be withdrawn."); } };
 
   return <section className="proposal-detail" aria-label="Architectural Proposal">
     <button type="button" onClick={onBack}>Back to proposals</button>
@@ -65,7 +65,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
       {proposal.supersedes ? <><dt>Supersedes</dt><dd><button type="button" onClick={() => onOpenProposal?.(proposal.supersedes!.id)}>{proposal.supersedes.title}</button></dd></> : null}
       {proposal.supersededBy ? <><dt>Succeeded by</dt><dd><button type="button" onClick={() => onOpenProposal?.(proposal.supersededBy!.id)}>{proposal.supersededBy.title}</button></dd></> : null}
     </dl>
-    {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id)}>Revise proposal</button> : reviseCapability && !reviseCapability.allowed ? <p role="status">Revise unavailable: {capabilityMessage(reviseCapability.reason)}</p> : null}
+     {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id, proposal.resources[0]?.sourceResourceId ?? null)}>Revise proposal</button> : reviseCapability && !reviseCapability.allowed ? <p role="status">Revise unavailable: {capabilityMessage(reviseCapability.reason)}</p> : null}
     {withdrawCapability?.allowed ? <button type="button" onClick={() => setWithdrawOpen(true)}>Withdraw proposal</button> : withdrawCapability && !withdrawCapability.allowed && state === "OPEN" ? <p role="status">Withdraw unavailable: {capabilityMessage(withdrawCapability.reason)}</p> : null}
     {withdrawOpen ? <section role="dialog" aria-label="Withdraw proposal confirmation"><h3>Withdraw proposal?</h3><p>The proposal will remain in history, reviews will be preserved, SHARED will not change, and this proposal can no longer be reviewed or promoted.</p><label>Withdrawal reason <textarea value={withdrawReason} onChange={(event) => setWithdrawReason(event.target.value)} /></label><button type="button" onClick={() => setWithdrawOpen(false)}>Cancel</button><button type="button" onClick={() => void withdraw()}>Withdraw proposal</button></section> : null}
     <section className="proposal-detail__changes" aria-label="Changes"><h3>Changes</h3><h4>Resources</h4><ChangeList items={changes.resources} /><h4>Relationships</h4><ChangeList items={changes.relationships} /><h4>Semantic identities</h4><ChangeList items={changes.semantic} /></section>

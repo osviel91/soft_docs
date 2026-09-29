@@ -8,8 +8,12 @@
  * These are the properties asserted here.
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerApiClient } from "../../../src/workspace/server/api-client";
+import type {
+  ServerArchitecturalProposal,
+  ServerPrivateWorkContext,
+} from "../../../src/workspace/server/api-client";
 import { useAuth } from "../../../src/features/server/use-auth";
 import type { AuthState } from "../../../src/features/server/use-auth";
 import { useServerWorkspaces } from "../../../src/features/server/use-server-workspaces";
@@ -292,4 +296,127 @@ describe("useServerWorkspaces", () => {
     });
     expect(result.current.projects).toHaveLength(0);
   });
+
+  it.each(["newer-first", "older-first"] as const)(
+    "keeps one coherent project read model when overlapping loads resolve %s",
+    async (ordering) => {
+      const context: ServerPrivateWorkContext = {
+        id: "work-1",
+        projectId: "p1",
+        ownerUserId: "u1",
+        name: "Existing work",
+        lifecycle: "active",
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      };
+      const proposal = {
+        id: "proposal-1",
+        projectId: "p1",
+        authorUserId: "u1",
+        title: "Existing proposal",
+        status: "open" as const,
+        baseSharedRevision: "1",
+        baseSharedResourceRevisions: {},
+        createdAt: new Date(0).toISOString(),
+        submittedAt: new Date(0).toISOString(),
+        resources: [],
+        semanticMessages: [],
+        relationships: [],
+      } satisfies ServerArchitecturalProposal;
+      let resolveOldContext!: (value: ServerPrivateWorkContext[]) => void;
+      let resolveNewContext!: (value: ServerPrivateWorkContext[]) => void;
+      let resolveOldProposal!: (value: ServerArchitecturalProposal[]) => void;
+      let resolveNewProposal!: (value: ServerArchitecturalProposal[]) => void;
+      const oldContext = new Promise<ServerPrivateWorkContext[]>((resolve) => {
+        resolveOldContext = resolve;
+      });
+      const newContext = new Promise<ServerPrivateWorkContext[]>((resolve) => {
+        resolveNewContext = resolve;
+      });
+      const oldProposal = new Promise<ServerArchitecturalProposal[]>((resolve) => {
+        resolveOldProposal = resolve;
+      });
+      const newProposal = new Promise<ServerArchitecturalProposal[]>((resolve) => {
+        resolveNewProposal = resolve;
+      });
+      const privateWorkCall = vi
+        .fn<() => Promise<ServerPrivateWorkContext[]>>()
+        .mockResolvedValueOnce([context])
+        .mockImplementationOnce(() => oldContext)
+        .mockImplementationOnce(() => newContext);
+      const proposalCall = vi
+        .fn<() => Promise<ServerArchitecturalProposal[]>>()
+        .mockResolvedValueOnce([proposal])
+        .mockImplementationOnce(() => oldProposal)
+        .mockImplementationOnce(() => newProposal);
+      const client = new ServerApiClient();
+      vi.spyOn(client, "listProjects").mockImplementation(async () => {
+        return [PROJECT];
+      });
+      vi.spyOn(client, "access").mockResolvedValue({
+          projectId: "p1",
+          role: "OWNER",
+          permissions: ["resource:update"],
+        });
+      vi.spyOn(client, "listPrivateWorkContexts").mockImplementation(privateWorkCall);
+      vi.spyOn(client, "listArchitecturalProposals").mockImplementation(proposalCall);
+      const { result } = renderHook(() =>
+        useServerWorkspaces(client, signedIn, "w1"),
+      );
+
+      await waitFor(() => expect(result.current.projects).toHaveLength(1));
+      await act(async () => {
+        await result.current.openProject(PROJECT);
+      });
+      expect(result.current.privateWorkContexts).toEqual([context]);
+      expect(result.current.architecturalProposals).toEqual([proposal]);
+
+      // The refresh and same-project navigation overlap. The latter is a new
+      // read-model generation, not a new repository authority.
+      let older!: Promise<void>;
+      await act(async () => {
+        older = result.current.refresh();
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(privateWorkCall).toHaveBeenCalledTimes(2));
+      if (ordering === "newer-first") {
+        let newer!: Promise<void>;
+        await act(async () => {
+          newer = result.current.openProject(PROJECT);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(privateWorkCall).toHaveBeenCalledTimes(3));
+        await act(async () => {
+          resolveNewContext([context]);
+          resolveNewProposal([proposal]);
+          await newer;
+          resolveOldContext([]);
+          resolveOldProposal([]);
+          await older;
+        });
+      } else {
+        await act(async () => {
+          resolveOldContext([]);
+          resolveOldProposal([]);
+          await older;
+        });
+        let newer!: Promise<void>;
+        await act(async () => {
+          newer = result.current.openProject(PROJECT);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(privateWorkCall).toHaveBeenCalledTimes(3));
+        await act(async () => {
+          resolveNewContext([context]);
+          resolveNewProposal([proposal]);
+          await newer;
+        });
+      }
+
+      expect(result.current.active?.project.id).toBe("p1");
+      expect(result.current.active?.contextId).toBeNull();
+      expect(result.current.privateWorkContexts).toEqual([context]);
+      expect(result.current.architecturalProposals).toEqual([proposal]);
+    },
+  );
 });

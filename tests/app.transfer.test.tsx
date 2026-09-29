@@ -171,6 +171,9 @@ describe("App — project export and import", () => {
       expect(screen.getByTestId("project-name")).toHaveTextContent(
         "Remote Service",
       );
+      expect(screen.getByTestId("explorer-diagram")).toHaveTextContent(
+        "Request Flow",
+      );
     });
     // The imported project's files land in the explorer, and the first document
     // is loaded so the import is immediately visible.
@@ -220,6 +223,13 @@ describe("App — project export and import", () => {
     await chooseArchive(fixtureArchive());
     await waitFor(() => {
       expect(screen.getAllByTestId("explorer-project")).toHaveLength(2);
+      expect(
+        within(
+          screen
+            .getAllByTestId("explorer-project")
+            .find((element) => element.textContent?.includes("Remote Service"))!,
+        ).getByTestId("explorer-diagram"),
+      ).toHaveTextContent("Request Flow");
     });
 
     /** The `<li>` for a project, so its rows can be counted in isolation. */

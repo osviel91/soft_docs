@@ -38,10 +38,28 @@ describe("Explorer proposal indicators", () => {
       { id: "withdrawn", title: "Withdrawn", authorUserId: "u", status: "withdrawn", baseSharedRevision: "r", lifecycle: { state: "WITHDRAWN" } },
       { id: "superseded", title: "Superseded", authorUserId: "u", status: "superseded", baseSharedRevision: "r", lifecycle: { state: "SUPERSEDED" } },
     ]} />);
-    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
     expect(screen.getByText("OPEN")).toBeInTheDocument();
     expect(screen.getByText("PROMOTED")).toBeInTheDocument();
     expect(screen.getByText("WITHDRAWN")).toBeInTheDocument();
     expect(screen.getByText("SUPERSEDED")).toBeInTheDocument();
+  });
+
+  it("expands populated private work and keeps proposal selection across refreshes", () => {
+    const proposal = { id: "proposal-1", title: "Same title", authorUserId: "u", status: "open" as const, baseSharedRevision: "r", submittedAt: "2026-01-01T00:00:00Z" };
+    const view = render(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} architecturalProposals={[proposal]} selectedProposalId={proposal.id} />);
+    expect(screen.getByTestId("explorer-my-work-toggle")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("explorer-proposals-toggle")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("explorer-proposal")).toHaveClass("explorer__context-item--selected");
+    view.rerender(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} architecturalProposals={[{ ...proposal, status: "withdrawn" }]} selectedProposalId={proposal.id} />);
+    expect(screen.getByTestId("explorer-proposal")).toHaveClass("explorer__context-item--selected");
+  });
+
+  it("does not reopen a section after the user collapses it", () => {
+    const proposal = { id: "proposal-1", title: "Proposal", authorUserId: "u", status: "open" as const, baseSharedRevision: "r" };
+    const view = render(<Explorer {...props} serverMode architecturalProposals={[proposal]} />);
+    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
+    expect(screen.getByTestId("explorer-proposals-toggle")).toHaveAttribute("aria-expanded", "false");
+    view.rerender(<Explorer {...props} serverMode architecturalProposals={[{ ...proposal, title: "Updated" }]} />);
+    expect(screen.getByTestId("explorer-proposals-toggle")).toHaveAttribute("aria-expanded", "false");
   });
 });
