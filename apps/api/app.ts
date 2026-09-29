@@ -212,6 +212,7 @@ export async function createApp(
       audit: runtime.audit,
       reviews: runtime.proposalReviews,
       storage: runtime.storageFor,
+      promotions: runtime.promotions,
     }),
     promotion,
     capabilities,

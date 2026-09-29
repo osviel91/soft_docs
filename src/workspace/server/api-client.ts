@@ -155,6 +155,11 @@ export interface ServerArchitecturalProposal {
   semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
   relationships: ResourceRelationship[];
   capabilities?: Record<string, ServerCapabilityDecision>;
+  lifecycle?: { state: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED"; promotionStatus?: "COMMITTED_COMPLETION_PENDING" | "COMPLETED" };
+  promotion?: { id: string; status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED"; createdAt: string; completedAt?: string; resultingSharedRevision: string };
+  supersedes?: { id: string; title: string };
+  supersededBy?: { id: string; title: string };
+  revisionContextId?: string;
 }
 
 export interface ServerProposalReview {

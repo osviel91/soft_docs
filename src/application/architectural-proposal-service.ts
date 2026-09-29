@@ -15,6 +15,19 @@ import { analyzeResource } from "../domain/project/resource-analysis";
 import { buildProjectIndex, type ProjectDiagnostic, type ProjectIndex } from "../domain/project/project-index";
 import { validateProject } from "../domain/project/validate";
 import { traceArchitectureQuery, type ArchitectureTrace, type TraceDirection } from "../domain/project/architecture-trace";
+import type { Promotion } from "../domain/workspace/promotion";
+
+export type ProposalLifecycleState = "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
+
+function lifecycle(status: ArchitecturalProposal["status"], reviewStatus: ProposalReviewSummary["status"], promotion: Promotion | null): ProposalLifecycleState {
+  if (status === "withdrawn") return "WITHDRAWN";
+  if (status === "superseded") return "SUPERSEDED";
+  if (promotion?.status === "COMPLETED") return "PROMOTED";
+  if (promotion?.status === "COMMITTED_COMPLETION_PENDING") return "PROMOTING";
+  if (reviewStatus === "changes-requested") return "CHANGES_REQUESTED";
+  if (reviewStatus === "approved") return "APPROVED";
+  return "OPEN";
+}
 
 export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePrivateContextId" | "semanticMessages" | "relationships"> & {
   semanticMessages: Array<Omit<ProposalSemanticMessageSnapshot, "sourceContextId">>;
@@ -38,7 +51,7 @@ function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitectur
 
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
-  get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string }>;
+  get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string; lifecycle: { state: ProposalLifecycleState; promotionStatus?: Promotion["status"] }; promotion?: Pick<Promotion, "id" | "status" | "createdAt" | "completedAt" | "resultingSharedRevision">; supersedes?: { id: string; title: string }; supersededBy?: { id: string; title: string }; revisionContextId?: string }>;
   submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   withdraw(context: ApplicationContext, input: { projectId: string; proposalId: string; reason?: string }): Promise<PublicArchitecturalProposal>;
@@ -56,6 +69,7 @@ export function createArchitecturalProposalService(options: {
   reviews?: import("./ports/proposal-review-repository").ProposalReviewRepository;
   policy?: AuthorizationPolicy<ServerProject>;
   storage?: (projectId: string) => ProjectStorage;
+  promotions?: import("./ports/promotion-repository").PromotionRepository;
 }): ArchitecturalProposalService {
   const policy = options.policy ?? createAuthorizationPolicy<ServerProject>(options.projects);
   const requireRead = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "project:read");
@@ -136,15 +150,15 @@ export function createArchitecturalProposalService(options: {
       const proposals = await options.proposals.list(projectId);
       return Promise.all(proposals.map(async (proposal) => {
         const summary = publicSummary(proposal);
-        if (!options.reviews) return summary;
-        const entries = await options.reviews.list(proposal.id);
+        const entries = options.reviews ? await options.reviews.list(proposal.id) : [];
         const latest = new Map<string, ProposalReview>();
         for (const entry of entries) latest.set(entry.reviewerUserId, entry);
         const effective = [...latest.values()];
         const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
         const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
         const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
-        return { ...summary, reviewStatus, approvals, changesRequested };
+        const promotion = options.promotions ? await options.promotions.getForProposal(projectId, proposal.id) : null;
+        return { ...summary, reviewStatus, approvals, changesRequested, lifecycle: { state: lifecycle(proposal.status, reviewStatus, promotion), ...(promotion ? { promotionStatus: promotion.status } : {}) } };
       }));
     },
     async get(context, projectId, proposalId) {
@@ -152,7 +166,27 @@ export function createArchitecturalProposalService(options: {
       const proposal = await options.proposals.get(projectId, proposalId);
       if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
       const current = await options.proposals.currentSharedRevision(projectId);
-      return { ...publicProposal(proposal), staleBase: proposal.baseSharedRevision !== current.revision, currentSharedRevision: current.revision };
+      const reviews = options.reviews ? await options.reviews.list(proposalId) : [];
+      const latest = new Map<string, ProposalReview>();
+      for (const entry of reviews) latest.set(entry.reviewerUserId, entry);
+      const effective = [...latest.values()];
+      const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
+      const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
+      const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
+      const promotion = options.promotions ? await options.promotions.getForProposal(projectId, proposalId) : null;
+      const predecessor = proposal.supersedesProposalId ? await options.proposals.get(projectId, proposal.supersedesProposalId) : null;
+      const successor = options.proposals.findSuccessor ? await options.proposals.findSuccessor(projectId, proposalId) : null;
+      const result = publicProposal(proposal);
+      return {
+        ...result,
+        staleBase: proposal.baseSharedRevision !== current.revision,
+        currentSharedRevision: current.revision,
+        lifecycle: { state: lifecycle(proposal.status, reviewStatus, promotion), ...(promotion ? { promotionStatus: promotion.status } : {}) },
+        ...(promotion ? { promotion: { id: promotion.id, status: promotion.status, createdAt: promotion.createdAt, ...(promotion.completedAt ? { completedAt: promotion.completedAt } : {}), resultingSharedRevision: promotion.resultingSharedRevision } } : {}),
+        ...(predecessor ? { supersedes: { id: predecessor.id, title: predecessor.title } } : {}),
+        ...(successor ? { supersededBy: { id: successor.id, title: successor.title } } : {}),
+        ...(proposal.authorUserId === context.principal.subjectUserId ? { revisionContextId: proposal.sourcePrivateContextId } : {}),
+      };
     },
      async submit(context, input) {
       await requireSubmit(context, input.projectId);

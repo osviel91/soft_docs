@@ -284,6 +284,7 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState<ServerAdminUser[]>([]);
   const [architecturalProposalId, setArchitecturalProposalId] = useState<string | null>(null);
   const [architecturalProposalContextId, setArchitecturalProposalContextId] = useState<string | null>(null);
+  const [revisionProposalId, setRevisionProposalId] = useState<string | null>(null);
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspace[]>(
     [],
   );
@@ -470,6 +471,7 @@ export default function App() {
 
   const openArchitecturalProposal = useCallback((proposalId: string): void => {
     setArchitecturalProposalContextId(null);
+    setRevisionProposalId(null);
     setArchitecturalProposalId(proposalId);
   }, []);
 
@@ -2871,9 +2873,9 @@ export default function App() {
               }
             >
               {architecturalProposalContextId && server.active ? (
-                <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} onCancel={() => setArchitecturalProposalContextId(null)} onDone={() => setArchitecturalProposalContextId(null)} />
+                <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} onCancel={() => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); }} onDone={(newProposalId) => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); void syncServerWorkspace(); }} />
               ) : architecturalProposalId && server.active ? (
-                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} onChanged={() => { void syncServerWorkspace(); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => setArchitecturalProposalId(null)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId) => { setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}

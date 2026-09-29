@@ -226,6 +226,12 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
       const storedChildren = await children(client, proposalId);
       return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
     },
+    async findSuccessor(projectId, proposalId) {
+      const result = await client.query("SELECT * FROM architectural_proposals WHERE project_id = $1 AND supersedes_proposal_id = $2 ORDER BY submitted_at DESC, id DESC LIMIT 1", [projectId, proposalId]);
+      if (!result.rows[0]) return null;
+      const storedChildren = await children(client, String(result.rows[0].id));
+      return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+    },
     async hasForContext(projectId, contextId) {
       const result = await client.query("SELECT 1 FROM architectural_proposals WHERE project_id = $1 AND source_private_context_id = $2 LIMIT 1", [projectId, contextId]);
       return result.rows.length > 0;

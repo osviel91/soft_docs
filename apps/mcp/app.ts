@@ -120,6 +120,7 @@ export async function createMcpService(
     audit: runtime.audit,
     reviews: runtime.proposalReviews,
     storage: runtime.storageFor,
+    promotions: runtime.promotions,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
   const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy: createAuthorizationPolicy(runtime.projects) });

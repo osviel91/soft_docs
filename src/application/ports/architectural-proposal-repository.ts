@@ -53,6 +53,7 @@ export interface ArchitecturalProposalRepository {
   withdraw?(proposalId: string, authorUserId: string, reason?: string): Promise<ArchitecturalProposal>;
   list(projectId: string): Promise<ArchitecturalProposalSummary[]>;
   get(projectId: string, proposalId: string): Promise<ArchitecturalProposal | null>;
+  findSuccessor?(projectId: string, proposalId: string): Promise<ArchitecturalProposal | null>;
   hasForContext(projectId: string, contextId: string): Promise<boolean>;
   currentSharedRevision(projectId: string): Promise<{ revision: string; resources: Record<string, number> }>;
 }

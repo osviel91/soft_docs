@@ -30,6 +30,7 @@ import type {
 } from "../../domain/workspace/types";
 import { diagramDisplayName } from "../../language/diagram-title";
 import { noteDisplayName } from "../../language/markdown/note-title";
+import { proposalLifecycle } from "../proposals/proposal-lifecycle";
 
 /** Viewport coordinates for a context menu. */
 export interface MenuPosition {
@@ -111,7 +112,7 @@ export interface ExplorerProps {
   switcher?: ReactNode;
   /** Private server-side work contexts owned by the current user. */
   privateWorkContexts?: Array<{ id: string; name: string; lifecycle: "active" | "archived" }>;
-  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; approvals?: number; changesRequested?: number }>;
+  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; lifecycle?: { state: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED" }; approvals?: number; changesRequested?: number }>;
   onOpenArchitecturalProposal?: (proposalId: string) => void;
   onSubmitArchitecturalProposal?: (contextId: string) => void;
   /** Create a resource in a private MY WORK context. */
@@ -247,7 +248,7 @@ function ServerWorkspaceExplorer({
         </section>
         <section className="explorer__provenance-section">
            <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => setProposalsExpanded((expanded) => !expanded)}>PROPOSALS <span className="explorer__section-meta">team review · non-authoritative</span><span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button></h2>
-            {proposalsExpanded ? <ul className="explorer__context-list">{architecturalProposals.length > 0 ? architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{proposal.reviewStatus === "approved" ? "APPROVED" : proposal.reviewStatus === "changes-requested" ? "CHANGES REQUESTED" : proposal.reviewStatus === "mixed" ? "MIXED" : "OPEN"}</span></li>) : <li className="explorer__diagram-empty">No proposals yet. Submit work from MY WORK for review.</li>}</ul> : null}
+             {proposalsExpanded ? <ul className="explorer__context-list">{architecturalProposals.length > 0 ? architecturalProposals.map((proposal) => <li key={proposal.id} data-testid="explorer-proposal"><button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{proposalLifecycle(proposal, proposal.reviewStatus ? { status: proposal.reviewStatus } : null)}</span></li>) : <li className="explorer__diagram-empty">No proposals yet. Submit work from MY WORK for review.</li>}</ul> : null}
         </section>
         {folderName ? <section className="explorer__provenance-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-local-toggle" aria-expanded={localExpanded} onClick={() => setLocalExpanded((expanded) => !expanded)}>LOCAL <span aria-hidden="true">{localExpanded ? "▾" : "▸"}</span></button></h2>
