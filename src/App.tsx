@@ -2408,6 +2408,8 @@ export default function App() {
 
   const menuItems = useMemo<ContextMenuItem[]>(() => {
     if (!menu) return [];
+    const activeWork = server.active?.contextId ? server.privateWorkContexts.find((work) => work.id === server.active?.contextId) : undefined;
+    const canSubmit = activeWork?.capabilities?.["proposal.submit"];
     if (menu.kind === "project") {
       const { project } = menu;
       return [
@@ -2479,7 +2481,15 @@ export default function App() {
     }
     if (menu.kind === "diagram") {
       const { diagram } = menu;
+      const governance = workspaceMode === "server" && server.active?.contextId && canSubmit?.allowed !== false ? [
+        { id: "submit-governance", label: revisionProposalId ? "Submit proposal revision…" : "Submit for review…", onSelect: () => { setArchitecturalProposalId(null); setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: diagram.id, proposalId: revisionProposalId }); } },
+        ...(revisionProposalId ? [
+          { id: "back-revision-proposal", label: "Back to original proposal", onSelect: () => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(revisionProposalId); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: revisionProposalId }); } },
+          { id: "cancel-revision", label: "Cancel proposal revision", onSelect: () => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: diagram.id, proposalId: null }); } },
+        ] : []),
+      ] : [];
       return [
+        ...governance,
         {
           id: "rename",
           label: "Rename…",
@@ -2506,7 +2516,15 @@ export default function App() {
       ];
     }
     const { note } = menu;
+    const governance = workspaceMode === "server" && server.active?.contextId && canSubmit?.allowed !== false ? [
+      { id: "submit-governance", label: revisionProposalId ? "Submit proposal revision…" : "Submit for review…", onSelect: () => { setArchitecturalProposalId(null); setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: note.id, proposalId: revisionProposalId }); } },
+      ...(revisionProposalId ? [
+        { id: "back-revision-proposal", label: "Back to original proposal", onSelect: () => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(revisionProposalId); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: revisionProposalId }); } },
+        { id: "cancel-revision", label: "Cancel proposal revision", onSelect: () => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: note.id, proposalId: null }); } },
+      ] : []),
+    ] : [];
     return [
+      ...governance,
       {
         id: "rename",
         label: "Rename…",
@@ -2542,9 +2560,14 @@ export default function App() {
     createNote,
     createEventFlow,
     duplicateDiagram,
-    duplicateNote,
-    requestDeleteProject,
-  ]);
+     duplicateNote,
+     requestDeleteProject,
+     revisionProposalId,
+     server.active?.contextId,
+     server.active?.project.id,
+     server.privateWorkContexts,
+     setBrowserLocation,
+   ]);
 
   /**
    * Load a version back into the editor and record the restore itself.
@@ -2998,6 +3021,7 @@ export default function App() {
                 editorWidth === null ? undefined : { flexBasis: editorWidth }
               }
             >
+                {revisionProposalId && server.active && !architecturalProposalContextId ? <RevisionSessionBanner title={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title ?? revisionProposalId} onBack={() => { const sourceId = revisionProposalId; setRevisionProposalId(null); setArchitecturalProposalId(sourceId); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
                 {architecturalProposalContextId && server.active ? (
                    <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} revisionProposalTitle={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title} onCancel={() => { if (revisionProposalId) { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(revisionProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: revisionProposalId }); } else { setArchitecturalProposalContextId(null); setRevisionProposalId(null); } }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
               ) : architecturalProposalId && server.active ? (
@@ -3662,4 +3686,8 @@ function deleteMessage(
     return `Remove the ${thing} from the app but keep the file on disk, or delete it from disk for good. Deleting from disk cannot be undone.`;
   }
   return `This deletes the ${thing} from this browser. This cannot be undone.`;
+}
+
+function RevisionSessionBanner({ title, onBack, onCancel, onSubmit }: { title: string; onBack: () => void; onCancel: () => void; onSubmit: () => void }) {
+  return <section className="governance-card revision-session" aria-label="Proposal revision session"><p className="governance-eyebrow">REVISING PROPOSAL</p><strong>{title}</strong><div><button type="button" onClick={onBack}>Back to proposal</button><button type="button" onClick={onCancel}>Cancel revision</button><button type="button" onClick={onSubmit}>Submit revision</button></div></section>;
 }

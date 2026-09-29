@@ -2931,10 +2931,18 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "v1 opens from PROPOSALS as OPEN",
           (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("OPEN"),
         );
-        check(
-          "v1 has no reviews",
-          (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("none · 0 approvals"),
-        );
+         check(
+           "v1 has no reviews",
+           (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("none · 0 approvals"),
+         );
+         check(
+           "proposal detail exposes its first canonical change",
+           /(?:ADDED|MODIFIED|DELETED)/.test(await page.locator('section[aria-label="Architectural Proposal"]').textContent() ?? ""),
+         );
+         check(
+           "proposal detail keeps author review unavailable",
+           (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("cannot approve your own proposal"),
+         );
 
         await page.getByRole("button", { name: "Revise proposal" }).click();
         const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
@@ -2944,9 +2952,15 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           timeout: UI_TIMEOUT_MS,
         });
          await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
-        await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        const afterRevise = await proposalById(project.id, v1.id);
-        check("Revise opens MY WORK for editing", await editor.isVisible());
+         await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         const afterRevise = await proposalById(project.id, v1.id);
+         check("Revise opens MY WORK for editing", await editor.isVisible());
+         check("revision context remains visible after resource selection", await page.getByRole("button", { name: "Back to proposal" }).isVisible());
+         await page.getByRole("button", { name: "Back to proposal" }).click();
+         check("back to proposal does not submit revision", (await proposalById(project.id, v1.id)).lifecycle?.state === "OPEN");
+         await page.getByRole("button", { name: "Revise proposal" }).click();
+         await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
+         await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         check("Revise alone leaves v1 OPEN", afterRevise.lifecycle?.state === "OPEN");
         check(
           "Revise alone leaves SHARED unchanged",
