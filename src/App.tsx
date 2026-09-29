@@ -46,6 +46,7 @@ import type {
   ServerAdminUser,
   ServerWorkspace,
   ServerWorkspaceMember,
+  ServerArchitecturalProposalDiff,
 } from "./workspace/server/api-client";
 import TabBar from "./features/tabs/TabBar";
 import DocsPage from "./features/docs/DocsPage";
@@ -192,7 +193,7 @@ import { supportsForcedWrite } from "./workspace/server/server-workspace-reposit
 import ResourceMetadataEditor from "./features/resource/ResourceMetadataEditor";
 import ComplementaryViews from "./features/resource/ComplementaryViews";
 import { ProposalReviewPanel } from "./features/proposals/ProposalReview";
-import { ArchitecturalProposalDetail } from "./features/proposals/ArchitecturalProposalDetail";
+import { ArchitecturalProposalDetail, ProposalResourceComparison, type ComparisonMode } from "./features/proposals/ArchitecturalProposalDetail";
 import { ArchitecturalProposalSubmit } from "./features/proposals/ArchitecturalProposalSubmit";
 import ChangesInbox from "./features/proposals/ChangesInbox";
 import {
@@ -303,6 +304,17 @@ export default function App() {
   const [architecturalProposalId, setArchitecturalProposalId] = useState<string | null>(null);
   const [architecturalProposalContextId, setArchitecturalProposalContextId] = useState<string | null>(null);
   const [revisionProposalId, setRevisionProposalId] = useState<string | null>(null);
+  const [proposalInspector, setProposalInspector] = useState<{
+    proposalId: string | null;
+    diff: ServerArchitecturalProposalDiff | null;
+    selectedPath: string | null;
+    mode: ComparisonMode;
+  }>({ proposalId: null, diff: null, selectedPath: null, mode: "unified" });
+  const [revisionReturnContext, setRevisionReturnContext] = useState<{
+    proposalId: string;
+    selectedPath: string | null;
+    mode: ComparisonMode;
+  } | null>(null);
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspace[]>(
     [],
   );
@@ -508,6 +520,7 @@ export default function App() {
   const openArchitecturalProposal = useCallback((proposalId: string): void => {
     setArchitecturalProposalContextId(null);
     setRevisionProposalId(null);
+    setProposalInspector((current) => current.proposalId === proposalId ? current : { proposalId, diff: null, selectedPath: null, mode: "unified" });
     setArchitecturalProposalId(proposalId);
     setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
   }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
@@ -2639,6 +2652,32 @@ export default function App() {
       auth.user?.accountStatus === undefined ||
       auth.user?.accountStatus === "ACTIVE");
 
+  const proposalAuthorDisplayName = useMemo(() => {
+    if (!architecturalProposalId || !server.active) return undefined;
+    return workspaceMembersByWorkspaceId[server.active.project.workspaceId]?.find(
+      (member) => member.userId === server.architecturalProposals.find((proposal) => proposal.id === architecturalProposalId)?.authorUserId,
+    )?.displayName;
+  }, [architecturalProposalId, server.active, server.architecturalProposals, workspaceMembersByWorkspaceId]);
+
+  const handleProposalDiffLoaded = useCallback((diff: ServerArchitecturalProposalDiff): void => {
+    setProposalInspector((current) => ({
+      ...current,
+      proposalId: diff.proposalId,
+      diff,
+      selectedPath: current.proposalId === diff.proposalId && current.selectedPath
+        ? current.selectedPath
+        : diff.resources[0]?.path ?? null,
+    }));
+  }, []);
+
+  const handleProposalDiffSelect = useCallback((path: string): void => {
+    setProposalInspector((current) => ({ ...current, selectedPath: path, mode: "unified" }));
+  }, []);
+
+  const handleProposalModeChange = useCallback((mode: ComparisonMode): void => {
+    setProposalInspector((current) => ({ ...current, mode }));
+  }, []);
+
   if (!hasAppAccess) return <LoginScreen auth={auth} />;
 
   return (
@@ -3021,11 +3060,11 @@ export default function App() {
                 editorWidth === null ? undefined : { flexBasis: editorWidth }
               }
             >
-                {revisionProposalId && server.active && !architecturalProposalContextId ? <RevisionSessionBanner title={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title ?? revisionProposalId} onBack={() => { const sourceId = revisionProposalId; setRevisionProposalId(null); setArchitecturalProposalId(sourceId); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
+                {revisionProposalId && server.active && !architecturalProposalContextId ? <RevisionSessionBanner title={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title ?? revisionProposalId} proposalId={revisionProposalId} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionReturnContext(null); setArchitecturalProposalId(sourceId); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionReturnContext(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
                 {architecturalProposalContextId && server.active ? (
-                   <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} revisionProposalTitle={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title} onCancel={() => { if (revisionProposalId) { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(revisionProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: revisionProposalId }); } else { setArchitecturalProposalContextId(null); setRevisionProposalId(null); } }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
+                    <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} revisionProposalTitle={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title} onCancel={() => { if (revisionProposalId) { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setRevisionReturnContext(null); const sourceId = revisionReturnContext?.proposalId ?? revisionProposalId; setArchitecturalProposalId(sourceId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: sourceId }); } else { setArchitecturalProposalContextId(null); setRevisionProposalId(null); } }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setRevisionReturnContext(null); setArchitecturalProposalId(newProposalId); setProposalInspector({ proposalId: newProposalId, diff: null, selectedPath: null, mode: "unified" }); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
               ) : architecturalProposalId && server.active ? (
-                 <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId, resourceId) => { setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId: priorProposalId }); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                  <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId, resourceId) => { setRevisionReturnContext({ proposalId: priorProposalId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode }); setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId: priorProposalId }); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}
@@ -3300,7 +3339,13 @@ export default function App() {
                   }
                 >
                   {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label="Show editor" title="Show editor">›</button> : null}
-                  {comparisonOpen && selectedDiagram ? (
+                  {architecturalProposalId && proposalInspector.proposalId === architecturalProposalId ? (
+                    proposalInspector.diff?.resources.find((entry) => entry.path === proposalInspector.selectedPath) ? <ProposalResourceComparison
+                      resource={proposalInspector.diff.resources.find((entry) => entry.path === proposalInspector.selectedPath) ?? null}
+                      mode={proposalInspector.mode}
+                      onModeChange={handleProposalModeChange}
+                    /> : <section className="proposal-inspector" aria-label="Change Inspector"><p className="governance-eyebrow">CHANGE INSPECTOR</p><p>Select a proposal change to inspect its canonical comparison.</p></section>
+                  ) : comparisonOpen && selectedDiagram ? (
                     <ComparisonView
                       primary={selectedDiagram}
                       primarySource={source}
@@ -3688,6 +3733,6 @@ function deleteMessage(
   return `This deletes the ${thing} from this browser. This cannot be undone.`;
 }
 
-function RevisionSessionBanner({ title, onBack, onCancel, onSubmit }: { title: string; onBack: () => void; onCancel: () => void; onSubmit: () => void }) {
-  return <section className="governance-card revision-session" aria-label="Proposal revision session"><p className="governance-eyebrow">REVISING PROPOSAL</p><strong>{title}</strong><div><button type="button" onClick={onBack}>Back to proposal</button><button type="button" onClick={onCancel}>Cancel revision</button><button type="button" onClick={onSubmit}>Submit revision</button></div></section>;
+function RevisionSessionBanner({ title, proposalId, onBack, onCancel, onSubmit }: { title: string; proposalId: string; onBack: () => void; onCancel: () => void; onSubmit: () => void }) {
+  return <section className="governance-card revision-session" aria-label="Proposal revision session"><p className="governance-eyebrow">REVISING PROPOSAL</p><strong>{title}</strong><span>Editing MY WORK in the context of proposal <code>{proposalId}</code>.</span><div><button type="button" onClick={onBack}>Back to proposal</button><button type="button" onClick={onCancel}>Cancel revision</button><button type="button" onClick={onSubmit}>Submit revision</button></div></section>;
 }

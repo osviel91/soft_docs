@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ArchitecturalProposalSubmit } from "../../../src/features/proposals/ArchitecturalProposalSubmit";
-import { ArchitecturalProposalDetail } from "../../../src/features/proposals/ArchitecturalProposalDetail";
+import { ArchitecturalProposalDetail, ProposalResourceComparison } from "../../../src/features/proposals/ArchitecturalProposalDetail";
 import type { ServerApiClient } from "../../../src/workspace/server/api-client";
 import { diffResources } from "../../../src/domain/diff/resource-diff";
 
@@ -13,18 +13,18 @@ describe("governance UI intent", () => {
   it("opens the first canonical proposal change and offers text comparison modes", async () => {
     const base = "# Base\n\nold";
     const proposed = "# Base\n\nnew";
+    const canonicalResource = { ...diffResources({ content: base, type: "markdown-document" }, { content: proposed, type: "markdown-document" }), path: "overview.md", type: "markdown-document" as const, operation: "MODIFIED" as const, baseRevision: 1, baseContent: base, proposedContent: proposed };
     const client = clientWith({
       getArchitecturalProposal: vi.fn().mockResolvedValue({ id: "p1", projectId: "p1", authorUserId: "u1", title: "Docs", status: "open", baseSharedRevision: "base", baseSharedResourceRevisions: { r1: 1 }, createdAt: "2026-01-01", submittedAt: "2026-01-01", resources: [{ sourceResourceId: "r1", path: "overview.md", type: "markdown-document", sourceRevision: 2, content: proposed, operation: "UPDATE" }], semanticMessages: [], relationships: [], capabilities: { "proposal.review": { capability: "proposal.review", allowed: true } } }),
       getArchitecturalProposalReviews: vi.fn().mockResolvedValue({ status: "none", approvals: 0, changesRequested: 0, reviews: [] }),
-      getArchitecturalProposalDiff: vi.fn().mockResolvedValue({ proposalId: "p1", baseSharedRevision: "base", currentSharedRevision: "base", staleBase: false, resources: [{ ...diffResources({ content: base, type: "markdown-document" }, { content: proposed, type: "markdown-document" }), path: "overview.md", type: "markdown-document", operation: "MODIFIED", baseRevision: 1, baseContent: base, proposedContent: proposed }], relationships: [], semanticIdentities: [], impact: { resourcesAdded: 0, resourcesModified: 1, resourcesDeleted: 0, relationshipsChanged: 0, semanticIdentitiesChanged: 0 } }),
-    });
-    render(<ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} />);
-    expect(await screen.findByRole("heading", { name: "MODIFIED overview.md" })).toBeInTheDocument();
-    expect(screen.getAllByText("- old").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "Side-by-side" }));
-    expect(screen.getByText("BASE")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Rendered" }));
-    expect(screen.getByText("new")).toBeInTheDocument();
+       getArchitecturalProposalDiff: vi.fn().mockResolvedValue({ proposalId: "p1", baseSharedRevision: "base", currentSharedRevision: "base", staleBase: false, resources: [canonicalResource], relationships: [], semanticIdentities: [], impact: { resourcesAdded: 0, resourcesModified: 1, resourcesDeleted: 0, relationshipsChanged: 0, semanticIdentitiesChanged: 0 } }),
+     });
+     render(<><ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} /><ProposalResourceComparison resource={canonicalResource} mode="unified" onModeChange={vi.fn()} /></>);
+     expect(await screen.findByText("MODIFIED overview.md")).toBeInTheDocument();
+     expect(within(screen.getByLabelText("Architectural Proposal")).queryByLabelText("Comparison for overview.md")).not.toBeInTheDocument();
+     expect(screen.getAllByText("- old").length).toBeGreaterThan(0);
+     expect(screen.getByRole("button", { name: "Side-by-side" })).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: "Rendered" })).toBeInTheDocument();
   });
 
   it("confirms a non-authoritative submission without a SHARED write", async () => {
@@ -55,9 +55,8 @@ describe("governance UI intent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview promotion" }));
     expect(await screen.findByText(/CREATE/)).toBeInTheDocument();
     expect(screen.getByText(/Resource changed in SHARED/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Approve"));
-    fireEvent.change(screen.getByPlaceholderText("Review summary (recommended)"), { target: { value: "Looks good" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record approval" }));
+    fireEvent.change(screen.getByPlaceholderText("Add a review summary (optional)"), { target: { value: "Looks good" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve proposal" }));
     await waitFor(() => expect(review).toHaveBeenCalledWith("p1", "p1", { decision: "APPROVE", summary: "Looks good" }));
   });
 

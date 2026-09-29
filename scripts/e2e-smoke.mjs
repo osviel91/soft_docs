@@ -2929,24 +2929,38 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await openServerProject(page, projectName);
         await openProposalFromExplorer("OPEN");
-        check(
-          "v1 opens from PROPOSALS as OPEN",
-          (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("OPEN"),
-        );
+          check(
+            "v1 opens from PROPOSALS as OPEN",
+            (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("OPEN"),
+          );
+          check(
+            "proposal decision workspace shows the human-readable author",
+            (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes(owner.name),
+          );
+          check(
+            "proposal decision workspace shows intent and impact",
+            (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("Initial governed snapshot") &&
+              (await page.locator('[data-testid="proposal-impact"]').count()) === 1,
+          );
          check(
            "v1 has no reviews",
            (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("none · 0 approvals"),
          );
          check(
-           "proposal detail exposes its first canonical change",
+           "proposal decision workspace exposes its first canonical change",
            /(?:ADDED|MODIFIED|DELETED)/.test(await page.locator('section[aria-label="Architectural Proposal"]').textContent() ?? ""),
          );
          check(
-           "proposal detail keeps author review unavailable",
+           "proposal decision workspace keeps author review unavailable",
            (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("cannot approve your own proposal"),
          );
+         const v1Change = page.locator('section[aria-label="Changes"] button').first();
+         await v1Change.click();
+         const v1Inspector = page.locator('section[aria-label^="Comparison for "]');
+         await v1Inspector.getByRole("button", { name: "Compare", exact: true }).click();
+         check("selecting a change leaves the proposal selected", await page.locator('[data-testid="explorer-proposal-open"][aria-current="true"]').count() === 1);
 
-        await page.getByRole("button", { name: "Revise proposal" }).click();
+         await page.getByRole("button", { name: "Revise proposal" }).click();
         const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         await page.locator('.explorer__context-note').waitFor({
@@ -2955,11 +2969,15 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         });
          await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
          await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-         const afterRevise = await proposalById(project.id, v1.id);
-         check("Revise opens MY WORK for editing", await editor.isVisible());
-         check("revision context remains visible after resource selection", await page.getByRole("button", { name: "Back to proposal" }).isVisible());
-         await page.getByRole("button", { name: "Back to proposal" }).click();
-         check("back to proposal does not submit revision", (await proposalById(project.id, v1.id)).lifecycle?.state === "OPEN");
+          const afterRevise = await proposalById(project.id, v1.id);
+          check("Revise opens MY WORK for editing", await editor.isVisible());
+          check("revision context remains visible after resource selection", await page.getByRole("button", { name: "Back to proposal" }).isVisible());
+          await page.getByRole("button", { name: "Back to proposal" }).click();
+          const restoredChange = page.locator('section[aria-label="Changes"] button').first();
+          const restoredInspector = page.locator('section[aria-label^="Comparison for "]');
+          check("back restores the selected change", await restoredChange.getAttribute("aria-pressed") === "true");
+          check("back restores the inspector mode", await restoredInspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
+          check("back to proposal does not submit revision", (await proposalById(project.id, v1.id)).lifecycle?.state === "OPEN");
          await page.getByRole("button", { name: "Revise proposal" }).click();
          await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
          await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -3031,18 +3049,22 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
            "v2 open detail",
          );
         const v2AuthorDetail = page.locator('section[aria-label="Architectural Proposal"]');
-        check(
-          "author cannot approve v2",
-          (await v2AuthorDetail.getByRole("button", { name: "Record approval" }).count()) === 0,
+         check(
+           "author cannot approve v2",
+           (await v2AuthorDetail.getByRole("button", { name: "Approve proposal" }).count()) === 0,
         );
         check(
           "v2 communicates independent review is required",
           (await page.locator('section[aria-label="Proposal review"]').textContent() ?? "").includes("cannot approve your own proposal"),
         );
         check(
-          "v2 exposes its canonical diff to the author",
-          await page.locator('[aria-label^="Comparison for "]').count() > 0,
-        );
+           "v2 exposes its canonical diff in the right-hand inspector",
+           await page.locator('section[aria-label^="Comparison for "]').count() > 0 &&
+             await page.locator('.proposal-detail__comparison').count() === 0,
+         );
+         const inspector = page.locator('section[aria-label^="Comparison for "]');
+         await inspector.getByRole("button", { name: "Compare", exact: true }).click();
+         check("diagram inspector switches comparison mode", await inspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
         await page.getByRole("button", { name: "Preview promotion" }).click();
         await waitForText(
           page.locator('section[aria-label="Proposal promotion"]'),
@@ -3104,7 +3126,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         const reviewerDetail = reviewerPage.locator('section[aria-label="Architectural Proposal"]');
         await waitForText(
           reviewerPage.locator('section[aria-label="Proposal review"]'),
-          (text) => text.includes("Review evidence"),
+          (text) => text.includes("Review state"),
           "Reviewer B proposal review hydration",
         );
         await reviewerPage.locator('[aria-label^="Comparison for "]').waitFor({
@@ -3113,11 +3135,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         });
         check(
           "Reviewer B opens exactly v2",
-          (await reviewerDetail.textContent() ?? "").includes("GOVERNEDV2"),
+          (await reviewerDetail.locator("h2").textContent() ?? "") === proposalTitle &&
+            (await reviewerPage.locator('section[aria-label^="Comparison for "]').textContent() ?? "").includes("GOVERNEDV2"),
         );
         check(
-          "Reviewer B sees the canonical proposal diff",
-          await reviewerPage.locator('[aria-label^="Comparison for "]').count() > 0,
+           "Reviewer B sees the canonical proposal diff in the inspector",
+           await reviewerPage.locator('section[aria-label^="Comparison for "]').count() > 0 &&
+             await reviewerPage.locator('.proposal-detail__comparison').count() === 0,
         );
         const reviewerProposal = await apiRequest(
           reviewerPage,
@@ -3130,30 +3154,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await waitForText(
           reviewerPage.locator('section[aria-label="Proposal review"]'),
-          (text) => text.includes("Record approval") || text.includes("Record change request") || text.includes("Review unavailable"),
+          (text) => text.includes("Approve proposal") || text.includes("Request changes") || text.includes("Review unavailable"),
           "Reviewer B review action hydration",
         );
-        await reviewerPage.getByLabel("Approve", { exact: true }).evaluate((input) => {
-          input.click();
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-        });
-        await waitForText(
-          reviewerPage.locator('section[aria-label="Proposal review"]'),
-          (text) => text.includes("Record approval"),
-          "Reviewer B approval decision selection",
-        );
         const reviewButtonTexts = await reviewerPage.locator('section[aria-label="Proposal review"] button').allTextContents();
-        check("Reviewer B can approve v2", reviewButtonTexts.includes("Record approval"), JSON.stringify(reviewButtonTexts));
+        check("Reviewer B can approve v2", reviewButtonTexts.includes("Approve proposal"), JSON.stringify(reviewButtonTexts));
         await reviewerDetail.locator("textarea").fill("Independent review approved.", { force: true });
-        await waitForText(
-          reviewerPage.locator('section[aria-label="Proposal review"]'),
-          (text) => text.includes("Record approval"),
-          "Reviewer B approval form after summary",
-        );
-        await reviewerPage
-          .locator('section[aria-label="Proposal review"] button')
-          .filter({ hasText: "Record approval" })
-          .evaluate((button) => button.click());
+        await reviewerPage.locator('section[aria-label="Proposal review"] button').filter({ hasText: "Approve proposal" }).evaluate((button) => button.click());
         await waitForText(
           reviewerPage.locator('section[aria-label="Proposal review"]'),
           (text) => text.includes("1 approvals"),

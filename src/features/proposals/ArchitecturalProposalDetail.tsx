@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ServerApiClient, ServerArchitecturalProposal, ServerProposalReviewSummary, ServerPromotionPreview } from "../../workspace/server/api-client";
 import { operationSymbol, proposalChangeSummary } from "./proposal-change-summary";
 import { lifecycleReason, proposalLifecycle, type ProposalLifecycleState } from "./proposal-lifecycle";
@@ -17,20 +17,27 @@ interface Props {
   onOpenShared?: () => void;
   onOpenProposal?: (proposalId: string) => void;
   onRevise?: (contextId: string, proposalId: string, resourceId: string | null) => void;
+  authorDisplayName?: string;
+  selectedDiffPath?: string | null;
+  onSelectDiff?: (path: string) => void;
+  onDiffLoaded?: (diff: ServerArchitecturalProposalDiff) => void;
 }
 
-export function ArchitecturalProposalDetail({ client, projectId, proposalId, onBack, onChanged, onOpenShared, onOpenProposal, onRevise }: Props) {
+export type ComparisonMode = "unified" | "side-by-side" | "rendered" | "before" | "after" | "compare";
+
+export function ArchitecturalProposalDetail({ client, projectId, proposalId, onBack, onChanged, onOpenShared, onOpenProposal, onRevise, authorDisplayName, selectedDiffPath: controlledPath, onSelectDiff, onDiffLoaded }: Props) {
   const [proposal, setProposal] = useState<ServerArchitecturalProposal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ServerProposalReviewSummary | null>(null);
-  const [decision, setDecision] = useState<"APPROVE" | "REQUEST_CHANGES">("REQUEST_CHANGES");
   const [summary, setSummary] = useState("");
   const [withdrawReason, setWithdrawReason] = useState("");
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [promotion, setPromotion] = useState<ServerPromotionPreview | null>(null);
   const [diff, setDiff] = useState<ServerArchitecturalProposalDiff | null>(null);
-  const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null);
-  const [comparisonMode, setComparisonMode] = useState<"unified" | "side-by-side" | "rendered" | "before" | "after" | "compare">("unified");
+  const [localSelectedDiffPath, setLocalSelectedDiffPath] = useState<string | null>(null);
+  const selectedDiffPath = controlledPath === undefined ? localSelectedDiffPath : controlledPath;
+  const controlledPathRef = useRef(controlledPath);
+  controlledPathRef.current = controlledPath;
 
   const reload = async () => {
     const [value, reviewSummary] = await Promise.all([client.getArchitecturalProposal(projectId, proposalId), client.getArchitecturalProposalReviews(projectId, proposalId)]);
@@ -48,9 +55,9 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
     let active = true;
     setDiff(null);
     if (typeof client.getArchitecturalProposalDiff !== "function") return () => { active = false; };
-    void client.getArchitecturalProposalDiff(projectId, proposalId).then((value) => { if (!active) return; setDiff(value); setSelectedDiffPath(value.resources[0]?.path ?? null); }).catch(() => { if (active) setError("The proposal comparison could not be loaded."); });
+    void client.getArchitecturalProposalDiff(projectId, proposalId).then((value) => { if (!active) return; setDiff(value); if (controlledPathRef.current === undefined) setLocalSelectedDiffPath(value.resources[0]?.path ?? null); onDiffLoaded?.(value); }).catch(() => { if (active) setError("The proposal comparison could not be loaded."); });
     return () => { active = false; };
-  }, [client, projectId, proposalId]);
+  }, [client, projectId, proposalId, onDiffLoaded]);
 
   if (error) return <section aria-label="Architectural Proposal"><button type="button" onClick={onBack}>Back</button><p role="alert">{error}</p></section>;
   if (!proposal) return <section aria-label="Architectural Proposal"><p>Loading proposal...</p></section>;
@@ -64,34 +71,37 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
   const previewCapability = proposal.capabilities?.["proposal.previewPromotion"];
   const promoteCapability = proposal.capabilities?.["proposal.promote"];
 
-  const submitReview = async () => { try { await client.reviewArchitecturalProposal(projectId, proposalId, { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) }); setSummary(""); await reload(); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The review could not be submitted."); } };
+  const submitReview = async (decision: "APPROVE" | "REQUEST_CHANGES") => { try { await client.reviewArchitecturalProposal(projectId, proposalId, { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) }); setSummary(""); await reload(); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The review could not be submitted."); } };
   const previewPromotion = async () => { try { setPromotion(await client.previewArchitecturalProposalPromotion(projectId, proposalId)); } catch (reason) { setError(reason instanceof Error ? reason.message : "The promotion preview could not be loaded."); } };
   const promote = async () => { try { await client.promoteArchitecturalProposal(projectId, proposalId); await reload(); setPromotion(await client.previewArchitecturalProposalPromotion(projectId, proposalId)); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be promoted."); } };
   const withdraw = async () => { try { await client.withdrawArchitecturalProposal(projectId, proposalId, withdrawReason.trim()); setWithdrawOpen(false); setWithdrawReason(""); await reload(); await onChanged?.(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be withdrawn."); } };
+  const reviewSection = <section aria-label="Proposal review"><h3>Review state</h3><p>{reviews?.status ?? "none"} · {reviews?.approvals ?? 0} approvals · {reviews?.changesRequested ?? 0} change requests</p><ul>{reviews?.reviews.map((review) => <li key={review.id}><strong>{review.decision === "APPROVE" ? "Approved" : "Changes requested"}</strong> by {review.reviewerDisplayName ?? review.reviewerUserId} on {new Date(review.createdAt).toLocaleString()}{review.summary ? `: ${review.summary}` : ""}</li>)}</ul>{!reviewLocked && reviewCapability?.allowed ? <fieldset><legend>Decision</legend><label>Review summary <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Add a review summary (optional)" maxLength={4000} /></label><div className="proposal-detail__decision-actions"><button type="button" onClick={() => void submitReview("REQUEST_CHANGES")}>Request changes</button><button type="button" className="button button--primary" onClick={() => void submitReview("APPROVE")}>Approve proposal</button></div><p>Approval records review evidence only. It does not promote the proposal or modify SHARED.</p></fieldset> : !reviewLocked && reviewCapability ? <p role="status">Review unavailable: {capabilityMessage(reviewCapability.reason)}</p> : null}</section>;
 
   return <section className="proposal-detail" aria-label="Architectural Proposal">
     <button type="button" onClick={onBack}>Back to proposals</button>
-    <p className="governance-eyebrow">PROPOSAL DETAIL</p>
-    <h2>{proposal.title}</h2>
-    <p>{proposal.description ?? "No description."}</p>
-    <dl className="proposal-detail__facts">
-      <dt>Lifecycle</dt><dd><strong>{state}</strong>{lifecycleReason(state) ? ` · ${lifecycleReason(state)}` : ""}</dd>
-      <dt>Author</dt><dd>{proposal.authorUserId}</dd>
+     <p className="governance-eyebrow">PROPOSAL / DECISION</p>
+     <h2>{proposal.title}</h2>
+     <p className="proposal-detail__intent">{proposal.description ?? "No description."}</p>
+     <dl className="proposal-detail__facts">
+       <dt>Lifecycle</dt><dd><strong>{state}</strong>{lifecycleReason(state) ? ` · ${lifecycleReason(state)}` : ""}</dd>
+       <dt>Author</dt><dd>{authorDisplayName ?? proposal.authorUserId}</dd>
       <dt>Submitted</dt><dd>{new Date(proposal.submittedAt).toLocaleString()}</dd>
       {proposal.supersedes ? <><dt>Supersedes</dt><dd><button type="button" onClick={() => onOpenProposal?.(proposal.supersedes!.id)}>{proposal.supersedes.title}</button></dd></> : null}
       {proposal.supersededBy ? <><dt>Succeeded by</dt><dd><button type="button" onClick={() => onOpenProposal?.(proposal.supersededBy!.id)}>{proposal.supersededBy.title}</button></dd></> : null}
     </dl>
-     {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id, proposal.resources[0]?.sourceResourceId ?? null)}>Revise proposal</button> : reviseCapability && !reviseCapability.allowed ? <p role="status">Revise unavailable: {capabilityMessage(reviseCapability.reason)}</p> : null}
-    {withdrawCapability?.allowed ? <button type="button" onClick={() => setWithdrawOpen(true)}>Withdraw proposal</button> : withdrawCapability && !withdrawCapability.allowed && state === "OPEN" ? <p role="status">Withdraw unavailable: {capabilityMessage(withdrawCapability.reason)}</p> : null}
-    {withdrawOpen ? <section role="dialog" aria-label="Withdraw proposal confirmation"><h3>Withdraw proposal?</h3><p>The proposal will remain in history, reviews will be preserved, SHARED will not change, and this proposal can no longer be reviewed or promoted.</p><label>Withdrawal reason <textarea value={withdrawReason} onChange={(event) => setWithdrawReason(event.target.value)} /></label><button type="button" onClick={() => setWithdrawOpen(false)}>Cancel</button><button type="button" onClick={() => void withdraw()}>Withdraw proposal</button></section> : null}
-     <section className="proposal-detail__changes" aria-label="Changes"><h3>Impact</h3>{diff ? <p>{diff.impact.resourcesModified} resource{diff.impact.resourcesModified === 1 ? "" : "s"} modified · {diff.impact.resourcesAdded} added · {diff.impact.resourcesDeleted} deleted · {diff.impact.relationshipsChanged} relationships changed · {diff.impact.semanticIdentitiesChanged} semantic identities changed</p> : null}<h3>Changes</h3><h4>Resources</h4>{diff ? <DiffResourceList resources={diff.resources} selectedPath={selectedDiffPath} onSelect={(path) => { setSelectedDiffPath(path); setComparisonMode("unified"); }} /> : <ChangeList items={changes.resources} />}<h4>Relationships</h4>{diff ? <DiffEntityList items={diff.relationships} /> : <ChangeList items={changes.relationships} />}<h4>Semantic identities</h4>{diff ? <DiffEntityList items={diff.semanticIdentities} /> : <ChangeList items={changes.semantic} />}</section>
-     {diff && selectedDiffPath ? <ProposalResourceComparison resource={diff.resources.find((entry) => entry.path === selectedDiffPath) ?? null} mode={comparisonMode} onModeChange={setComparisonMode} /> : null}
+     <div className="proposal-detail__actions" aria-label="Proposal actions">
+       {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id, selectedDiffPath ?? proposal.resources[0]?.sourceResourceId ?? null)}>Revise proposal</button> : null}
+       {withdrawCapability?.allowed ? <button type="button" onClick={() => setWithdrawOpen(true)}>Withdraw proposal</button> : null}
+       {!reviewLocked && reviewCapability?.allowed ? <span className="proposal-detail__decision-hint">Independent review available below.</span> : null}
+     </div>
+     {withdrawOpen ? <section role="dialog" aria-label="Withdraw proposal confirmation"><h3>Withdraw proposal?</h3><p>The proposal will remain in history, reviews will be preserved, SHARED will not change, and this proposal can no longer be reviewed or promoted.</p><label>Withdrawal reason <textarea value={withdrawReason} onChange={(event) => setWithdrawReason(event.target.value)} /></label><button type="button" onClick={() => setWithdrawOpen(false)}>Cancel</button><button type="button" onClick={() => void withdraw()}>Withdraw proposal</button></section> : null}
+     {reviewSection}
+     <section className="proposal-detail__changes" aria-label="Changes"><h3>Impact</h3>{diff ? <p data-testid="proposal-impact">{diff.impact.resourcesModified} modified · {diff.impact.resourcesAdded} added · {diff.impact.resourcesDeleted} removed · {diff.impact.relationshipsChanged} relationships changed · {diff.impact.semanticIdentitiesChanged} semantic identities affected</p> : null}<h3>Changes</h3><h4>Resources</h4>{diff ? <DiffResourceList resources={diff.resources} selectedPath={selectedDiffPath} onSelect={(path) => { onSelectDiff?.(path); if (controlledPath === undefined) setLocalSelectedDiffPath(path); }} /> : <ChangeList items={changes.resources} />}<h4>Relationships</h4>{diff ? <DiffEntityList items={diff.relationships} /> : <ChangeList items={changes.relationships} />}<h4>Semantic identities</h4>{diff ? <DiffEntityList items={diff.semanticIdentities} /> : <ChangeList items={changes.semantic} />}</section>
     <section aria-label="Base status"><h3>Base status</h3><p>{proposal.staleBase ? "Stale: SHARED has changed since submission." : "Current: proposal base matches SHARED."}</p></section>
     <section aria-label="Proposal promotion"><h3>Promotion preview</h3><p>Promotion is a separate explicit operation and is the only action that can change SHARED.</p>{previewCapability?.allowed ? <button type="button" onClick={() => void previewPromotion()}>Preview promotion</button> : <p>Preview unavailable: {capabilityMessage(previewCapability?.reason)}</p>}{promotion && <><p>{promotion.eligible ? "Ready to promote" : "Promotion blocked"} · review {promotion.reviewStatus}</p>{promotion.blockers.length > 0 ? <><h4>Why it is blocked</h4><ul>{promotion.blockers.map((blocker) => <li key={`${blocker.code}-${blocker.message}`}><strong>{blocker.code.replaceAll("_", " ")}</strong>: {blocker.message}</li>)}</ul></> : null}{promotion.eligible && promoteCapability?.allowed ? <button type="button" onClick={() => void promote()}>Promote to SHARED</button> : promotion.eligible && promoteCapability ? <p>{capabilityMessage(promoteCapability.reason)}</p> : null}</>}</section>
-    <section aria-label="Proposal review"><h3>Review evidence</h3><p>{reviews?.status ?? "none"} · {reviews?.approvals ?? 0} approvals · {reviews?.changesRequested ?? 0} changes requested</p><ul>{reviews?.reviews.map((review) => <li key={review.id}><strong>{review.decision === "APPROVE" ? "Approved" : "Changes requested"}</strong> by {review.reviewerDisplayName ?? review.reviewerUserId} on {new Date(review.createdAt).toLocaleString()}{review.summary ? `: ${review.summary}` : ""}</li>)}</ul>{!reviewLocked && reviewCapability?.allowed ? <fieldset><legend>Record review decision</legend><label><input type="radio" checked={decision === "APPROVE"} onChange={() => setDecision("APPROVE")} /> Approve</label><label><input type="radio" checked={decision === "REQUEST_CHANGES"} onChange={() => setDecision("REQUEST_CHANGES")} /> Request changes</label><textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Review summary (recommended)" maxLength={4000} /><button type="button" onClick={() => void submitReview()}>Record {decision === "APPROVE" ? "approval" : "change request"}</button><p>Approval does not promote the proposal and does not modify SHARED.</p></fieldset> : !reviewLocked && reviewCapability ? <p role="status">Review unavailable: {capabilityMessage(reviewCapability.reason)}</p> : null}</section>
     {state === "PROMOTED" && onOpenShared ? <button type="button" onClick={onOpenShared}>Open resulting SHARED knowledge</button> : null}
     <details className="proposal-detail__technical"><summary>Technical details</summary><dl><dt>Base SHARED revision</dt><dd>{proposal.baseSharedRevision}</dd><dt>Current SHARED revision</dt><dd>{proposal.currentSharedRevision ?? "Unknown"}</dd><dt>Resources in snapshot</dt><dd>{proposal.resources.map((resource) => `${resource.path} (r${resource.sourceRevision})`).join(", ")}</dd></dl></details>
-    {error ? <p role="alert">{error}</p> : null}
+     {error ? <p role="alert">{error}</p> : null}
   </section>;
 }
 
@@ -120,16 +130,56 @@ function DiffEntityList({ items }: { items: Array<{ operation: string; label: st
   return items.length === 0 ? <p>No changes.</p> : <ul>{items.map((item) => <li key={`${item.operation}-${item.label}`}><strong>{item.operation}</strong> {item.label}</li>)}</ul>;
 }
 
-function ProposalResourceComparison({ resource, mode, onModeChange }: { resource: ServerArchitecturalProposalDiffResource | null; mode: "unified" | "side-by-side" | "rendered" | "before" | "after" | "compare"; onModeChange: (mode: "unified" | "side-by-side" | "rendered" | "before" | "after" | "compare") => void }) {
+export function ProposalResourceComparison({ resource, mode, onModeChange }: { resource: ServerArchitecturalProposalDiffResource | null; mode: ComparisonMode; onModeChange: (mode: ComparisonMode) => void }) {
   if (!resource) return null;
   const representation = resourceRepresentationOfType(resource.type);
   const textMode = representation === "markdown";
   const activeMode = textMode && !["unified", "side-by-side", "rendered"].includes(mode) ? "unified" : !textMode && !["before", "after", "compare"].includes(mode) ? "compare" : mode;
-  return <section className="proposal-detail__comparison" aria-label={`Comparison for ${resource.path}`}><h3>{resource.operation} {resource.path}</h3><nav aria-label="Comparison mode">{(textMode ? [["unified", "Unified"], ["side-by-side", "Side-by-side"], ["rendered", "Rendered"]] : [["before", "Before"], ["after", "After"], ["compare", "Compare"]]).map(([key, label]) => <button type="button" key={key} aria-pressed={activeMode === key} onClick={() => onModeChange(key as typeof activeMode)}>{label}</button>)}</nav>{textMode ? activeMode === "unified" ? <SourceDiff resource={resource} /> : activeMode === "side-by-side" ? <SideBySideDiff resource={resource} /> : <div className="proposal-detail__comparison-panes"><section><h4>BASE</h4><MarkdownView markdown={resource.baseContent} /></section><section><h4>PROPOSED</h4><MarkdownView markdown={resource.proposedContent} /></section></div> : <div className="proposal-detail__comparison-panes">{activeMode !== "after" ? <section><h4>BASE</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" /> : <Preview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" />}</section> : null}{activeMode !== "before" ? <section><h4>PROPOSED</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" /> : <Preview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" />}</section> : null}</div>}<details><summary>Technical source diff</summary><SourceDiff resource={resource} /></details></section>;
+  return <section className="proposal-inspector" aria-label={`Comparison for ${resource.path}`}><header className="proposal-inspector__header"><div><p className="governance-eyebrow">CHANGE INSPECTOR</p><h3>{resource.operation} {resource.path}</h3></div><nav aria-label="Comparison mode">{(textMode ? [["unified", "Unified"], ["side-by-side", "Side-by-side"], ["rendered", "Rendered"]] : [["before", "Before"], ["after", "After"], ["compare", "Compare"]]).map(([key, label]) => <button type="button" key={key} aria-pressed={activeMode === key} onClick={() => onModeChange(key as typeof activeMode)}>{label}</button>)}</nav></header>{textMode ? activeMode === "unified" ? <SourceDiff resource={resource} /> : activeMode === "side-by-side" ? <SideBySideDiff resource={resource} /> : <div className="proposal-detail__comparison-panes"><section><h4>BASE</h4><MarkdownView markdown={resource.baseContent} /></section><section><h4>PROPOSED</h4><MarkdownView markdown={resource.proposedContent} /></section></div> : <div className="proposal-detail__comparison-panes">{activeMode !== "after" ? <section><h4>BASE</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" /> : <Preview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" />}</section> : null}{activeMode !== "before" ? <section><h4>PROPOSED</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" /> : <Preview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" />}</section> : null}</div>}<details><summary>Technical source diff</summary><SourceDiff resource={resource} /></details></section>;
 }
 
 function SideBySideDiff({ resource }: { resource: ServerArchitecturalProposalDiffResource }) {
-  return resource.source.changed ? <div className="proposal-detail__side-by-side"><div><h4>BASE</h4>{resource.source.hunks.flatMap((hunk) => hunk.oldLines).map((line, index) => <div key={`old-${index}`} className="proposal-review__line proposal-review__line--removed">{index + 1} {line}</div>)}</div><div><h4>PROPOSED</h4>{resource.source.hunks.flatMap((hunk) => hunk.newLines).map((line, index) => <div key={`new-${index}`} className="proposal-review__line proposal-review__line--added">{index + 1} {line}</div>)}</div></div> : <p>No textual changes.</p>;
+  if (!resource.source.changed) return <p>No textual changes.</p>;
+  const oldLines = resource.baseContent.replace(/\r\n?/g, "\n").split("\n");
+  const newLines = resource.proposedContent.replace(/\r\n?/g, "\n").split("\n");
+  const rows = alignLines(oldLines, newLines, resource.source.hunks);
+  return <div className="proposal-detail__side-by-side"><div><h4>BASE</h4>{rows.map((row, index) => <div key={`old-${index}`} className={`proposal-review__line${row.changed ? " proposal-review__line--removed" : ""}`}><span>{row.oldNumber ?? ""}</span> {row.oldLine}</div>)}</div><div><h4>PROPOSED</h4>{rows.map((row, index) => <div key={`new-${index}`} className={`proposal-review__line${row.changed ? " proposal-review__line--added" : ""}`}><span>{row.newNumber ?? ""}</span> {row.newLine}</div>)}</div></div>;
+}
+
+function alignLines(oldLines: string[], newLines: string[], hunks: ServerArchitecturalProposalDiffResource["source"]["hunks"]): Array<{ oldLine: string; newLine: string; oldNumber: number | null; newNumber: number | null; changed: boolean }> {
+  const rows: Array<{ oldLine: string; newLine: string; oldNumber: number | null; newNumber: number | null; changed: boolean }> = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  for (const hunk of hunks) {
+    const oldStart = Math.max(oldIndex, hunk.oldStart - 1);
+    const newStart = Math.max(newIndex, hunk.newStart - 1);
+    while (oldIndex < oldStart && newIndex < newStart) {
+      rows.push({ oldLine: oldLines[oldIndex], newLine: newLines[newIndex], oldNumber: oldIndex + 1, newNumber: newIndex + 1, changed: false });
+      oldIndex += 1;
+      newIndex += 1;
+    }
+    while (oldIndex < oldStart) {
+      rows.push({ oldLine: oldLines[oldIndex], newLine: "", oldNumber: oldIndex + 1, newNumber: null, changed: true });
+      oldIndex += 1;
+    }
+    while (newIndex < newStart) {
+      rows.push({ oldLine: "", newLine: newLines[newIndex], oldNumber: null, newNumber: newIndex + 1, changed: true });
+      newIndex += 1;
+    }
+    for (let index = 0; index < Math.max(hunk.oldLines.length, hunk.newLines.length); index += 1) {
+      const oldLine = hunk.oldLines[index];
+      const newLine = hunk.newLines[index];
+      rows.push({ oldLine: oldLine ?? "", newLine: newLine ?? "", oldNumber: oldLine === undefined ? null : oldIndex + 1, newNumber: newLine === undefined ? null : newIndex + 1, changed: true });
+      if (oldLine !== undefined) oldIndex += 1;
+      if (newLine !== undefined) newIndex += 1;
+    }
+  }
+  while (oldIndex < oldLines.length || newIndex < newLines.length) {
+    rows.push({ oldLine: oldLines[oldIndex] ?? "", newLine: newLines[newIndex] ?? "", oldNumber: oldIndex < oldLines.length ? oldIndex + 1 : null, newNumber: newIndex < newLines.length ? newIndex + 1 : null, changed: oldLines[oldIndex] !== newLines[newIndex] });
+    oldIndex += 1;
+    newIndex += 1;
+  }
+  return rows;
 }
 
 function SourceDiff({ resource }: { resource: ServerArchitecturalProposalDiffResource }) {
