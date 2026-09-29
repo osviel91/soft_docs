@@ -16,6 +16,7 @@ import { buildProjectIndex, type ProjectDiagnostic, type ProjectIndex } from "..
 import { validateProject } from "../domain/project/validate";
 import { traceArchitectureQuery, type ArchitectureTrace, type TraceDirection } from "../domain/project/architecture-trace";
 import type { Promotion } from "../domain/workspace/promotion";
+import { architecturalProposalDiff, type ArchitecturalProposalDiff } from "./proposal-diff";
 
 export type ProposalLifecycleState = "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
 
@@ -52,6 +53,7 @@ function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitectur
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
   get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string; lifecycle: { state: ProposalLifecycleState; promotionStatus?: Promotion["status"] }; promotion?: Pick<Promotion, "id" | "status" | "createdAt" | "completedAt" | "resultingSharedRevision">; supersedes?: { id: string; title: string }; supersededBy?: { id: string; title: string }; revisionContextId?: string }>;
+  diff(context: ApplicationContext, projectId: string, proposalId: string): Promise<ArchitecturalProposalDiff>;
   submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   withdraw(context: ApplicationContext, input: { projectId: string; proposalId: string; reason?: string }): Promise<PublicArchitecturalProposal>;
@@ -187,6 +189,15 @@ export function createArchitecturalProposalService(options: {
         ...(successor ? { supersededBy: { id: successor.id, title: successor.title } } : {}),
         ...(proposal.authorUserId === context.principal.subjectUserId ? { revisionContextId: proposal.sourcePrivateContextId } : {}),
       };
+    },
+    async diff(context, projectId, proposalId) {
+      await requireRead(context, projectId);
+      const proposal = await options.proposals.get(projectId, proposalId);
+      if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
+      return architecturalProposalDiff(proposal, await options.proposals.currentSharedRevision(projectId), async (resourceId, revision) => {
+        const value = await options.projects.getRevision(resourceId, revision);
+        return value ? { content: value.content, type: value.type, ...(value.metadata === undefined ? {} : { metadata: value.metadata }) } : null;
+      });
     },
      async submit(context, input) {
       await requireSubmit(context, input.projectId);

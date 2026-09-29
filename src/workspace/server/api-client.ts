@@ -162,6 +162,27 @@ export interface ServerArchitecturalProposal {
   revisionContextId?: string;
 }
 
+export interface ServerArchitecturalProposalDiffResource {
+  path: string;
+  type: ServerResourceType;
+  operation: "ADDED" | "MODIFIED" | "DELETED";
+  baseRevision?: number;
+  basePath?: string;
+  baseContent: string;
+  proposedContent: string;
+  changed: boolean;
+  metadata: { changed: boolean; changes: Array<{ kind: "added" | "removed" | "modified"; field: "description" | "tag"; identity: string; oldValue?: string; newValue?: string }> };
+  content: { available: boolean; changes: Array<{ kind: "added" | "removed" | "modified"; entity: string; identity: string; details?: Record<string, unknown> }>; diagnostics: unknown[]; truncated: boolean; totalChanges: number; returnedChanges: number };
+  source: { changed: boolean; hunks: Array<{ oldStart: number; newStart: number; oldLines: string[]; newLines: string[] }>; truncated: boolean; totalHunks: number; returnedHunks: number };
+}
+export interface ServerArchitecturalProposalDiff {
+  proposalId: string; baseSharedRevision: string; currentSharedRevision: string; staleBase: boolean;
+  resources: ServerArchitecturalProposalDiffResource[];
+  relationships: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
+  semanticIdentities: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
+  impact: { resourcesAdded: number; resourcesModified: number; resourcesDeleted: number; relationshipsChanged: number; semanticIdentitiesChanged: number };
+}
+
 export interface ServerProposalReview {
   id: string;
   proposalId: string;
@@ -584,6 +605,11 @@ export class ServerApiClient {
   async getArchitecturalProposalReviews(projectId: string, proposalId: string): Promise<ServerProposalReviewSummary> {
     const body = await this.request<{ reviews: ServerProposalReviewSummary }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/reviews?projectId=${encodeURIComponent(projectId)}`);
     return body.reviews;
+  }
+
+  async getArchitecturalProposalDiff(projectId: string, proposalId: string): Promise<ServerArchitecturalProposalDiff> {
+    const body = await this.request<{ diff: ServerArchitecturalProposalDiff }>("GET", `/api/architectural-proposals/${encodeURIComponent(proposalId)}/diff?projectId=${encodeURIComponent(projectId)}`);
+    return body.diff;
   }
 
   async reviewArchitecturalProposal(projectId: string, proposalId: string, input: { decision: "APPROVE" | "REQUEST_CHANGES"; summary?: string }): Promise<ServerProposalReview> {

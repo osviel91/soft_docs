@@ -674,6 +674,14 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/architectural-proposals/:proposalId/diff", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const projectId = requireQueryString(request.query, "projectId");
+      return json(200, { diff: await dependencies.architecturalProposals.diff(context, projectId, params.proposalId) });
+    }),
+  );
+
   router.post("/api/architectural-proposals/:proposalId/reviews", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
