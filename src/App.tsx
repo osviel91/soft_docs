@@ -2875,17 +2875,17 @@ export default function App() {
                    selectedProposalId={architecturalProposalId}
                    revisingProposalId={revisionProposalId}
                     onOpenArchitecturalProposal={openArchitecturalProposal}
-                     onSubmitArchitecturalProposal={(contextId) => {
-                       setArchitecturalProposalId(null);
-                       setArchitecturalProposalContextId(contextId);
-                       setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null });
+                      onSubmitArchitecturalProposal={(contextId) => {
+                        setArchitecturalProposalId(null);
+                        setArchitecturalProposalContextId(contextId);
+                        setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId });
                      }}
                      onCreateMyWork={() => { void createServerKnowledge(); }}
                      onOpenMyWork={(contextId) => {
                        setArchitecturalProposalId(null);
                        setArchitecturalProposalContextId(null);
-                       setRevisionProposalId(null);
-                       setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: null, proposalId: null });
+                        if (!revisionProposalId) setRevisionProposalId(null);
+                        setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: null, proposalId: revisionProposalId });
                        void server.openPrivateWork(contextId);
                     }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
@@ -2999,7 +2999,7 @@ export default function App() {
               }
             >
                 {architecturalProposalContextId && server.active ? (
-                  <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} onCancel={() => { setArchitecturalProposalContextId(null); setRevisionProposalId(null); }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
+                   <ArchitecturalProposalSubmit client={apiClient} projectId={server.active.project.id} contextId={architecturalProposalContextId} revisionProposalId={revisionProposalId} revisionProposalTitle={server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title} onCancel={() => { if (revisionProposalId) { setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(revisionProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: revisionProposalId }); } else { setArchitecturalProposalContextId(null); setRevisionProposalId(null); } }} onDone={async (newProposalId) => { await syncServerWorkspace(); setArchitecturalProposalContextId(null); setRevisionProposalId(null); setArchitecturalProposalId(newProposalId); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId }); }} />
               ) : architecturalProposalId && server.active ? (
                  <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId, resourceId) => { setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId: priorProposalId }); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (

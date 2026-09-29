@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ServerApiClient, ServerResource } from "../../workspace/server/api-client";
 
-export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; onDone: (proposalId: string) => void | Promise<void>; onCancel: () => void }) {
+export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, revisionProposalTitle, onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; revisionProposalTitle?: string; onDone: (proposalId: string) => void | Promise<void>; onCancel: () => void }) {
   const [resources, setResources] = useState<ServerResource[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [title, setTitle] = useState("");
@@ -23,7 +23,8 @@ export function ArchitecturalProposalSubmit({ client, projectId, contextId, revi
     finally { setSubmitting(false); }
   };
   return <section className="proposal-submit governance-card" aria-label="Submit architectural proposal">
-     <button type="button" onClick={onCancel}>Back to MY WORK</button><p className="governance-eyebrow">MY WORK to PROPOSAL</p><h2>{revisionProposalId ? "Submit revision" : "Submit for review"}</h2>
+     <button type="button" onClick={onCancel}>{revisionProposalId ? "Back to source proposal" : "Back to MY WORK"}</button><p className="governance-eyebrow">MY WORK to PROPOSAL</p><h2>{revisionProposalId ? "Submit revision" : "Submit for review"}</h2>
+     {revisionProposalId ? <p role="status">Revising <strong>{revisionProposalTitle ?? revisionProposalId}</strong>. The source proposal remains unchanged until submission.</p> : null}
      <p>{revisionProposalId ? "Editing happens in MY WORK. This will create a new immutable proposal, supersede the current proposal, preserve its reviews on the old snapshot, and leave SHARED unchanged." : "Choose the private resources to include. The submission becomes an immutable, non-authoritative proposal."}</p>
     <label>Proposal title<input aria-label="Proposal title" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
     <label>Intention and review context<textarea aria-label="Proposal description" value={description} onChange={(event) => setDescription(event.target.value)} /></label>
