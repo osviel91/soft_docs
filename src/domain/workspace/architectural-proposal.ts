@@ -36,7 +36,12 @@ export interface ArchitecturalProposal {
   sourcePrivateContextId: string;
   title: string;
   description?: string;
-  status: "open";
+  status: "open" | "withdrawn" | "superseded";
+  supersedesProposalId?: string | null;
+  withdrawnAt?: Date | null;
+  withdrawnBy?: string | null;
+  withdrawalReason?: string | null;
+  supersededAt?: Date | null;
   baseSharedRevision: string;
   baseSharedResourceRevisions: Record<string, number>;
   /** Null means this legacy proposal predates manifest-base capture. */

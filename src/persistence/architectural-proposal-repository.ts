@@ -23,7 +23,12 @@ function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSna
   return {
     id: String(row.id), projectId: String(row.project_id), authorUserId: String(row.author_user_id),
     sourcePrivateContextId: String(row.source_private_context_id), title: String(row.title),
-    ...(row.description == null ? {} : { description: String(row.description) }), status: "open",
+     ...(row.description == null ? {} : { description: String(row.description) }), status: row.status as ArchitecturalProposal["status"],
+     supersedesProposalId: row.supersedes_proposal_id == null ? null : String(row.supersedes_proposal_id),
+     withdrawnAt: row.withdrawn_at == null ? null : date(row.withdrawn_at),
+     withdrawnBy: row.withdrawn_by == null ? null : String(row.withdrawn_by),
+     withdrawalReason: row.withdrawal_reason == null ? null : String(row.withdrawal_reason),
+     supersededAt: row.superseded_at == null ? null : date(row.superseded_at),
     baseSharedRevision: String(row.base_shared_revision), baseSharedResourceRevisions: revisions,
     baseManifestRevision: row.base_manifest_revision == null ? null : Number(row.base_manifest_revision),
     createdAt: date(row.created_at), submittedAt: date(row.submitted_at), resources, semanticMessages: messages, relationships,
@@ -66,12 +71,12 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
   };
 
   return {
-    async submit(input) {
+     async submit(input) {
       const title = input.title.trim();
       if (!title) throw new Error("A proposal title is required.");
       if (!Number.isInteger(input.baseManifestRevision) || input.baseManifestRevision < 0) throw new Error("A new proposal requires a concrete manifest revision.");
        if (input.selections.length === 0 && (input.retirements?.length ?? 0) === 0) throw new Error("Select at least one private resource or explicit retirement.");
-       return client.transaction(async (tx) => {
+        return client.transaction(async (tx) => {
         const ids = input.selections.map((selection) => selection.resourceId);
         const selected = await tx.query(
           "SELECT r.*, rr.content AS snapshot_content, rr.type AS snapshot_type, rr.metadata AS snapshot_metadata FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.id AND rr.revision = r.revision WHERE r.project_id = $1 AND r.knowledge_context_id = $2 AND r.id = ANY($3::uuid[]) FOR UPDATE",
@@ -143,9 +148,71 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
          const requestedRelationships: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }> = input.relationships ?? relationships.rows.map((row) => ({ sourceId: String(row.source_id), targetId: String(row.target_id), kind: row.kind as "complementary-view", ...(row.source_role == null ? {} : { sourceRole: row.source_role as "execution" | "causal" | "other" }), ...(row.target_role == null ? {} : { targetRole: row.target_role as "execution" | "causal" | "other" }) }));
          for (const relationship of requestedRelationships) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
         const storedChildren = await children(tx, proposalId);
-        return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
-      });
-    },
+         return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+       });
+     },
+     async revise(input) {
+       return client.transaction(async (tx) => {
+         const prior = await tx.query("SELECT status FROM architectural_proposals WHERE project_id = $1 AND id = $2 AND author_user_id = $3 FOR UPDATE", [input.projectId, input.supersedesProposalId, input.authorUserId]);
+         if (!prior.rows[0]) throw new Error("The proposal does not exist or is not authored by the current actor.");
+         if (String(prior.rows[0].status) !== "open") throw new Error("Only open proposals may be revised.");
+         const promotion = await tx.query("SELECT status FROM promotions WHERE project_id = $1 AND proposal_id = $2 FOR UPDATE", [input.projectId, input.supersedesProposalId]);
+         if (promotion.rows.some((row) => ["COMMITTED_COMPLETION_PENDING", "COMPLETED"].includes(String(row.status)))) throw new Error("A proposal with promotion evidence cannot be revised.");
+         const successor = await tx.query("SELECT 1 FROM architectural_proposals WHERE supersedes_proposal_id = $1", [input.supersedesProposalId]);
+         if (successor.rows.length > 0) throw new Error("The proposal already has a successor.");
+         const freshBase = await currentSharedRevision(tx, input.projectId);
+         const ids = input.selections.map((selection) => selection.resourceId);
+         const selected = await tx.query("SELECT r.*, rr.content AS snapshot_content, rr.type AS snapshot_type, rr.metadata AS snapshot_metadata FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.id AND rr.revision = r.revision WHERE r.project_id = $1 AND r.knowledge_context_id = $2 AND r.id = ANY($3::uuid[]) FOR UPDATE", [input.projectId, input.sourcePrivateContextId, ids]);
+         if (selected.rows.length !== input.selections.length) throw new Error("One or more selected private resources are no longer available.");
+         for (const selection of input.selections) {
+           const row = selected.rows.find((candidate) => String(candidate.id) === selection.resourceId);
+           if (!row || Number(row.revision) !== selection.expectedRevision) throw new Error(`Private resource ${selection.resourceId} changed during revision; re-read and retry.`);
+         }
+         const retirements = input.retirements ?? [];
+         const retired = retirements.length === 0 ? { rows: [] } : await tx.query("SELECT r.*, rr.content AS snapshot_content, rr.type AS snapshot_type, rr.metadata AS snapshot_metadata FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.id AND rr.revision = r.revision WHERE r.project_id = $1 AND r.knowledge_context_id IS NULL AND r.lifecycle = 'ACTIVE' AND r.id = ANY($2::uuid[]) FOR UPDATE", [input.projectId, retirements.map((selection) => selection.resourceId)]);
+         if (retired.rows.length !== retirements.length) throw new Error("One or more retirement targets are not active SHARED resources.");
+         for (const selection of retirements) {
+           const row = retired.rows.find((candidate) => String(candidate.id) === selection.resourceId);
+           if (!row || Number(row.revision) !== selection.expectedRevision) throw new Error(`SHARED resource ${selection.resourceId} changed during revision; re-read and retry.`);
+         }
+         const proposalId = newId();
+         const inserted = await tx.query("INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, description, base_shared_revision, base_shared_resource_revisions, base_manifest_revision, supersedes_proposal_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10) RETURNING *", [proposalId, input.projectId, input.authorUserId, input.sourcePrivateContextId, input.title.trim(), input.description ?? null, freshBase.revision, JSON.stringify(freshBase.resources), input.baseManifestRevision, input.supersedesProposalId]);
+         for (const row of selected.rows) {
+           const selection = input.selections.find((candidate) => candidate.resourceId === String(row.id))!;
+           const shared = await tx.query("SELECT id, path, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE'", [input.projectId]);
+           const base = selection.baseResourceId ? shared.rows.find((candidate) => String(candidate.id) === selection.baseResourceId) : shared.rows.find((candidate) => String(candidate.path) === String(row.path));
+           await tx.query("INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)", [proposalId, String(row.id), selection.path ?? String(row.path), selection.operation ?? (base ? "UPDATE" : "CREATE"), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), selection.operation ?? (base ? "UPDATE" : "CREATE"), base ? String(base.id) : null, base ? String(base.path) : null, selection.baseRevision ?? (base ? Number(base.revision) : null)]);
+         }
+         for (const row of retired.rows) await tx.query("INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'RETIRE', $2, $3, $5)", [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {})]);
+         const requestedMessages = input.semanticMessages ?? input.privateMessageIds.map((id) => ({ id, name: undefined, kind: undefined, operation: "ADD" as const, baseName: undefined, baseKind: undefined }));
+         if (requestedMessages.length > 0) {
+           const privateRows = await tx.query("SELECT id, name, kind FROM private_semantic_messages WHERE project_id = $1 AND knowledge_context_id = $2 AND id = ANY($3::uuid[])", [input.projectId, input.sourcePrivateContextId, requestedMessages.map((message) => message.id)]);
+           for (const message of requestedMessages) {
+             const row = privateRows.rows.find((candidate) => String(candidate.id) === message.id);
+             const name = row ? String(row.name) : message.name;
+             const kind = row ? String(row.kind) : message.kind;
+             if (!name || !kind) throw new Error(`Semantic identity ${message.id} is not available in private work.`);
+             await tx.query("INSERT INTO architectural_proposal_messages (proposal_id, message_id, name, kind, source_context_id, operation, base_name, base_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [proposalId, message.id, name, kind, input.sourcePrivateContextId, message.operation ?? "ADD", message.baseName ?? null, message.baseKind ?? null]);
+           }
+         }
+         for (const relationship of input.relationships ?? []) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
+         await tx.query("UPDATE architectural_proposals SET status = 'superseded', superseded_at = now() WHERE id = $1", [input.supersedesProposalId]);
+         const storedChildren = await children(tx, proposalId);
+         return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+       });
+     },
+     async withdraw(proposalId, authorUserId, reason) {
+       return client.transaction(async (tx) => {
+         const prior = await tx.query("SELECT * FROM architectural_proposals WHERE id = $1 AND author_user_id = $2 FOR UPDATE", [proposalId, authorUserId]);
+         if (!prior.rows[0]) throw new Error("The proposal does not exist or is not authored by the current actor.");
+         if (String(prior.rows[0].status) !== "open") throw new Error("Only open proposals may be withdrawn.");
+         const promotion = await tx.query("SELECT status FROM promotions WHERE proposal_id = $1 FOR UPDATE", [proposalId]);
+         if (promotion.rows.some((row) => ["COMMITTED_COMPLETION_PENDING", "COMPLETED"].includes(String(row.status)))) throw new Error("A proposal with promotion evidence cannot be withdrawn.");
+         const updated = await tx.query("UPDATE architectural_proposals SET status = 'withdrawn', withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = $3 WHERE id = $1 RETURNING *", [proposalId, authorUserId, reason?.trim() || null]);
+         const storedChildren = await children(tx, proposalId);
+         return proposalOf(updated.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+       });
+     },
     async list(projectId) {
       const [result, current] = await Promise.all([
         client.query("SELECT * FROM architectural_proposals WHERE project_id = $1 ORDER BY submitted_at DESC, id DESC", [projectId]),

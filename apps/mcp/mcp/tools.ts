@@ -1024,6 +1024,30 @@ export function createMcpTools(): McpTool[] {
       },
     },
     {
+      name: "revise_architectural_proposal",
+      title: "Revise architectural proposal",
+      description: "Create a new immutable proposal snapshot from current owned MY WORK, superseding the old proposal. This does not modify SHARED and reviews never transfer.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(), title: z.string().min(1), description: z.string().optional() },
+      annotations: { ...WRITE, title: "Revise architectural proposal" },
+      requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const proposal = await toolContext.architecturalProposals.revise(toolContext.context, { projectId: stringArg(args, "projectId"), proposalId: stringArg(args, "proposalId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"), resourceIds: args.resourceIds as string[], ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}), title: stringArg(args, "title"), ...(typeof args.description === "string" ? { description: args.description } : {}) });
+        return { text: `Created revised proposal ${proposal.id}; ${proposal.supersedesProposalId} is superseded and SHARED was not changed.`, structured: { proposal } };
+      },
+    },
+    {
+      name: "withdraw_architectural_proposal",
+      title: "Withdraw architectural proposal",
+      description: "Withdraw an open proposal non-destructively. It preserves snapshot and reviews, does not modify SHARED, and prevents future promotion.",
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), reason: z.string().optional() },
+      annotations: { ...WRITE, title: "Withdraw architectural proposal" },
+      requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const proposal = await toolContext.architecturalProposals.withdraw(toolContext.context, { projectId: stringArg(args, "projectId"), proposalId: stringArg(args, "proposalId"), ...(typeof args.reason === "string" ? { reason: args.reason } : {}) });
+        return { text: `Withdrawn proposal ${proposal.id}; SHARED was not changed.`, structured: { proposal } };
+      },
+    },
+    {
       name: "preview_architectural_proposal_promotion",
       title: "Preview architectural proposal promotion",
        description: "Preview the deterministic promotion plan and blockers without changing SHARED. Preview is not publication; current state is revalidated by PromotionService on execution.",

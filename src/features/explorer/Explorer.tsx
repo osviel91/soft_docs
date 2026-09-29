@@ -111,7 +111,7 @@ export interface ExplorerProps {
   switcher?: ReactNode;
   /** Private server-side work contexts owned by the current user. */
   privateWorkContexts?: Array<{ id: string; name: string; lifecycle: "active" | "archived" }>;
-  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; approvals?: number; changesRequested?: number }>;
+  architecturalProposals?: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; staleBase?: boolean; baseSharedRevision: string; currentSharedRevision?: string; reviewStatus?: "none" | "approved" | "changes-requested" | "mixed"; approvals?: number; changesRequested?: number }>;
   onOpenArchitecturalProposal?: (proposalId: string) => void;
   onSubmitArchitecturalProposal?: (contextId: string) => void;
   /** Create a resource in a private MY WORK context. */

@@ -249,3 +249,50 @@ it("persists append-only review history, aggregates latest decisions, and keeps 
   expect(result.reviews[0]?.decision).toBe("REQUEST_CHANGES");
   expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.content).toBe("event PaymentRequested\n");
 });
+
+it("revises from current MY WORK with a fresh base and no transferred reviews", async () => {
+  const owner = await user("revision-owner");
+  const reviewer = await user("revision-reviewer");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Revision", workspaceId: owner })).project;
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "revision-work" });
+  const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "revision.md", type: "markdown-document", content: "one\n" });
+  const first = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "First" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: first.id, decision: "APPROVE" });
+  const current = await catalog.updateResource(contextFor(owner), project.id, resource.id, { contextId: work.id, content: "two\n", expectedRevision: resource.revision });
+  const second = await service.revise(contextFor(owner), { projectId: project.id, proposalId: first.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Second" });
+  expect(second.id).not.toBe(first.id);
+  expect(second.status).toBe("open");
+  expect(second.supersedesProposalId).toBe(first.id);
+  expect(second.baseSharedRevision).toBe((await service.get(contextFor(owner), project.id, second.id)).currentSharedRevision);
+  expect(second.resources[0]?.content).toBe("two\n");
+  expect(second.resources[0]?.sourceRevision).toBe(current.revision);
+  expect((await service.reviews(contextFor(owner), project.id, second.id)).reviews).toHaveLength(0);
+  expect((await service.reviews(contextFor(owner), project.id, first.id)).reviews).toHaveLength(1);
+  expect((await service.get(contextFor(owner), project.id, first.id)).status).toBe("superseded");
+  await expect(service.revise(contextFor(owner), { projectId: project.id, proposalId: first.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Third" })).rejects.toMatchObject({ code: "conflict" });
+  expect((await catalog.listResources(contextFor(owner), project.id)).some((item) => item.id === resource.id)).toBe(false);
+});
+
+it("withdraws an open proposal without deleting evidence or changing SHARED", async () => {
+  const owner = await user("withdraw-owner");
+  const reviewer = await user("withdraw-reviewer");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Withdrawal", workspaceId: owner })).project;
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "withdraw-work" });
+  const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "withdraw.md", type: "markdown-document", content: "preserved\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Withdraw me" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  const withdrawn = await service.withdraw(contextFor(owner), { projectId: project.id, proposalId: proposal.id, reason: "Superseded by a private redesign." });
+  expect(withdrawn.status).toBe("withdrawn");
+  expect(withdrawn.withdrawnBy).toBe(owner);
+  expect(withdrawn.withdrawalReason).toContain("private redesign");
+  expect(withdrawn.resources[0]?.content).toBe("preserved\n");
+  expect((await service.reviews(contextFor(owner), project.id, proposal.id)).reviews).toHaveLength(1);
+  await expect(service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.withdraw(contextFor(owner), { projectId: project.id, proposalId: proposal.id })).rejects.toMatchObject({ code: "conflict" });
+  const preview = await promotionService.preview(contextFor(owner), project.id, proposal.id);
+  expect(preview.eligible).toBe(false);
+  expect(preview.blockers.some((blocker) => blocker.code === "PROPOSAL_WITHDRAWN")).toBe(true);
+  await expect(promotionService.execute(contextFor(owner), project.id, proposal.id)).rejects.toMatchObject({ code: "conflict" });
+});

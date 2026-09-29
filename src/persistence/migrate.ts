@@ -37,6 +37,7 @@ import { up as promotions } from "./migrations/0021-promotions";
 import { up as explicitProposalOperations } from "./migrations/0022-explicit-proposal-operations";
 import { up as governedProposalOperations } from "./migrations/0023-governed-proposal-operations";
 import { up as proposalResourcePaths } from "./migrations/0024-proposal-resource-paths";
+import { up as proposalLifecycle } from "./migrations/0025-proposal-lifecycle";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -74,6 +75,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 22, name: "explicit-proposal-operations", sql: explicitProposalOperations },
   { version: 23, name: "governed-proposal-operations", sql: governedProposalOperations },
   { version: 24, name: "proposal-resource-paths", sql: proposalResourcePaths },
+  { version: 25, name: "proposal-lifecycle", sql: proposalLifecycle },
 ];
 
 /**

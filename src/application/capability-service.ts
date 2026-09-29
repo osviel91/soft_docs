@@ -13,6 +13,8 @@ export type Capability =
   | "privateWork.edit"
   | "proposal.submit"
   | "proposal.review"
+  | "proposal.revise"
+  | "proposal.withdraw"
   | "proposal.previewPromotion"
   | "proposal.promote"
   | "project.delete"
@@ -43,7 +45,7 @@ export interface CapabilityDecision {
 export interface CapabilityService {
   project(context: ApplicationContext, projectId: string): Promise<Pick<Record<Capability, CapabilityDecision>, "shared.read" | "privateWork.create" | "project.delete" | "project.members.manage">>;
   privateWork(context: ApplicationContext, projectId: string, contextId: string): Promise<Pick<Record<Capability, CapabilityDecision>, "privateWork.open" | "privateWork.edit" | "proposal.submit">>;
-  proposal(context: ApplicationContext, projectId: string, proposalId: string): Promise<Pick<Record<Capability, CapabilityDecision>, "proposal.review" | "proposal.previewPromotion" | "proposal.promote">>;
+  proposal(context: ApplicationContext, projectId: string, proposalId: string): Promise<Pick<Record<Capability, CapabilityDecision>, "proposal.review" | "proposal.revise" | "proposal.withdraw" | "proposal.previewPromotion" | "proposal.promote">>;
 }
 
 type Decision = Omit<CapabilityDecision, "capability">;
@@ -99,27 +101,41 @@ export function createCapabilityService(options: {
       if (!proposal) {
         return {
           "proposal.review": { capability: "proposal.review", allowed: false, reason: "proposal_not_eligible" },
+          "proposal.revise": { capability: "proposal.revise", allowed: false, reason: "proposal_not_eligible" },
+          "proposal.withdraw": { capability: "proposal.withdraw", allowed: false, reason: "proposal_not_eligible" },
           "proposal.previewPromotion": { capability: "proposal.previewPromotion", allowed: false, reason: "proposal_not_eligible", requiredPermission: "project:read" },
           "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "proposal_not_eligible", requiredPermission: "promotion:execute" },
         };
       }
-      const review = await permission(context, projectId, "proposal.review", "resource:update");
+      let review = await permission(context, projectId, "proposal.review", "resource:update");
       if (review.allowed && proposal.authorUserId === context.principal.subjectUserId) {
         review.allowed = false;
         review.reason = "self_review";
       }
+      if (proposal.status !== "open") review = { ...review, allowed: false, reason: "proposal_not_eligible" };
+      const author = proposal.authorUserId === context.principal.subjectUserId;
+      const revisePermission = await permission(context, projectId, "proposal.revise", "resource:update");
+      const withdrawPermission = await permission(context, projectId, "proposal.withdraw", "resource:update");
+      const privateContext = author ? await options.knowledgeContexts.findPrivate(projectId, proposal.sourcePrivateContextId, context.principal.subjectUserId) : null;
+      const revise = { ...revisePermission, capability: "proposal.revise" as const, allowed: revisePermission.allowed && author && proposal.status === "open" && privateContext?.lifecycle === "active", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}), ...(author && !privateContext ? { reason: "not_owner" as const } : {}), ...(author && privateContext?.lifecycle === "archived" ? { reason: "archived_context" as const } : {}) };
+      const withdraw = { ...withdrawPermission, capability: "proposal.withdraw" as const, allowed: withdrawPermission.allowed && author && proposal.status === "open", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}) };
       const preview = await permission(context, projectId, "proposal.previewPromotion", "project:read");
       const promotePermission = await permission(context, projectId, "proposal.promote", "promotion:execute");
-      if (!promotePermission.allowed) return { "proposal.review": review, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };
-      if (!preview.allowed) return { "proposal.review": review, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: preview.reason, requiredPermission: "project:read" } };
+      if (!promotePermission.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };
+      if (!preview.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: preview.reason, requiredPermission: "project:read" } };
       const authorization = await options.policy.decide(context, projectId, "promotion:execute");
       if (!authorization.allowed || authorization.role !== "OWNER") {
-        return { "proposal.review": review, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "forbidden", requiredPermission: "promotion:execute", requiredRole: "OWNER" } };
+        return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "forbidden", requiredPermission: "promotion:execute", requiredRole: "OWNER" } };
       }
       const promotion = await options.promotion.preview(context, projectId, proposalId);
       const blocker = promotion.blockers[0];
+      if (blocker?.code === "COMPLETION_PENDING" || blocker?.code === "PROMOTION_COMPLETED") {
+        revise.allowed = false; withdraw.allowed = false;
+        revise.reason = blocker.code === "COMPLETION_PENDING" ? "completion_pending" : "promotion_in_progress";
+        withdraw.reason = revise.reason;
+      }
       return {
-        "proposal.review": review,
+        "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw,
         "proposal.previewPromotion": preview,
         "proposal.promote": blocker
           ? { capability: "proposal.promote", allowed: false, reason: blocker.code === "REVIEW_REQUIRED" ? "review_required" : blocker.code === "COMPLETION_PENDING" ? "completion_pending" : blocker.code.includes("STALE") ? "proposal_not_eligible" : "conflict", requiredPermission: "promotion:execute", requiredRole: "OWNER", state: blocker.code }

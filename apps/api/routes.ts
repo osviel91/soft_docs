@@ -630,6 +630,33 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.post("/api/projects/:projectId/architectural-proposals/:proposalId/revise", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      const proposal = await dependencies.architecturalProposals.revise(context, {
+        projectId: params.projectId, proposalId: params.proposalId,
+        sourcePrivateContextId: requireBodyString(body, "sourcePrivateContextId"),
+        resourceIds: Array.isArray(body.resourceIds) && body.resourceIds.every((id) => typeof id === "string") ? body.resourceIds as string[] : [],
+        ...(Array.isArray(body.retireResourceIds) ? { retireResourceIds: body.retireResourceIds as string[] } : {}),
+        ...(Array.isArray(body.resourceOperations) ? { resourceOperations: body.resourceOperations as ArchitecturalProposalInput["resourceOperations"] } : {}),
+        ...(Array.isArray(body.semanticMessages) ? { semanticMessages: body.semanticMessages as ArchitecturalProposalInput["semanticMessages"] } : {}),
+        ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
+        title: requireBodyString(body, "title"), ...(typeof body.description === "string" ? { description: body.description } : {}),
+      });
+      return json(201, { proposal });
+    }),
+  );
+
+  router.post("/api/projects/:projectId/architectural-proposals/:proposalId/withdraw", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      const proposal = await dependencies.architecturalProposals.withdraw(context, { projectId: params.projectId, proposalId: params.proposalId, ...(typeof body.reason === "string" ? { reason: body.reason } : {}) });
+      return json(200, { proposal });
+    }),
+  );
+
   router.get("/api/architectural-proposals/:proposalId", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);

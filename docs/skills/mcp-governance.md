@@ -20,11 +20,13 @@ Proposal authors cannot approve their own proposals. Inspect proposal target cap
 4. Read relevant SHARED knowledge.
 5. Create or edit resources, relationships, and semantic identities in MY WORK with the required `contextId`.
 6. Validate, render, and trace as needed.
-7. Call `submit_architectural_proposal` explicitly when the user intends to share the snapshot.
+7. Call `submit_architectural_proposal` explicitly when the user intends to share the snapshot. Submitted proposals are immutable.
 8. Inspect the proposal and call `get_project_capabilities` with `proposalId`.
 9. Call `preview_architectural_proposal_promotion` before any requested publication.
 10. Call `review_architectural_proposal` only when the actor is permitted and the user explicitly requests a review decision.
 11. Call `promote_architectural_proposal` only when explicitly requested and the current capability and preview allow it.
+
+To revise, return to the author's active MY WORK, edit privately, then call `revise_architectural_proposal`. This creates a new immutable snapshot, supersedes the previous proposal, captures a fresh SHARED base, and never transfers reviews. Use `withdraw_architectural_proposal` for non-destructive withdrawal by the author; WITHDRAWN and SUPERSEDED proposals cannot publish. Revision and withdrawal do not mutate SHARED. Capabilities are advisory and commands revalidate current state.
 12. Re-read SHARED to verify the result.
 
 ## Safety Rules

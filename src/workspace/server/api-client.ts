@@ -136,7 +136,12 @@ export interface ServerArchitecturalProposal {
   sourcePrivateContextId?: string;
   title: string;
   description?: string;
-  status: "open";
+  status: "open" | "withdrawn" | "superseded";
+  supersedesProposalId?: string | null;
+  withdrawnAt?: string | null;
+  withdrawnBy?: string | null;
+  withdrawalReason?: string | null;
+  supersededAt?: string | null;
   baseSharedRevision: string;
   baseSharedResourceRevisions: Record<string, number>;
   currentSharedRevision?: string;
@@ -555,6 +560,14 @@ export class ServerApiClient {
 
   async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`, input);
+    return body.proposal;
+  }
+  async reviseArchitecturalProposal(projectId: string, proposalId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+    const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals/${encodeURIComponent(proposalId)}/revise`, input);
+    return body.proposal;
+  }
+  async withdrawArchitecturalProposal(projectId: string, proposalId: string, reason?: string): Promise<ServerArchitecturalProposal> {
+    const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals/${encodeURIComponent(proposalId)}/withdraw`, reason === undefined ? {} : { reason });
     return body.proposal;
   }
 

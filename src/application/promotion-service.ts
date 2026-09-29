@@ -60,6 +60,7 @@ export function createPromotionService(options: {
        return { id: newId(), proposalResourceId: resource.sourceResourceId, operation: kind, path: resource.path, type: resource.type, ...(baseResourceId ? { baseResourceId, basePath: resource.basePath, baseRevision } : {}), resultingResourceId, resultingRevision, resultingLifecycle: kind === "RETIRE" ? "RETIRED" : "ACTIVE" };
     });
     const blockers: PromotionPreview["blockers"] = [];
+    if (proposal.status !== "open") blockers.push({ code: `PROPOSAL_${proposal.status.toUpperCase()}`, message: `This proposal is ${proposal.status} and is not eligible for promotion.` });
     if (proposal.baseSharedRevision !== current.revision) blockers.push({ code: "STALE_BASE", message: "SHARED changed since this proposal was submitted." });
     const legacy = proposal.baseManifestRevision === null;
     const hasLegacySemanticChanges = proposal.semanticMessages.some((message) => (message.operation ?? "ADD") !== "ADD") || proposal.relationships.some((relationship) => (relationship.operation ?? "ADD") !== "ADD");
@@ -153,12 +154,19 @@ export function createPromotionService(options: {
       await options.policy.requirePermission(context, projectId, "project:read");
       const value = await plan(projectId, proposalId);
       const existing = await options.promotions.getForProposal(projectId, proposalId);
-      const blockers = existing?.status === "COMMITTED_COMPLETION_PENDING" ? [...value.blockers, { code: "COMPLETION_PENDING", message: "This promotion committed SQL state and is awaiting authoritative manifest completion." }] : value.blockers;
+      const blockers = existing?.status === "COMMITTED_COMPLETION_PENDING"
+        ? [...value.blockers, { code: "COMPLETION_PENDING", message: "This promotion committed SQL state and is awaiting authoritative manifest completion." }]
+        : existing?.status === "COMPLETED"
+          ? [...value.blockers, { code: "PROMOTION_COMPLETED", message: "This proposal already has completed promotion evidence." }]
+          : value.blockers;
       return { proposalId, projectId, reviewStatus: value.reviewStatus as PromotionPreview["reviewStatus"], eligible: blockers.length === 0, blockers, baseSharedRevision: value.proposal.baseSharedRevision, currentSharedRevision: value.current.revision, staleBase: value.proposal.baseSharedRevision !== value.current.revision, creates: value.entries.filter((entry) => entry.operation === "CREATE"), updates: value.entries.filter((entry) => entry.operation === "UPDATE"), retires: value.entries.filter((entry) => entry.operation === "RETIRE"), semanticIdentityAdditions: value.semanticMessages.filter((message) => message.operation === "ADD").map((message) => message.message.id), semanticIdentityReuses: [], semanticChanges: value.semanticMessages, relationships: value.relationships };
     },
     async execute(context, projectId, proposalId, idempotencyKey) {
       const authorization = await options.policy.requirePermission(context, projectId, "promotion:execute");
       if (authorization.role !== "OWNER") throw forbidden("Only project owners may promote proposals.");
+      const addressed = await options.proposals.get(projectId, proposalId);
+      if (!addressed) throw notFound(`No architectural proposal with id ${proposalId}.`);
+      if (addressed.status !== "open") throw conflict("Only open proposals may be promoted.", { state: addressed.status });
       let prior = await options.promotions.getForProposal(projectId, proposalId);
       if (prior?.status === "COMPLETED") return prior;
       if (prior) { await recover(); prior = await options.promotions.getForProposal(projectId, proposalId); if (prior?.status === "COMPLETED") return prior; throw unavailable("The previous promotion is still awaiting authoritative completion."); }

@@ -88,6 +88,11 @@ export function createAuthoritativeBatchRepository(
       return client.transaction(async (tx) => {
         const existing = await read(tx, input.batchId);
         if (existing) return existing;
+        if (input.promotion) {
+          const proposal = await tx.query("SELECT status FROM architectural_proposals WHERE id = $1 FOR UPDATE", [input.promotion.proposalId]);
+          if (!proposal.rows[0]) throw notFound("The proposal no longer exists.");
+          if (String(proposal.rows[0].status) !== "open") throw conflict("The proposal is no longer open for promotion.", { state: String(proposal.rows[0].status) });
+        }
         if (input.idempotencyKey) {
           const prior = await tx.query(
             "SELECT result, status FROM idempotency_records WHERE actor_id = $1 AND project_id = $2 AND idempotency_key = $3",

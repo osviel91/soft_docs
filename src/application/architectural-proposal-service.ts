@@ -23,23 +23,25 @@ export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePri
 export type PublicArchitecturalProposalSummary = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId">;
 
 function publicProposal(proposal: ArchitecturalProposal): PublicArchitecturalProposal {
-  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
+  const { id, projectId, authorUserId, title, description, status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
   return {
-    id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources,
+    id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources,
     semanticMessages: semanticMessages.map(({ id: messageId, name, kind, operation, baseName, baseKind }) => ({ id: messageId, name, kind, ...(operation === undefined ? {} : { operation }), ...(baseName === undefined ? {} : { baseName }), ...(baseKind === undefined ? {} : { baseKind }) })),
     relationships: relationships.map(({ sourceId, targetId, kind, sourceRole, targetRole, operation, baseFingerprint }) => ({ sourceId, targetId, kind, ...(sourceRole === undefined ? {} : { sourceRole }), ...(targetRole === undefined ? {} : { targetRole }), ...(operation === undefined ? {} : { operation }), ...(baseFingerprint === undefined ? {} : { baseFingerprint }) })),
   };
 }
 
 function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitecturalProposalSummary {
-  const { id, projectId, authorUserId, title, description, status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision } = summary;
-  return { id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision };
+  const { id, projectId, authorUserId, title, description, status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision } = summary;
+  return { id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision };
 }
 
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
   get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string }>;
   submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  withdraw(context: ApplicationContext, input: { projectId: string; proposalId: string; reason?: string }): Promise<PublicArchitecturalProposal>;
   validate(context: ApplicationContext, projectId: string, proposalId: string): Promise<{ diagnostics: ProjectDiagnostic[]; index: ProjectIndex }>;
   trace(context: ApplicationContext, projectId: string, proposalId: string, input: { messageId: string; direction: TraceDirection; maxDepth: number; maxNodes: number; includeCandidates: boolean; includeRecovery: boolean }): Promise<{ trace: ArchitectureTrace | null; resolution: unknown }>;
   reviews(context: ApplicationContext, projectId: string, proposalId: string): Promise<ProposalReviewSummary>;
@@ -81,6 +83,52 @@ export function createArchitecturalProposalService(options: {
     const analyses = files.map(({ descriptor, content }) => analyzeResource(descriptor, content));
     return buildProjectIndex(proposal.projectId, analyses, metadata, (core) => validateProject(core, analyses.flatMap((analysis) => analysis.diagnostics), metadata));
   };
+  const prepare = async (context: ApplicationContext, input: Parameters<ArchitecturalProposalService["submit"]>[1]) => {
+    const source = await options.knowledgeContexts.findPrivate(input.projectId, input.sourcePrivateContextId, context.principal.subjectUserId);
+    if (!source) throw notFound(`No private work context with id ${input.sourcePrivateContextId}.`);
+    if (source.lifecycle !== "active") throw invalid("Archived private work cannot be submitted.");
+    const title = input.title.trim();
+    if (!title) throw invalid("A proposal title is required.");
+    const ids = [...new Set(input.resourceIds)];
+    const retireIds = [...new Set(input.retireResourceIds ?? [])];
+    if (ids.length === 0 && retireIds.length === 0) throw invalid("Select at least one private resource or explicit retirement target.");
+    const resources = await options.projects.listResources(input.projectId, source.id);
+    const selected = resources.filter((resource) => ids.includes(resource.id));
+    if (selected.length !== ids.length) throw notFound("One or more selected private resources are not available.");
+    const privateMessages = await options.knowledgeContexts.listPrivateMessages(input.projectId, source.id);
+    const currentContents = await Promise.all(selected.map(async (resource) => (await options.projects.getRevision(resource.id, resource.revision))?.content ?? ""));
+    const privateMessageIds = privateMessages.filter((message) => currentContents.some((content) => content.includes(message.id))).map((message) => message.id);
+    const base = await options.proposals.currentSharedRevision(input.projectId);
+    let baseManifestRevision = 0;
+    if (options.storage) {
+      const manifest = await options.storage(input.projectId).read("project.json");
+      if (manifest.ok && manifest.value) {
+        try { baseManifestRevision = parseProjectMetadata(JSON.parse(manifest.value.content))?.manifestRevision ?? 0; } catch { throw invalid("The project manifest is not valid JSON."); }
+      }
+    }
+    const shared = await options.projects.listResources(input.projectId, null);
+    const retirementTargets = shared.filter((resource) => retireIds.includes(resource.id));
+    if (retirementTargets.length !== retireIds.length) throw notFound("One or more retirement targets are not active SHARED resources.");
+    let sharedMetadata: ProjectMetadata = createEmptyMetadata();
+    if (options.storage) {
+      const stored = await options.storage(input.projectId).read("project.json");
+      if (stored.ok && stored.value) sharedMetadata = parseProjectMetadata(JSON.parse(stored.value.content)) ?? sharedMetadata;
+    }
+    const semanticMessages = (input.semanticMessages ?? []).map((message) => {
+      const existing = sharedMetadata.semanticMessages?.find((candidate) => candidate.id === message.id);
+      return { ...message, ...(message.operation !== "ADD" && existing && message.baseName === undefined ? { baseName: existing.name, baseKind: existing.kind } : {}) };
+    });
+    const relationships = input.relationshipOperations ?? [];
+    return {
+      projectId: input.projectId, authorUserId: context.principal.subjectUserId, sourcePrivateContextId: source.id, title,
+      ...(input.description === undefined ? {} : { description: input.description }),
+      selections: selected.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision, ...((input.resourceOperations ?? []).find((operation) => operation.resourceId === resource.id) ?? {}) })),
+      retirements: retirementTargets.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })), privateMessageIds,
+      baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources, baseManifestRevision,
+      ...(input.semanticMessages === undefined ? {} : { semanticMessages }),
+      ...(relationships.length === 0 ? {} : { relationships }),
+    };
+  };
 
   return {
     async list(context, projectId) {
@@ -106,7 +154,7 @@ export function createArchitecturalProposalService(options: {
       const current = await options.proposals.currentSharedRevision(projectId);
       return { ...publicProposal(proposal), staleBase: proposal.baseSharedRevision !== current.revision, currentSharedRevision: current.revision };
     },
-    async submit(context, input) {
+     async submit(context, input) {
       await requireSubmit(context, input.projectId);
       const source = await options.knowledgeContexts.findPrivate(input.projectId, input.sourcePrivateContextId, context.principal.subjectUserId);
       if (!source) throw notFound(`No private work context with id ${input.sourcePrivateContextId}.`);
@@ -167,8 +215,34 @@ export function createArchitecturalProposalService(options: {
         authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId,
          detail: { proposalId: proposal.id, sourcePrivateContextId: source.id, resourceIds: proposal.resources.map((resource) => resource.sourceResourceId), retirementResourceIds: retireIds, baseSharedRevision: proposal.baseSharedRevision },
       });
-      return publicProposal(proposal);
-    },
+       return publicProposal(proposal);
+     },
+     async revise(context, input) {
+       await requireSubmit(context, input.projectId);
+       const prior = await options.proposals.get(input.projectId, input.proposalId);
+       if (!prior) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+       if (prior.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may revise it.");
+       if (prior.status !== "open") throw conflict("Only open proposals may be revised.", { state: prior.status });
+       const prepared = await prepare(context, input);
+       try {
+         if (!options.proposals.revise) throw invalid("Proposal revision is not configured.");
+         const proposal = await options.proposals.revise({ ...prepared, proposalId: input.proposalId, supersedesProposalId: input.proposalId });
+         await options.audit?.record({ action: "proposal.revised", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId, detail: { proposalId: proposal.id, supersedesProposalId: input.proposalId, baseSharedRevision: proposal.baseSharedRevision } });
+         return publicProposal(proposal);
+       } catch (error) { throw conflict(error instanceof Error ? error.message : "Proposal revision conflicted with current state."); }
+     },
+     async withdraw(context, input) {
+       await requireSubmit(context, input.projectId);
+       const proposal = await options.proposals.get(input.projectId, input.proposalId);
+       if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+       if (proposal.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may withdraw it.");
+       try {
+         if (!options.proposals.withdraw) throw invalid("Proposal withdrawal is not configured.");
+         const withdrawn = await options.proposals.withdraw(input.proposalId, context.principal.subjectUserId, input.reason);
+         await options.audit?.record({ action: "proposal.withdrawn", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId, detail: { proposalId: input.proposalId, reason: input.reason ?? null } });
+         return publicProposal(withdrawn);
+       } catch (error) { throw conflict(error instanceof Error ? error.message : "Proposal withdrawal conflicted with current state."); }
+     },
     async validate(context, projectId, proposalId) {
       await requireRead(context, projectId);
       const proposal = await options.proposals.get(projectId, proposalId);
@@ -199,8 +273,9 @@ export function createArchitecturalProposalService(options: {
     async review(context, input) {
       await policy.requirePermission(context, input.projectId, "resource:update");
       if (!options.reviews) throw invalid("Proposal reviews are not configured.");
-      const proposal = await options.proposals.get(input.projectId, input.proposalId);
-      if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+       const proposal = await options.proposals.get(input.projectId, input.proposalId);
+       if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+       if (proposal.status !== "open") throw conflict("Only open proposals may be reviewed.", { state: proposal.status });
       if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId) throw invalid("Proposal authors cannot approve their own proposal.");
       const summary = input.summary?.trim();
       if (summary !== undefined && summary.length > 4000) throw invalid("Review summary must be 4000 characters or fewer.");
