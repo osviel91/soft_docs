@@ -146,6 +146,36 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-proposal")).toBeInTheDocument();
   });
 
+  it("opens a proposal by its stable id without depending on its status", () => {
+    const onOpenArchitecturalProposal = vi.fn();
+    render(
+      <Explorer
+        projects={[project]}
+        diagrams={[diagram]}
+        selectedProjectId={project.id}
+        selectedDiagramId={diagram.id}
+        isLoading={false}
+        onCreateProject={vi.fn()}
+        onLoadDiagram={vi.fn()}
+        serverMode
+        architecturalProposals={[{
+          id: "proposal-42",
+          title: "Document governed publication model",
+          authorUserId: "current-user",
+          status: "open",
+          baseSharedRevision: "r1",
+          reviewStatus: "none",
+        }]}
+        onOpenArchitecturalProposal={onOpenArchitecturalProposal}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("explorer-proposals-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: "Open proposal Document governed publication model" }));
+
+    expect(onOpenArchitecturalProposal).toHaveBeenCalledWith("proposal-42");
+  });
+
   it("offers creation only in MY WORK, never direct proposal creation", () => {
     const onCreateMyWork = vi.fn();
     render(

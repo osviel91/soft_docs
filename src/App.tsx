@@ -468,6 +468,11 @@ export default function App() {
   const [reviewReadOnly, setReviewReadOnly] = useState(false);
   const [proposalRefreshKey, setProposalRefreshKey] = useState(0);
 
+  const openArchitecturalProposal = useCallback((proposalId: string): void => {
+    setArchitecturalProposalContextId(null);
+    setArchitecturalProposalId(proposalId);
+  }, []);
+
   const resizePane = useCallback(
     (pane: "explorer" | "editor", clientX: number): void => {
       const workspace = workspaceRef.current;
@@ -2749,10 +2754,17 @@ export default function App() {
                   notes={notes}
                   privateWorkContexts={server.privateWorkContexts}
                   architecturalProposals={server.architecturalProposals}
-                   onOpenArchitecturalProposal={setArchitecturalProposalId}
-                   onSubmitArchitecturalProposal={setArchitecturalProposalContextId}
+                    onOpenArchitecturalProposal={openArchitecturalProposal}
+                    onSubmitArchitecturalProposal={(contextId) => {
+                      setArchitecturalProposalId(null);
+                      setArchitecturalProposalContextId(contextId);
+                    }}
                      onCreateMyWork={() => { void createServerKnowledge(); }}
-                    onOpenMyWork={(contextId) => { void server.openPrivateWork(contextId); }}
+                    onOpenMyWork={(contextId) => {
+                      setArchitecturalProposalId(null);
+                      setArchitecturalProposalContextId(null);
+                      void server.openPrivateWork(contextId);
+                    }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
                    activeContextId={server.active?.contextId ?? null}
