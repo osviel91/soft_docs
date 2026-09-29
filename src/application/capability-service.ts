@@ -23,6 +23,7 @@ export type CapabilityReason =
   | "scope"
   | "forbidden"
   | "not_owner"
+  | "self_review"
   | "archived_context"
   | "proposal_not_eligible"
   | "review_required"
@@ -103,6 +104,10 @@ export function createCapabilityService(options: {
         };
       }
       const review = await permission(context, projectId, "proposal.review", "resource:update");
+      if (review.allowed && proposal.authorUserId === context.principal.subjectUserId) {
+        review.allowed = false;
+        review.reason = "self_review";
+      }
       const preview = await permission(context, projectId, "proposal.previewPromotion", "project:read");
       const promotePermission = await permission(context, projectId, "proposal.promote", "promotion:execute");
       if (!promotePermission.allowed) return { "proposal.review": review, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };

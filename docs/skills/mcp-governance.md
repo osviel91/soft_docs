@@ -10,6 +10,8 @@ Use this process for every agent interaction with Software Docs Manager.
 - **REVIEW** records `APPROVE` or `REQUEST_CHANGES`. Review does not publish.
 - **PROMOTION** is the explicit authoritative transition. `PromotionService` revalidates permission, OWNER role, readiness, current preview, and conflicts at execution.
 
+Proposal authors cannot approve their own proposals. Inspect proposal target capabilities before attempting review; capability results are advisory and the review command rechecks this invariant.
+
 ## Workflow
 
 1. Call `list_projects` and inspect the project.

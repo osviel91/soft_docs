@@ -78,7 +78,8 @@ export function createArchitecturalProposalService(options: {
       ...sharedFiles.flatMap(({ resource, revision }) => revision ? [{ descriptor: { id: resource.id, projectId: proposal.projectId, path: resource.path, type: resource.type, title: resource.path, provenance: { kind: "shared" as const, id: `shared:${proposal.projectId}` } }, content: revision.content }] : []),
       ...proposal.resources.map((resource) => ({ descriptor: { id: resource.sourceResourceId, projectId: proposal.projectId, path: resource.path, type: resource.type, title: resource.path, provenance: { kind: "proposal" as const, id: proposal.id, label: proposal.title } }, content: resource.content })),
     ];
-    return buildProjectIndex(proposal.projectId, files.map(({ descriptor, content }) => analyzeResource(descriptor, content)), metadata, (core) => validateProject(core, [], metadata));
+    const analyses = files.map(({ descriptor, content }) => analyzeResource(descriptor, content));
+    return buildProjectIndex(proposal.projectId, analyses, metadata, (core) => validateProject(core, analyses.flatMap((analysis) => analysis.diagnostics), metadata));
   };
 
   return {

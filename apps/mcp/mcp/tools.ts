@@ -311,6 +311,23 @@ function describeProposal(proposal: {
   return `- ${proposal.title} [${proposal.status}] id=${proposal.id} resource=${proposal.resourceId} baseRevision=${proposal.baseRevision} version=${proposal.version}`;
 }
 
+function proposalDiagnostics(
+  diagnostics: Awaited<ReturnType<ArchitecturalProposalService["validate"]>>["diagnostics"],
+  resources: Awaited<ReturnType<ArchitecturalProposalService["validate"]>>["index"]["resources"],
+): Array<Record<string, unknown>> {
+  return diagnostics.map((diagnostic) => {
+    const resource = resources.find((entry) => entry.id === diagnostic.resourceId);
+    return {
+      severity: diagnostic.severity,
+      ...(diagnostic.code === undefined ? {} : { code: diagnostic.code }),
+      resourceId: diagnostic.resourceId,
+      ...(resource === undefined ? {} : { path: resource.path }),
+      message: diagnostic.message,
+      ...(diagnostic.sourceRange === undefined ? {} : { sourceRange: diagnostic.sourceRange }),
+    };
+  });
+}
+
 /**
  * Resolve an agent-supplied reference to a resource id.
  *
@@ -926,7 +943,8 @@ export function createMcpTools(): McpTool[] {
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
         const proposal = await toolContext.architecturalProposals.get(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
-        return { text: `${proposal.title}: ${proposal.resources.length} submitted resources.`, structured: { proposal } };
+        const capabilities = await toolContext.capabilities.proposal(toolContext.context, proposal.projectId, proposal.id);
+        return { text: `${proposal.title}: ${proposal.resources.length} submitted resources.`, structured: { proposal, capabilities } };
       },
     },
     {
@@ -937,8 +955,10 @@ export function createMcpTools(): McpTool[] {
       annotations: { ...READ_ONLY, title: "Validate architectural proposal" },
       requiredPermissions: ["project:validate"],
       async run(args, toolContext) {
-        const result = await toolContext.architecturalProposals.validate(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
-        return { text: `${result.diagnostics.length} proposal diagnostics.`, structured: { diagnostics: result.diagnostics } };
+        const project = stringArg(args, "projectId");
+        const result = await toolContext.architecturalProposals.validate(toolContext.context, project, stringArg(args, "proposalId"));
+        const diagnostics = proposalDiagnostics(result.diagnostics, result.index.resources);
+        return { text: `${diagnostics.length} proposal diagnostics.`, structured: { diagnostics } };
       },
     },
     {

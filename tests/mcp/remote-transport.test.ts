@@ -781,4 +781,64 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(Array.isArray(structured(result).diagnostics)).toBe(true);
     await client.close();
   });
+
+  it("exposes proposal target capabilities and detailed validation diagnostics", async () => {
+    const client = await connect(token);
+    const created = await client.callTool({
+      name: "create_resource",
+      arguments: {
+        projectId,
+        path: "proposal-invalid.eventseq",
+        type: "event-flow",
+        content: "event Broken extra",
+      },
+    });
+    const resourceId = structured(created).resource.id;
+    const submitted = await client.callTool({
+      name: "submit_architectural_proposal",
+      arguments: {
+        projectId,
+        sourcePrivateContextId: contextId,
+        resourceIds: [resourceId],
+        title: "Invalid proposal fixture",
+      },
+    });
+    const proposalId = structured(submitted).proposal.id;
+
+    const proposal = await client.callTool({
+      name: "get_architectural_proposal",
+      arguments: { projectId, proposalId },
+    });
+    expect(structured(proposal).capabilities["proposal.review"]).toMatchObject({
+      allowed: false,
+      reason: "self_review",
+    });
+    expect(structured(proposal).proposal.staleBase).toBe(false);
+    expect(structured(proposal).capabilities["proposal.previewPromotion"]).toMatchObject({ allowed: true });
+    expect(structured(proposal).capabilities["proposal.promote"]).toMatchObject({ allowed: false });
+
+    const reviews = await client.callTool({
+      name: "list_architectural_proposal_reviews",
+      arguments: { projectId, proposalId },
+    });
+    expect(structured(reviews).reviews.reviews).toHaveLength(0);
+
+    const preview = await client.callTool({
+      name: "preview_architectural_proposal_promotion",
+      arguments: { projectId, proposalId },
+    });
+    expect(structured(preview).preview).toMatchObject({ eligible: false, reviewStatus: "none" });
+    expect(structured(preview).preview.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "REVIEW_REQUIRED" }),
+    ]));
+
+    const validation = await client.callTool({
+      name: "validate_architectural_proposal",
+      arguments: { projectId, proposalId },
+    });
+    const diagnostics = structured(validation).diagnostics;
+    expect(diagnostics.length).toBeGreaterThan(0);
+    expect(diagnostics[0]).toMatchObject({ severity: expect.any(String), resourceId: expect.any(String), path: "proposal-invalid.eventseq", message: expect.any(String) });
+    await client.close();
+  });
 });
