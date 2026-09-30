@@ -3338,7 +3338,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label="Show proposal details" title="Show proposal details">›</button> : null}
+                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label={architecturalProposalId ? "Show proposal details" : "Show editor"} title={architecturalProposalId ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {architecturalProposalId && proposalInspector.proposalId === architecturalProposalId ? (
                     proposalInspector.diff?.resources.find((entry) => entry.path === proposalInspector.selectedPath) ? <ProposalResourceComparison
                       resource={proposalInspector.diff.resources.find((entry) => entry.path === proposalInspector.selectedPath) ?? null}
