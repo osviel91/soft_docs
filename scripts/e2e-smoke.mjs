@@ -2831,7 +2831,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         const work = page.locator('[data-testid="explorer-private-context"]');
         await work.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        await work.getByRole("button", { name: "Submit for review" }).click();
+        await work.getByRole("button", { name: "Submit new proposal" }).click();
         await page.locator('section[aria-label="Submit architectural proposal"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,

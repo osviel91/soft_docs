@@ -50,6 +50,7 @@ interface FakeState {
   signedIn: boolean;
   contextId: string | null;
   resources: Map<string, FakeResource>;
+  proposals: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; baseSharedRevision: string; submittedAt?: string }>;
   /** Every request the shell made, for asserting the wire. */
   calls: Array<{ method: string; path: string; body: unknown }>;
   /** Answer the next write with a conflict at this revision, once. */
@@ -62,6 +63,7 @@ const state: FakeState = {
   signedIn: false,
   contextId: null,
   resources: new Map(),
+  proposals: [],
   calls: [],
   conflictAt: null,
   networkFails: false,
@@ -168,6 +170,9 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
       );
     }
   }
+  if (path === "/api/projects/p1/architectural-proposals") {
+    return Promise.resolve(reply(200, { proposals: state.proposals }));
+  }
   if (path === "/api/projects/p1/access") {
     return Promise.resolve(
       reply(200, {
@@ -260,6 +265,7 @@ beforeEach(() => {
   state.signedIn = false;
   state.contextId = null;
   state.resources = new Map();
+  state.proposals = [];
   state.calls = [];
   state.conflictAt = null;
   vi.stubGlobal("fetch", fakeFetch);
@@ -355,6 +361,27 @@ describe("App — authenticated browser", () => {
     );
   });
 
+  it("ends a stale revision session when its proposal has been withdrawn", async () => {
+    state.signedIn = true;
+    state.contextId = "work1";
+    state.proposals = [{ id: "proposal-1", title: "Withdrawn proposal", authorUserId: "u1", status: "withdrawn", baseSharedRevision: "shared-1", submittedAt: new Date(0).toISOString() }];
+    state.resources = new Map([
+      ["r1", { id: "r1", projectId: "p1", path: "work.seq", type: "sequence-diagram", revision: 1, content: "title Private work" }],
+    ]);
+    window.history.replaceState({}, "", "/?project=p1&context=work1&resource=r1&proposal=proposal-1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Private work");
+      expect(new URLSearchParams(window.location.search).get("proposal")).toBeNull();
+    });
+    const proposalRow = await screen.findByTestId("explorer-proposal");
+    expect(proposalRow).toHaveTextContent("WITHDRAWN");
+    expect(proposalRow).not.toHaveAttribute("data-revising", "true");
+    expect(screen.queryByTestId("explorer-revision-origin")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review and submit…" })).not.toBeInTheDocument();
+  });
+
   it("keeps the second MY WORK resource selected instead of replaying the previous URL selection", async () => {
     state.signedIn = true;
     state.contextId = "work1";
@@ -431,6 +458,10 @@ describe("App — authenticated browser", () => {
     window.history.replaceState({}, "", "/?project=p1&context=work1");
     window.dispatchEvent(new PopStateEvent("popstate"));
     const myWork = screen.getByTestId("explorer-my-work-section");
+    const myWorkToggle = within(myWork).getByTestId("explorer-my-work-toggle");
+    if (myWorkToggle.getAttribute("aria-expanded") !== "true") {
+      await act(async () => fireEvent.click(myWorkToggle));
+    }
     await waitFor(() => expect(within(myWork).getByTestId("explorer-diagram")).toBeInTheDocument());
 
     // Right-click the row, choose Rename, and confirm the new name.

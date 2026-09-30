@@ -763,6 +763,17 @@ export default function App() {
   }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation]);
 
   useEffect(() => {
+    if (!revisionProposalId) return;
+    const proposal = server.architecturalProposals.find((item) => item.id === revisionProposalId);
+    if (!proposal || (proposal.status === "open" && !["PROMOTING", "PROMOTED"].includes(proposal.lifecycle?.state ?? ""))) return;
+    setRevisionProposalId(null);
+    setRevisionResources([]);
+    revisionTabsOpened.current = null;
+    setRevisionReturnContext(null);
+    setArchitecturalProposalContextId(null);
+  }, [revisionProposalId, server.architecturalProposals]);
+
+  useEffect(() => {
     if (browserResourceLoaded.current) return;
     if (!server.active?.contextId || !browserLocationState.resourceId) return;
     if (selectedDiagramId === browserLocationState.resourceId || selectedNoteId === browserLocationState.resourceId) {

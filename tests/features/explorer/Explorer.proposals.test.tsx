@@ -44,6 +44,16 @@ describe("Explorer proposal indicators", () => {
     expect(screen.getByText("SUPERSEDED")).toBeInTheDocument();
   });
 
+  it("does not mark withdrawn proposals as revising and names MY WORK submission as a new proposal", () => {
+    render(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} architecturalProposals={[
+      { id: "withdrawn", title: "Withdrawn", authorUserId: "u", status: "withdrawn", baseSharedRevision: "r", lifecycle: { state: "WITHDRAWN" } },
+    ]} revisingProposalId="withdrawn" />);
+
+    expect(screen.getByRole("button", { name: "Submit new proposal" })).toBeInTheDocument();
+    expect(screen.getByTestId("explorer-proposal")).not.toHaveAttribute("data-revising", "true");
+    expect(screen.queryByTestId("explorer-revision-origin")).not.toBeInTheDocument();
+  });
+
   it("expands populated private work and keeps proposal selection across refreshes", () => {
     const proposal = { id: "proposal-1", title: "Same title", authorUserId: "u", status: "open" as const, baseSharedRevision: "r", submittedAt: "2026-01-01T00:00:00Z" };
     const view = render(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} architecturalProposals={[proposal]} selectedProposalId={proposal.id} />);
