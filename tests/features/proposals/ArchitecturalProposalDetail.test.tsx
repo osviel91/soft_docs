@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ArchitecturalProposalDetail, ProposalResourceComparison } from "../../../src/features/proposals/ArchitecturalProposalDetail";
 import type { ServerApiClient, ServerArchitecturalProposalDiff, ServerArchitecturalProposal } from "../../../src/workspace/server/api-client";
+import { diffResources } from "../../../src/domain/diff/resource-diff";
 
 const diff: ServerArchitecturalProposalDiff = {
   proposalId: "proposal-1",
@@ -103,5 +104,52 @@ describe("ProposalResourceComparison", () => {
     expect(screen.getAllByText((_, element) => element?.textContent?.includes("New explanation") === true).length).toBeGreaterThan(0);
     expect(screen.getAllByText("BASE")).toHaveLength(1);
     expect(screen.getAllByText("PROPOSED")).toHaveLength(1);
+  });
+
+  it("marks changed Markdown lines in side-by-side even when the source flag is stale", () => {
+    const baseContent = "# Data contracts\n\nExisting content";
+    const proposedContent = `${baseContent}\n\nREVISIONNOTECHANGE`;
+    const computed = diffResources(
+      { content: baseContent, type: "markdown-document" },
+      { content: proposedContent, type: "markdown-document" },
+    );
+    const resource = {
+      ...computed,
+      path: "data-contracts.md",
+      type: "markdown-document" as const,
+      operation: "MODIFIED" as const,
+      baseContent,
+      proposedContent,
+      source: { ...computed.source, changed: false },
+    };
+    render(<ProposalResourceComparison resource={resource} mode="side-by-side" onModeChange={vi.fn()} />);
+
+    expect(screen.queryByText("No textual changes.")).not.toBeInTheDocument();
+    expect(screen.getByText("REVISIONNOTECHANGE").closest(".proposal-review__line")).toHaveClass("proposal-review__line--added");
+  });
+
+  it("leaves the submitted side empty for an artifact added by the proposal", async () => {
+    const baseContent = "";
+    const proposedContent = "title New artifact\nparticipant AddedOnly\n";
+    const computed = diffResources(
+      { content: baseContent, type: "sequence-diagram" },
+      { content: proposedContent, type: "sequence-diagram" },
+    );
+    const resource = {
+      ...computed,
+      path: "new.seq",
+      type: "sequence-diagram" as const,
+      operation: "ADDED" as const,
+      baseContent,
+      proposedContent,
+    };
+    render(<ProposalResourceComparison resource={resource} mode="compare" onModeChange={vi.fn()} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" />);
+
+    const basePane = screen.getByRole("heading", { name: "SUBMITTED VERSION" }).closest("section");
+    const myWorkPane = screen.getByRole("heading", { name: "MY WORK NOW" }).closest("section");
+    expect(basePane).not.toContainHTML("AddedOnly");
+    expect(myWorkPane).toContainHTML("AddedOnly");
+    expect(basePane?.querySelectorAll(".review-change--added, .review-change--removed")).toHaveLength(0);
+    expect(myWorkPane?.querySelectorAll(".review-change--added").length).toBeGreaterThan(0);
   });
 });

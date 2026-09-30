@@ -2983,6 +2983,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             check("revision inspector compares submitted content with MY WORK", (await revisionInspector.textContent() ?? "").includes("SUBMITTED VERSION") && (await revisionInspector.textContent() ?? "").includes("MY WORK NOW"));
             await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').nth(1).click();
             await waitForText(revisionInspector, (text) => text.includes("governance-context.md"), "companion artifact comparison");
+            const revisionNote = page.locator('[data-testid="markdown-textarea"]');
+            await revisionNote.fill("# Governance context\n\nCompanion proposal resource.\n\nREVISIONNOTECHANGE");
+            await waitForServerContent(page, projectName, (content) => content.includes("REVISIONNOTECHANGE"), "the revision markdown edit", contextId);
+            await waitForText(revisionInspector, (text) => text.includes("REVISIONNOTECHANGE"), "revision markdown diff refresh");
+            const addedNoteLines = revisionInspector.locator(".proposal-detail__side-by-side .proposal-review__line--added").filter({ hasText: "REVISIONNOTECHANGE" });
+            check("side-by-side marks changed note lines as additions", await addedNoteLines.count() === 1, `added=${await addedNoteLines.count()}`);
             await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').first().click();
             await waitForText(revisionInspector, (text) => text.includes(".seq"), "diagram comparison restored");
             await page.getByRole("button", { name: /Review and submit/ }).click();
