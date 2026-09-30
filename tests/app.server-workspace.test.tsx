@@ -355,6 +355,35 @@ describe("App — authenticated browser", () => {
     );
   });
 
+  it("keeps the second MY WORK resource selected instead of replaying the previous URL selection", async () => {
+    state.signedIn = true;
+    state.contextId = "work1";
+    window.history.replaceState({}, "", "/?project=p1&context=work1&resource=r1");
+    state.resources = new Map([
+      ["r1", { id: "r1", projectId: "p1", path: "first.seq", type: "sequence-diagram", revision: 1, content: "title First" }],
+      ["r2", { id: "r2", projectId: "p1", path: "second.seq", type: "sequence-diagram", revision: 1, content: "title Second" }],
+    ]);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTestId("dsl-textarea")).toHaveValue("title First"));
+
+    const myWork = await screen.findByTestId("explorer-my-work-section");
+    if (within(myWork).getByTestId("explorer-my-work-toggle").getAttribute("aria-expanded") !== "true") {
+      await act(async () => fireEvent.click(within(myWork).getByTestId("explorer-my-work-toggle")));
+    }
+    const rows = within(myWork).getAllByTestId("explorer-diagram");
+    expect(rows).toHaveLength(2);
+    await act(async () => fireEvent.click(within(rows[1]).getByTestId("select-diagram-button")));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Second");
+      expect(new URLSearchParams(window.location.search).get("resource")).toBe("r2");
+      expect(within(myWork).getAllByTestId("explorer-diagram")[1]).toHaveClass("explorer__resource--selected");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Second");
+  });
+
   it("refreshes externally changed server data without reloading the page", async () => {
     await openServerProject();
     const editor = screen.getByTestId("dsl-textarea");

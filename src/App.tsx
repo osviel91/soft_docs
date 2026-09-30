@@ -501,6 +501,7 @@ export default function App() {
   const [browserLocationState, setBrowserLocationState] = useState<BrowserLocation>(() => browserLocation());
   const browserLocationHydrated = useRef(false);
   const browserLocationLoaded = useRef(false);
+  const browserResourceLoaded = useRef(false);
   const navigationProjectRequested = useRef<string | null>(null);
 
   const setBrowserLocation = useCallback((next: BrowserLocation, replace = false): void => {
@@ -512,6 +513,7 @@ export default function App() {
     const onPopState = () => {
       setBrowserLocationState(browserLocation());
       browserLocationLoaded.current = false;
+      browserResourceLoaded.current = false;
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -759,12 +761,21 @@ export default function App() {
   }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation]);
 
   useEffect(() => {
+    if (browserResourceLoaded.current) return;
     if (!server.active?.contextId || !browserLocationState.resourceId) return;
-    if (selectedDiagramId === browserLocationState.resourceId || selectedNoteId === browserLocationState.resourceId) return;
+    if (selectedDiagramId === browserLocationState.resourceId || selectedNoteId === browserLocationState.resourceId) {
+      browserResourceLoaded.current = true;
+      return;
+    }
     const diagram = diagrams.find((file) => file.id === browserLocationState.resourceId);
     const note = notes.find((file) => file.id === browserLocationState.resourceId);
-    if (diagram) loadDiagram(diagram);
-    else if (note) loadNote(note);
+    if (diagram) {
+      browserResourceLoaded.current = true;
+      loadDiagram(diagram);
+    } else if (note) {
+      browserResourceLoaded.current = true;
+      loadNote(note);
+    }
   }, [browserLocationState.resourceId, diagrams, loadDiagram, loadNote, notes, selectedDiagramId, selectedNoteId, server.active?.contextId]);
 
   // The document the workspace has selected, in the shape the tab strip speaks.
