@@ -57,6 +57,26 @@ function client(): ServerApiClient {
 }
 
 describe("ArchitecturalProposalDetail", () => {
+  it("groups proposal actions and matches the workspace hide-control styling", async () => {
+    const api = client();
+    vi.mocked(api.getArchitecturalProposal).mockResolvedValue({
+      ...proposal,
+      capabilities: {
+        ...proposal.capabilities,
+        "proposal.revise": { capability: "proposal.revise", allowed: true },
+        "proposal.withdraw": { capability: "proposal.withdraw", allowed: true },
+      },
+    });
+    render(<ArchitecturalProposalDetail client={api} projectId="project-1" proposalId="proposal-1" onBack={vi.fn()} onHideDetails={vi.fn()} onRevise={vi.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: proposal.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide proposal details" })).toHaveClass("button", "button--ghost", "button--small");
+    expect(screen.getByText("Proposal actions").closest("details")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Proposal actions"));
+    expect(screen.getByRole("button", { name: "Edit revision" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Withdraw proposal" })).toBeInTheDocument();
+  });
+
   it("keeps the center concise and sends the selected canonical change to the inspector", async () => {
     const onDiffLoaded = vi.fn();
     render(<ArchitecturalProposalDetail client={client()} projectId="project-1" proposalId="proposal-1" authorDisplayName="Alice Reviewer" selectedDiffPath="overview.md" onDiffLoaded={onDiffLoaded} onBack={vi.fn()} />);
