@@ -123,9 +123,17 @@ body {
 .proposal-inspector .proposal-detail__comparison-panes { flex: 1 1 auto; min-height: 0; margin-top: 16px; }
 .proposal-inspector .proposal-detail__comparison-panes > section { overflow: auto; padding: 12px; background: var(--bg-panel); border: 1px solid var(--border); }
 .proposal-inspector .proposal-detail__source-diff { padding-top: 16px; }
-.revision-session { margin: 0; padding: 12px 16px; }
-.revision-session > span { display: block; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
-.revision-session > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.revision-session { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; margin: 0; padding: 8px 12px; overflow: visible; }
+.revision-session__identity { display: grid; min-width: 0; gap: 2px; }
+.revision-session__identity .governance-eyebrow { margin: 0; }
+.revision-session__identity > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revision-session__identity > span { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.revision-session__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.revision-session__actions button { margin: 0; }
+@media (max-width: 560px) {
+  .revision-session { grid-template-columns: minmax(0, 1fr); }
+  .revision-session__actions { justify-content: flex-start; }
+}
 
 .proposal-review-panel {
   display: flex;
