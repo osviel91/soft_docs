@@ -21,11 +21,12 @@ interface Props {
   selectedDiffPath?: string | null;
   onSelectDiff?: (path: string) => void;
   onDiffLoaded?: (diff: ServerArchitecturalProposalDiff) => void;
+  onHideDetails?: () => void;
 }
 
 export type ComparisonMode = "unified" | "side-by-side" | "rendered" | "before" | "after" | "compare";
 
-export function ArchitecturalProposalDetail({ client, projectId, proposalId, onBack, onChanged, onOpenShared, onOpenProposal, onRevise, authorDisplayName, selectedDiffPath: controlledPath, onSelectDiff, onDiffLoaded }: Props) {
+export function ArchitecturalProposalDetail({ client, projectId, proposalId, onBack, onChanged, onOpenShared, onOpenProposal, onRevise, authorDisplayName, selectedDiffPath: controlledPath, onSelectDiff, onDiffLoaded, onHideDetails }: Props) {
   const [proposal, setProposal] = useState<ServerArchitecturalProposal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ServerProposalReviewSummary | null>(null);
@@ -78,7 +79,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
   const reviewSection = <section aria-label="Proposal review"><h3>Review state</h3><p>{reviews?.status ?? "none"} · {reviews?.approvals ?? 0} approvals · {reviews?.changesRequested ?? 0} change requests</p><ul>{reviews?.reviews.map((review) => <li key={review.id}><strong>{review.decision === "APPROVE" ? "Approved" : "Changes requested"}</strong> by {review.reviewerDisplayName ?? review.reviewerUserId} on {new Date(review.createdAt).toLocaleString()}{review.summary ? `: ${review.summary}` : ""}</li>)}</ul>{!reviewLocked && reviewCapability?.allowed ? <fieldset><legend>Decision</legend><label>Review summary <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Add a review summary (optional)" maxLength={4000} /></label><div className="proposal-detail__decision-actions"><button type="button" onClick={() => void submitReview("REQUEST_CHANGES")}>Request changes</button><button type="button" className="button button--primary" onClick={() => void submitReview("APPROVE")}>Approve proposal</button></div><p>Approval records review evidence only. It does not promote the proposal or modify SHARED.</p></fieldset> : !reviewLocked && reviewCapability ? <p role="status">Review unavailable: {capabilityMessage(reviewCapability.reason)}</p> : null}</section>;
 
   return <section className="proposal-detail" aria-label="Architectural Proposal">
-    <button type="button" onClick={onBack}>Back to proposals</button>
+      <div className="proposal-detail__toolbar">{onHideDetails ? <button type="button" onClick={onHideDetails}>Hide proposal details</button> : null}</div>
      <p className="governance-eyebrow">PROPOSAL / DECISION</p>
      <h2>{proposal.title}</h2>
      <p className="proposal-detail__intent">{proposal.description ?? "No description."}</p>
@@ -174,9 +175,17 @@ function alignLines(oldLines: string[], newLines: string[], hunks: ServerArchite
       if (newLine !== undefined) newIndex += 1;
     }
   }
-  while (oldIndex < oldLines.length || newIndex < newLines.length) {
-    rows.push({ oldLine: oldLines[oldIndex] ?? "", newLine: newLines[newIndex] ?? "", oldNumber: oldIndex < oldLines.length ? oldIndex + 1 : null, newNumber: newIndex < newLines.length ? newIndex + 1 : null, changed: oldLines[oldIndex] !== newLines[newIndex] });
+  while (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+    rows.push({ oldLine: oldLines[oldIndex], newLine: newLines[newIndex], oldNumber: oldIndex + 1, newNumber: newIndex + 1, changed: false });
     oldIndex += 1;
+    newIndex += 1;
+  }
+  while (oldIndex < oldLines.length) {
+    rows.push({ oldLine: oldLines[oldIndex], newLine: "", oldNumber: oldIndex + 1, newNumber: null, changed: true });
+    oldIndex += 1;
+  }
+  while (newIndex < newLines.length) {
+    rows.push({ oldLine: "", newLine: newLines[newIndex], oldNumber: null, newNumber: newIndex + 1, changed: true });
     newIndex += 1;
   }
   return rows;

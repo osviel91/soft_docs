@@ -87,6 +87,7 @@ body {
 .proposal-detail__facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
 .proposal-detail__facts dt { color: var(--text-muted); }
 .proposal-detail__facts dd { margin: 0; }
+.proposal-detail__toolbar { display: flex; justify-content: flex-end; }
 .proposal-detail__changes { margin: 24px 0; }
 .proposal-detail__changes ul, .proposal-detail section ul { padding-left: 20px; }
 .proposal-detail section { margin: 22px 0; padding: 16px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -99,6 +100,9 @@ body {
 .proposal-detail__comparison-panes, .proposal-detail__side-by-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .proposal-detail__comparison-panes > section { min-width: 0; }
 .proposal-detail__source-diff, .proposal-detail__side-by-side { overflow: auto; font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; }
+.proposal-detail__side-by-side { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.proposal-detail__side-by-side > div { min-width: 0; overflow: auto; }
+.proposal-detail__side-by-side .proposal-review__line { min-width: max-content; white-space: pre; }
 .proposal-detail__source-diff > div { margin-bottom: 12px; }
 .proposal-detail__intent { max-width: 68ch; font-size: 16px; line-height: 1.5; }
 .proposal-detail__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -109,6 +113,7 @@ body {
 .proposal-inspector__header h3 { margin: 0; overflow-wrap: anywhere; }
 .proposal-inspector__header nav { display: flex; flex-wrap: wrap; gap: 4px; }
 .proposal-inspector__header nav button[aria-pressed="true"] { color: var(--on-accent); background: var(--accent); }
+.proposal-inspector__header nav button { margin: 0; }
 .proposal-inspector > .proposal-detail__source-diff, .proposal-inspector > .proposal-detail__side-by-side { flex: 1 1 auto; margin-top: 16px; }
 .proposal-inspector .proposal-detail__comparison-panes { flex: 1 1 auto; min-height: 0; margin-top: 16px; }
 .proposal-inspector .proposal-detail__comparison-panes > section { overflow: auto; padding: 12px; background: var(--bg-panel); border: 1px solid var(--border); }
@@ -4483,6 +4488,8 @@ body {
 .explorer__context-list button { min-width: 0; overflow: hidden; color: var(--text); background: transparent; border: 0; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .explorer__context-list button:hover,
 .explorer__context-list button:focus-visible { color: var(--accent); }
+.explorer__context-item--selected { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.explorer__context-item--selected button { color: var(--accent); font-weight: 600; }
 .explorer__context-list li > button:last-child { flex: 0 0 auto; color: var(--accent); font-size: 11px; }
 .explorer__local-binding { margin: 0; padding: 8px 16px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 720px) {
