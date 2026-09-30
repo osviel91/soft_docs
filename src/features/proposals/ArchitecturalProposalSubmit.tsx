@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ServerApiClient, ServerResource } from "../../workspace/server/api-client";
 
-export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, revisionProposalTitle, onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; revisionProposalTitle?: string; onDone: (proposalId: string) => void | Promise<void>; onCancel: () => void }) {
+export function ArchitecturalProposalSubmit({ client, projectId, contextId, revisionProposalId, revisionProposalTitle, initialTitle = "", initialDescription = "", initialResourceIds = [], onDone, onCancel }: { client: ServerApiClient; projectId: string; contextId: string; revisionProposalId?: string | null; revisionProposalTitle?: string; initialTitle?: string; initialDescription?: string; initialResourceIds?: string[]; onDone: (proposalId: string) => void | Promise<void>; onCancel: () => void }) {
   const [resources, setResources] = useState<ServerResource[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const initialResourceIdsRef = useRef(initialResourceIds);
+  const [selected, setSelected] = useState<string[]>(initialResourceIds);
+  const [title, setTitle] = useState(initialTitle);
+  const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [revisionConfirmOpen, setRevisionConfirmOpen] = useState(false);
-  useEffect(() => { void client.listResources(projectId, contextId).then(setResources).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Private resources could not be loaded.")); }, [client, projectId, contextId]);
+   useEffect(() => { let current = true; void client.listResources(projectId, contextId).then((next) => { if (!current) return; setResources(next); setSelected((selectedNow) => selectedNow.length > 0 ? selectedNow : initialResourceIdsRef.current.filter((id) => next.some((resource) => resource.id === id))); }).catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : "Private resources could not be loaded."); }); return () => { current = false; }; }, [client, projectId, contextId]);
   const submit = async () => {
     setSubmitting(true); setError(null);
      try {
@@ -22,8 +23,8 @@ export function ArchitecturalProposalSubmit({ client, projectId, contextId, revi
     catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal could not be submitted."); }
     finally { setSubmitting(false); }
   };
-  return <section className="proposal-submit governance-card" aria-label="Submit architectural proposal">
-     <button type="button" onClick={onCancel}>{revisionProposalId ? "Back to source proposal" : "Back to MY WORK"}</button><p className="governance-eyebrow">MY WORK to PROPOSAL</p><h2>{revisionProposalId ? "Submit revision" : "Submit for review"}</h2>
+    return <section className="proposal-submit governance-card" role="dialog" aria-modal="false" aria-label="Submit architectural proposal">
+      <button type="button" className="button button--ghost button--small" onClick={onCancel}>{revisionProposalId ? "Back to editing" : "Back to MY WORK"}</button><p className="governance-eyebrow">MY WORK to PROPOSAL</p><h2>{revisionProposalId ? "Review and submit revision" : "Submit for review"}</h2>
      {revisionProposalId ? <p role="status">Revising <strong>{revisionProposalTitle ?? revisionProposalId}</strong>. The source proposal remains unchanged until submission.</p> : null}
      <p>{revisionProposalId ? "Editing happens in MY WORK. This will create a new immutable proposal, supersede the current proposal, preserve its reviews on the old snapshot, and leave SHARED unchanged." : "Choose the private resources to include. The submission becomes an immutable, non-authoritative proposal."}</p>
     <label>Proposal title<input aria-label="Proposal title" value={title} onChange={(event) => setTitle(event.target.value)} /></label>

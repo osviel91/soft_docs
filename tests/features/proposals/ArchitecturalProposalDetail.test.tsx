@@ -75,7 +75,7 @@ describe("ArchitecturalProposalDetail", () => {
     expect(screen.getByText("Proposal actions").closest("details")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Proposal actions"));
     fireEvent.click(screen.getByRole("button", { name: "Edit revision" }));
-    expect(onRevise).toHaveBeenCalledWith("context-1", "proposal-1", "overview", [{ resourceId: "overview", path: "overview.md" }]);
+    expect(onRevise).toHaveBeenCalledWith("context-1", "proposal-1", "overview", [{ resourceId: "overview", path: "overview.md", type: "markdown-document", content: diff.resources[0].proposedContent }], proposal.title, proposal.description);
     expect(screen.getByRole("button", { name: "Withdraw proposal" })).toBeInTheDocument();
   });
 

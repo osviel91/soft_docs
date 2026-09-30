@@ -2978,6 +2978,25 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').nth(1).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
             check("revision session opens every proposal artifact in tabs", await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').count() === 2);
             check("revision session shows proposal-level resource scope", (await page.getByLabel("Proposal revision session").textContent() ?? "").includes("2 proposal resources open"));
+            const revisionInspector = page.locator('section[aria-label^="Comparison for "]');
+            await revisionInspector.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+            check("revision inspector compares submitted content with MY WORK", (await revisionInspector.textContent() ?? "").includes("SUBMITTED VERSION") && (await revisionInspector.textContent() ?? "").includes("MY WORK NOW"));
+            await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').nth(1).click();
+            await waitForText(revisionInspector, (text) => text.includes("governance-context.md"), "companion artifact comparison");
+            await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').first().click();
+            await waitForText(revisionInspector, (text) => text.includes(".seq"), "diagram comparison restored");
+            await page.getByRole("button", { name: /Review and submit/ }).click();
+            const revisionReview = page.locator('section[aria-label="Submit architectural proposal"]');
+            await revisionReview.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+            await waitForText(revisionReview, (text) => text.includes("governance-context.md"), "revision resource scope hydration");
+            check("final submission review keeps editor tabs and comparison mounted", await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').count() === 2 && await revisionInspector.isVisible());
+            check("revision review is prefilled with proposal metadata and scope", await page.getByLabel("Proposal title").inputValue() === proposalTitle && await revisionReview.locator('input[type="checkbox"]:checked').count() === 2);
+            await page.getByLabel("Proposal description").fill("Revision review survives returning to the editor.");
+            await page.getByRole("button", { name: "Back to editing" }).click();
+            check("returning from submission review keeps both artifact tabs", await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').count() === 2);
+            await page.getByRole("button", { name: /Review and submit/ }).click();
+            check("submission review retains edits made before returning", await page.getByLabel("Proposal description").inputValue() === "Revision review survives returning to the editor.");
+             await page.getByRole("button", { name: "Back to editing" }).click();
          const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         await page.locator('.explorer__context-note').waitFor({

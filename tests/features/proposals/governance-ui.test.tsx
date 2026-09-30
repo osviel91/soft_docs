@@ -77,6 +77,21 @@ describe("governance UI intent", () => {
     expect(onDone).toHaveBeenCalledWith("p2");
   });
 
+  it("prefills a revision review with the source proposal metadata and resources", async () => {
+    const client = clientWith({
+      listResources: vi.fn().mockResolvedValue([
+        { id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 3 },
+        { id: "r2", path: "context.md", type: "markdown-document", revision: 2 },
+      ]),
+    });
+    render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" revisionProposalId="p1" initialTitle="Checkout proposal" initialDescription="Keep the migration context." initialResourceIds={["r1", "r2"]} onCancel={vi.fn()} onDone={vi.fn()} />);
+
+    await screen.findByText("context.md");
+    expect(screen.getByLabelText("Proposal title")).toHaveValue("Checkout proposal");
+    expect(screen.getByLabelText("Proposal description")).toHaveValue("Keep the migration context.");
+    expect(screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).checked)).toBe(true);
+  });
+
   it("waits for the proposal read-model refresh before completing a revision", async () => {
     const revise = vi.fn().mockResolvedValue({ id: "p2" });
     let completeRefresh!: () => void;
