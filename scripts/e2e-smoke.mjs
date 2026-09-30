@@ -2838,7 +2838,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         });
         await page.getByLabel("Proposal title").fill(title);
         await page.getByLabel("Proposal description").fill(description);
-        await page.locator('section[aria-label="Submit architectural proposal"] input[type="checkbox"]').check();
+        const resourceCheckboxList = page.locator('section[aria-label="Submit architectural proposal"] input[type="checkbox"]');
+        await resourceCheckboxList.first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const resourceCheckboxes = await resourceCheckboxList.all();
+        for (const checkbox of resourceCheckboxes) await checkbox.check();
         await page
           .getByRole("button", { name: revision ? "Submit revision" : "Submit proposal for review" })
           .click();
@@ -2884,8 +2887,20 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await page.reload({ waitUntil: "domcontentloaded" });
         await openServerProject(page, projectName);
+        const project = await serverProjectByName(page, projectName);
+        if (project === null) throw new Error(`no server project named ${projectName}`);
         const sharedBefore = await currentServerResource(page, projectName);
         const contextId = await createGovernedMyWorkDocument();
+        const companionDocument = await apiRequest(page, `/api/projects/${project.id}/resources`, {
+          method: "POST",
+          body: JSON.stringify({
+            path: "governance-context.md",
+            type: "markdown-document",
+            content: "# Governance context\n\nCompanion proposal resource.\n",
+            contextId,
+          }),
+        });
+        check("MY WORK can contain a second proposal artifact", companionDocument.status === 201);
         const initialMyWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
         if ((await initialMyWorkToggle.getAttribute("aria-expanded")) !== "true") await initialMyWorkToggle.click();
         await page.locator('.explorer__context-note').waitFor({
@@ -2915,8 +2930,6 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await openServerProject(page, projectName);
         await submitFromMyWork(proposalTitle, "Initial governed snapshot");
-        const project = await serverProjectByName(page, projectName);
-        if (project === null) throw new Error(`no server project named ${projectName}`);
         const v1 = (await projectProposals(project.id)).find(
           (proposal) => proposal.title === proposalTitle,
         );
@@ -2954,15 +2967,18 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
            "proposal decision workspace keeps author review unavailable",
            (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("cannot approve your own proposal"),
          );
-         const v1Change = page.locator('section[aria-label="Changes"] button').first();
+         const v1Change = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
          await v1Change.click();
          const v1Inspector = page.locator('section[aria-label^="Comparison for "]');
          await v1Inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("selecting a change leaves the proposal selected", await page.locator('[data-testid="explorer-proposal-open"][aria-current="true"]').count() === 1);
 
-          await page.getByText("Proposal actions", { exact: true }).click();
-          await page.getByRole("button", { name: "Edit revision" }).click();
-        const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
+           await page.getByText("Proposal actions", { exact: true }).click();
+           await page.getByRole("button", { name: "Edit revision" }).click();
+            await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').nth(1).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+            check("revision session opens every proposal artifact in tabs", await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').count() === 2);
+            check("revision session shows proposal-level resource scope", (await page.getByLabel("Proposal revision session").textContent() ?? "").includes("2 proposal resources open"));
+         const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         await page.locator('.explorer__context-note').waitFor({
           state: "visible",
@@ -2974,7 +2990,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           check("Revise opens MY WORK for editing", await editor.isVisible());
           check("revision context remains visible after resource selection", await page.getByRole("button", { name: "Back to proposal" }).isVisible());
           await page.getByRole("button", { name: "Back to proposal" }).click();
-          const restoredChange = page.locator('section[aria-label="Changes"] button').first();
+           const restoredChange = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
           const restoredInspector = page.locator('section[aria-label^="Comparison for "]');
           check("back restores the selected change", await restoredChange.getAttribute("aria-pressed") === "true");
           check("back restores the inspector mode", await restoredInspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
@@ -3059,12 +3075,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           "v2 communicates independent review is required",
           (await page.locator('section[aria-label="Proposal review"]').textContent() ?? "").includes("cannot approve your own proposal"),
         );
-        check(
-           "v2 exposes its canonical diff in the right-hand inspector",
-           await page.locator('section[aria-label^="Comparison for "]').count() > 0 &&
-             await page.locator('.proposal-detail__comparison').count() === 0,
-         );
-         const inspector = page.locator('section[aria-label^="Comparison for "]');
+         check(
+            "v2 exposes its canonical diff in the right-hand inspector",
+            await page.locator('section[aria-label^="Comparison for "]').count() > 0 &&
+              await page.locator('.proposal-detail__comparison').count() === 0,
+          );
+          await v2AuthorDetail.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first().click();
+          const inspector = page.locator('section[aria-label^="Comparison for "]');
          await inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("diagram inspector switches comparison mode", await inspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
         await page.getByRole("button", { name: "Preview promotion" }).click();
@@ -3138,7 +3155,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         check(
           "Reviewer B opens exactly v2",
           (await reviewerDetail.locator("h2").textContent() ?? "") === proposalTitle &&
-            (await reviewerPage.locator('section[aria-label^="Comparison for "]').textContent() ?? "").includes("GOVERNEDV2"),
+            new URL(reviewerPage.url()).searchParams.get("proposal") === v2.id,
         );
         check(
            "Reviewer B sees the canonical proposal diff in the inspector",

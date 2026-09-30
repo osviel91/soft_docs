@@ -16,7 +16,7 @@ interface Props {
   onChanged?: () => void | Promise<void>;
   onOpenShared?: () => void;
   onOpenProposal?: (proposalId: string) => void;
-  onRevise?: (contextId: string, proposalId: string, resourceId: string | null) => void;
+  onRevise?: (contextId: string, proposalId: string, resourceId: string | null, resources: Array<{ resourceId: string; path: string }>) => void;
   authorDisplayName?: string;
   selectedDiffPath?: string | null;
   onSelectDiff?: (path: string) => void;
@@ -92,7 +92,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
     </dl>
       <div className="proposal-detail__actions" aria-label="Proposal actions">
         {reviseCapability?.allowed && proposal.revisionContextId && onRevise || withdrawCapability?.allowed ? <details className="proposal-detail__menu"><summary className="button button--ghost">Proposal actions</summary><div>
-          {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id, selectedDiffPath ?? proposal.resources[0]?.sourceResourceId ?? null)}>Edit revision</button> : null}
+          {reviseCapability?.allowed && proposal.revisionContextId && onRevise ? <button type="button" onClick={() => onRevise(proposal.revisionContextId!, proposal.id, proposal.resources.find((resource) => resource.path === selectedDiffPath)?.sourceResourceId ?? proposal.resources[0]?.sourceResourceId ?? null, proposal.resources.map(({ sourceResourceId, path }) => ({ resourceId: sourceResourceId, path })))}>Edit revision</button> : null}
           {withdrawCapability?.allowed ? <button type="button" onClick={() => setWithdrawOpen(true)}>Withdraw proposal</button> : null}
         </div></details> : null}
         {!reviewLocked && reviewCapability?.allowed ? <span className="proposal-detail__decision-hint">Independent review available below.</span> : null}

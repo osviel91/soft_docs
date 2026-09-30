@@ -128,6 +128,7 @@ body {
 .revision-session__identity .governance-eyebrow { margin: 0; }
 .revision-session__identity > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .revision-session__identity > span { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.revision-session__identity code { font: inherit; }
 .revision-session__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .revision-session__actions button { margin: 0; }
 @media (max-width: 560px) {
