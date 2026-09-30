@@ -2960,7 +2960,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
          await v1Inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("selecting a change leaves the proposal selected", await page.locator('[data-testid="explorer-proposal-open"][aria-current="true"]').count() === 1);
 
-         await page.getByRole("button", { name: "Revise proposal" }).click();
+          await page.getByText("Proposal actions", { exact: true }).click();
+          await page.getByRole("button", { name: "Edit revision" }).click();
         const myWorkToggle = page.locator('[data-testid="explorer-my-work-toggle"]');
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         await page.locator('.explorer__context-note').waitFor({
@@ -2978,7 +2979,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           check("back restores the selected change", await restoredChange.getAttribute("aria-pressed") === "true");
           check("back restores the inspector mode", await restoredInspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
           check("back to proposal does not submit revision", (await proposalById(project.id, v1.id)).lifecycle?.state === "OPEN");
-         await page.getByRole("button", { name: "Revise proposal" }).click();
+          await page.getByText("Proposal actions", { exact: true }).click();
+          await page.getByRole("button", { name: "Edit revision" }).click();
          await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
          await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         check("Revise alone leaves v1 OPEN", afterRevise.lifecycle?.state === "OPEN");
