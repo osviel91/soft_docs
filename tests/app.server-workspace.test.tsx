@@ -330,12 +330,18 @@ describe("App — authenticated browser", () => {
     await waitFor(() => {
       expect(screen.getByTestId("dsl-textarea")).toHaveValue(content);
     });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("explorer-my-work-create"));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("explorer-my-work-toggle"));
-    });
+    const myWork = screen.getByTestId("explorer-my-work-section");
+    const myWorkToggle = within(myWork).getByTestId("explorer-my-work-toggle");
+    if (state.contextId === null) {
+      await act(async () => fireEvent.click(screen.getByTestId("explorer-my-work-create")));
+      fireEvent.change(await screen.findByLabelText("Draft name"), { target: { value: "Browser work" } });
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "Create draft" })));
+    } else {
+      if (myWorkToggle.getAttribute("aria-expanded") !== "true") {
+        await act(async () => fireEvent.click(myWorkToggle));
+      }
+      await act(async () => fireEvent.click(await screen.findByTestId("explorer-private-context-open-work1")));
+    }
     await waitFor(() => {
       expect(screen.getByTestId("dsl-textarea")).toHaveValue(content);
     });

@@ -46,6 +46,7 @@ import type {
   ServerAdminUser,
   ServerWorkspace,
   ServerWorkspaceMember,
+  ServerArchitecturalProposal,
   ServerArchitecturalProposalDiff,
   ServerArchitecturalProposalDiffResource,
   ServerResourceType,
@@ -231,18 +232,24 @@ type AppPage = "workspace" | "docs" | "tokens" | "settings";
 type PendingDelete =
   | { kind: "project"; id: string; name: string }
   | { kind: "diagram"; id: string; projectId: string; name: string }
-  | { kind: "note"; id: string; projectId: string; name: string };
+  | { kind: "note"; id: string; projectId: string; name: string }
+  | { kind: "private-work"; id: string; projectId: string; name: string };
+
+type PendingProposalWithdrawal = { id: string; projectId: string; title: string };
 
 /** The file or project a context menu was opened over, and where to place it. */
 type MenuTarget =
   | ({ kind: "diagram"; diagram: DiagramFile } & MenuPosition)
   | ({ kind: "note"; note: NoteFile } & MenuPosition)
   | ({ kind: "project"; project: Project } & MenuPosition)
-  | ({ kind: "project-add"; project: Project } & MenuPosition);
+  | ({ kind: "project-add"; project: Project } & MenuPosition)
+  | ({ kind: "private-work"; work: { id: string; projectId: string; name: string; lifecycle: "active" | "archived"; capabilities?: Record<string, { allowed: boolean }> } } & MenuPosition)
+  | ({ kind: "proposal"; proposal: Pick<ServerArchitecturalProposal, "id" | "title" | "status" | "authorUserId"> } & MenuPosition);
 
 /** The rename/title prompt currently open, if any. */
 type PromptTarget =
   | { kind: "rename-symbol"; name: string }
+  | { kind: "create-private-work" }
   | { kind: "rename-project"; project: Project }
   | { kind: "rename-diagram"; diagram: DiagramFile }
   | { kind: "rename-note"; note: NoteFile }
@@ -320,6 +327,7 @@ export default function App() {
   }>({ proposalId: null, diff: null, selectedPath: null, mode: "unified" });
   const [revisionReturnContext, setRevisionReturnContext] = useState<{
     proposalId: string;
+    contextId: string;
     selectedPath: string | null;
     mode: ComparisonMode;
   } | null>(null);
@@ -466,6 +474,7 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
     null,
   );
+  const [pendingProposalWithdrawal, setPendingProposalWithdrawal] = useState<PendingProposalWithdrawal | null>(null);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [prompt, setPrompt] = useState<PromptTarget | null>(null);
   // The source range an editor should select and scroll to, set when a search
@@ -534,6 +543,20 @@ export default function App() {
     setArchitecturalProposalId(proposalId);
     setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
   }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
+
+  const startProposalRevision = useCallback((contextId: string, proposalId: string, resourceId: string | null, resources: Array<{ resourceId: string; path: string; type: ServerResourceType; content: string }>, title: string, description: string): void => {
+    setRevisionReturnContext({ proposalId, contextId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode });
+    setRevisionResources(resources);
+    setRevisionTitle(title);
+    setRevisionDescription(description);
+    setRevisionComparisonMode("side-by-side");
+    revisionTabsOpened.current = null;
+    setArchitecturalProposalId(null);
+    setRevisionProposalId(proposalId);
+    setArchitecturalProposalContextId(null);
+    setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId });
+    void server.openPrivateWork(contextId);
+  }, [proposalInspector.mode, proposalInspector.selectedPath, server.active?.project.id, server.openPrivateWork, setBrowserLocation]);
 
   const resizePane = useCallback(
     (pane: "explorer" | "editor", clientX: number): void => {
@@ -1080,30 +1103,29 @@ export default function App() {
     [workspaceMode, server.createProject, createProject],
   );
 
-  /** Create non-authoritative server knowledge through a private context. */
+  /** Create and open an empty private MY WORK context. */
   const createServerKnowledge = useCallback(
-    async (): Promise<void> => {
+    async (name: string): Promise<void> => {
       if (workspaceMode !== "server" || !server.active) return;
       const projectId = server.active.project.id;
-      const suffix = Date.now().toString(36);
       try {
-        const context = await apiClient.createPrivateWorkContext(projectId, {
-          name: `work-${suffix}`,
-        });
-        await apiClient.createResource(projectId, {
-          contextId: context.id,
-          path: `untitled-${suffix}.seq`,
-          type: "sequence-diagram",
-          content: "title Untitled\n",
-        });
+        const context = await apiClient.createPrivateWorkContext(projectId, { name });
+        setArchitecturalProposalId(null);
+        setArchitecturalProposalContextId(null);
+        setRevisionProposalId(null);
+        setRevisionResources([]);
+        setRevisionTitle("");
+        setRevisionDescription("");
         await server.openPrivateWork(context.id);
+        void server.refresh();
+        setTransferError(null);
       } catch (error) {
         setTransferError(
-          error instanceof Error ? error.message : "Could not create server knowledge.",
+          error instanceof Error ? error.message : "Could not create MY WORK.",
         );
       }
     },
-    [apiClient, server, workspaceMode],
+    [apiClient, server.active, server.openPrivateWork, server.refresh, workspaceMode],
   );
 
   // The project index: every symbol, reference and problem in the selected
@@ -2380,6 +2402,23 @@ export default function App() {
       } else if (target.kind === "note") {
         await workspace.deleteNote(target.projectId, target.id, scope);
         closeTabAndFollow(target.id);
+      } else if (target.kind === "private-work") {
+        try {
+          await apiClient.deletePrivateWorkContext(target.projectId, target.id);
+          setPendingDelete(null);
+          setTransferError(null);
+          if (server.active?.contextId === target.id) {
+            const project = server.active.project;
+            setBrowserLocation({ projectId: project.id, contextId: null, resourceId: null, proposalId: null });
+            await server.openProject(project);
+          } else {
+            await server.refresh();
+          }
+        } catch (error) {
+          setPendingDelete(null);
+          setTransferError(error instanceof Error ? error.message : "Could not delete this MY WORK context.");
+        }
+        return;
       } else {
         // Close every tab backed by the project before its files disappear.
         for (const tab of tabs) {
@@ -2390,8 +2429,30 @@ export default function App() {
       }
       setPendingDelete(null);
     },
-    [pendingDelete, workspace, tabs, closeTab, closeTabAndFollow, history],
+    [pendingDelete, workspace, tabs, closeTab, closeTabAndFollow, history, apiClient, server.active, server.openProject, server.refresh, setBrowserLocation],
   );
+
+  const confirmProposalWithdrawal = useCallback(async (): Promise<void> => {
+    const target = pendingProposalWithdrawal;
+    if (!target) return;
+    try {
+      await apiClient.withdrawArchitecturalProposal(target.projectId, target.id);
+      setPendingProposalWithdrawal(null);
+      setTransferError(null);
+      if (architecturalProposalId === target.id) {
+        setArchitecturalProposalId(null);
+        setBrowserLocation({
+          projectId: target.projectId,
+          contextId: server.active?.contextId ?? null,
+          resourceId: server.active?.contextId ? selectedDiagramId ?? selectedNoteId : null,
+          proposalId: null,
+        });
+      }
+      await syncServerWorkspace();
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "Could not withdraw this proposal.");
+    }
+  }, [apiClient, architecturalProposalId, pendingProposalWithdrawal, selectedDiagramId, selectedNoteId, server.active?.contextId, setBrowserLocation, syncServerWorkspace]);
 
   /** Apply a rename or title edit submitted in the prompt dialog. */
   const confirmPrompt = useCallback(
@@ -2399,6 +2460,11 @@ export default function App() {
       const target = prompt;
       setPrompt(null);
       if (!target) return;
+
+      if (target.kind === "create-private-work") {
+        await createServerKnowledge(value);
+        return;
+      }
 
       if (target.kind === "rename-symbol") {
         await applySymbolRename(target.name, value);
@@ -2479,6 +2545,7 @@ export default function App() {
     },
     [
       prompt,
+      createServerKnowledge,
       workspace,
       closeTab,
       history,
@@ -2495,6 +2562,13 @@ export default function App() {
     if (!menu) return [];
     const activeWork = server.active?.contextId ? server.privateWorkContexts.find((work) => work.id === server.active?.contextId) : undefined;
     const canSubmit = activeWork?.capabilities?.["proposal.submit"];
+    const copyId = (id: string, label: string) => {
+      if (!navigator.clipboard) {
+        setTransferError("Clipboard access is unavailable.");
+        return;
+      }
+      void navigator.clipboard.writeText(id).then(() => setTransferError(null)).catch(() => setTransferError(`Could not copy the ${label} ID.`));
+    };
     if (menu.kind === "project") {
       const { project } = menu;
       return [
@@ -2562,6 +2636,82 @@ export default function App() {
             void createEventFlow(project.id);
           },
         },
+      ];
+    }
+    if (menu.kind === "private-work") {
+      const { work } = menu;
+      const projectId = work.projectId;
+      const isRevisionWork = revisionProposalId !== null && revisionReturnContext?.contextId === work.id;
+      return [
+        {
+          id: "open-my-work",
+          label: "Open MY WORK",
+          onSelect: () => {
+            setArchitecturalProposalId(null);
+            setArchitecturalProposalContextId(null);
+            if (!isRevisionWork) {
+              setRevisionProposalId(null);
+              setRevisionResources([]);
+              setRevisionTitle("");
+              setRevisionDescription("");
+              setRevisionReturnContext(null);
+            }
+            setBrowserLocation({ projectId, contextId: work.id, resourceId: null, proposalId: isRevisionWork ? revisionProposalId : null });
+            void server.openPrivateWork(work.id).catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not open MY WORK."));
+          },
+        },
+        ...(work.lifecycle === "active" && work.capabilities?.["proposal.submit"]?.allowed !== false
+          ? [{ id: "create-proposal-from-work", label: isRevisionWork ? "Review and submit revision…" : "Create proposal from this draft…", onSelect: () => {
+              setArchitecturalProposalId(null);
+              setArchitecturalProposalContextId(work.id);
+              if (!isRevisionWork) {
+                setRevisionProposalId(null);
+                setRevisionResources([]);
+                setRevisionTitle("");
+                setRevisionDescription("");
+                setRevisionReturnContext(null);
+              }
+              setBrowserLocation({ projectId, contextId: work.id, resourceId: null, proposalId: isRevisionWork ? revisionProposalId : null });
+            } }]
+          : []),
+        ...(work.lifecycle === "active"
+          ? [{ id: "archive-my-work", label: "Archive MY WORK", onSelect: () => {
+              void apiClient.updatePrivateWorkContext(projectId, work.id, { lifecycle: "archived" })
+                .then(async () => { if (server.active?.contextId === work.id) await server.openProject(server.active.project); else await server.refresh(); })
+                .then(() => setTransferError(null))
+                .catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not archive MY WORK."));
+            } }]
+          : [{ id: "restore-my-work", label: "Restore MY WORK", onSelect: () => {
+              void apiClient.updatePrivateWorkContext(projectId, work.id, { lifecycle: "active" })
+                .then(() => server.refresh())
+                .then(() => setTransferError(null))
+                .catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not restore MY WORK."));
+            } }]),
+        { id: "copy-my-work-id", label: "Copy MY WORK ID", onSelect: () => copyId(work.id, "MY WORK") },
+        { id: "delete-my-work", label: "Delete MY WORK", danger: true, onSelect: () => setPendingDelete({ kind: "private-work", id: work.id, projectId, name: work.name }) },
+      ];
+    }
+    if (menu.kind === "proposal") {
+      const { proposal } = menu;
+      const projectId = server.active?.project.id;
+      const isAuthor = proposal.authorUserId === auth.user?.id;
+      return [
+        { id: "open-proposal", label: "Open proposal", onSelect: () => openArchitecturalProposal(proposal.id) },
+        { id: "copy-proposal-id", label: "Copy proposal ID", onSelect: () => copyId(proposal.id, "proposal") },
+        ...(proposal.status === "open" && isAuthor && projectId
+          ? [
+              { id: "edit-proposal-revision", label: "Edit revision…", onSelect: () => {
+                void apiClient.getArchitecturalProposal(projectId, proposal.id).then((detail) => {
+                  if (!detail.capabilities?.["proposal.revise"]?.allowed || !detail.revisionContextId) {
+                    setTransferError("This proposal can no longer be revised.");
+                    return;
+                  }
+                  startProposalRevision(detail.revisionContextId, detail.id, detail.resources[0]?.sourceResourceId ?? null, detail.resources.map(({ sourceResourceId, path, type, content }) => ({ resourceId: sourceResourceId, path, type, content })), detail.title, detail.description ?? "");
+                }).catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not load this proposal."));
+              } },
+              { id: "withdraw-proposal", label: "Withdraw proposal…", danger: true, onSelect: () => setPendingProposalWithdrawal({ id: proposal.id, projectId, title: proposal.title }) },
+            ]
+          : []),
       ];
     }
     if (menu.kind === "diagram") {
@@ -2644,14 +2794,23 @@ export default function App() {
     createDiagram,
     createNote,
     createEventFlow,
-    duplicateDiagram,
-     duplicateNote,
-     requestDeleteProject,
-     revisionProposalId,
-     server.active?.contextId,
-     server.active?.project.id,
-     server.privateWorkContexts,
-     setBrowserLocation,
+      duplicateDiagram,
+      duplicateNote,
+      requestDeleteProject,
+      revisionProposalId,
+      apiClient,
+      auth.user?.id,
+      openArchitecturalProposal,
+      startProposalRevision,
+      revisionReturnContext,
+      server.active?.contextId,
+      server.active?.project.id,
+      server.privateWorkContexts,
+      server.openPrivateWork,
+      server.openProject,
+      server.refresh,
+      setTransferError,
+      setBrowserLocation,
    ]);
 
   /**
@@ -3009,19 +3168,23 @@ export default function App() {
                    selectedProposalId={architecturalProposalId}
                    revisingProposalId={revisionProposalId}
                     onOpenArchitecturalProposal={openArchitecturalProposal}
-                      onSubmitArchitecturalProposal={(contextId) => {
-                        setArchitecturalProposalId(null);
-                        setArchitecturalProposalContextId(contextId);
-                        setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId });
-                     }}
-                     onCreateMyWork={() => { void createServerKnowledge(); }}
+                    onCreateMyWork={() => setPrompt({ kind: "create-private-work" })}
+                    onMyWorkMenu={(work, position) => { if (server.active) setMenu({ kind: "private-work", work: { ...work, projectId: server.active.project.id }, ...position }); }}
+                   onProposalMenu={(proposal, position) => setMenu({ kind: "proposal", proposal, ...position })}
                      onOpenMyWork={(contextId) => {
-                       setArchitecturalProposalId(null);
-                       setArchitecturalProposalContextId(null);
-                        if (!revisionProposalId) setRevisionProposalId(null);
-                        setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: null, proposalId: revisionProposalId });
-                       void server.openPrivateWork(contextId);
-                    }}
+                        const isRevisionWork = revisionProposalId !== null && revisionReturnContext?.contextId === contextId;
+                        setArchitecturalProposalId(null);
+                        setArchitecturalProposalContextId(null);
+                        if (!isRevisionWork) {
+                          setRevisionProposalId(null);
+                          setRevisionResources([]);
+                          setRevisionTitle("");
+                          setRevisionDescription("");
+                          setRevisionReturnContext(null);
+                        }
+                         setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId: null, proposalId: isRevisionWork ? revisionProposalId : null });
+                        void server.openPrivateWork(contextId).catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not open MY WORK."));
+                     }}
                    projectBrowser={auth.status === "authenticated" && !server.active && !openedFolder && (server.projects.length > 0 || server.projectsError !== null)}
                    serverMode={workspaceMode === "server"}
                    activeContextId={server.active?.contextId ?? null}
@@ -3134,7 +3297,7 @@ export default function App() {
             >
                 {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
                 {architecturalProposalId && server.active ? (
-                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={(contextId, priorProposalId, resourceId, resources, title, description) => { setRevisionReturnContext({ proposalId: priorProposalId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode }); setRevisionResources(resources); setRevisionTitle(title); setRevisionDescription(description); setRevisionComparisonMode("side-by-side"); revisionTabsOpened.current = null; setArchitecturalProposalId(null); setRevisionProposalId(priorProposalId); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId: priorProposalId }); void server.openPrivateWork(contextId); }} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { void server.openProject(server.active!.project); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}
@@ -3246,7 +3409,7 @@ export default function App() {
                 />
               ) : error ? (
                 <p className="editor__error" data-testid="workspace-error">
-                  Could not load your local projects: {error.message}
+                  {workspaceMode === "server" ? "Could not load this workspace resource" : "Could not load your local projects"}: {error.message}
                 </p>
               ) : noteMode && selectedNote ? (
                 <>
@@ -3713,7 +3876,13 @@ export default function App() {
                 ? "Note actions"
                 : menu.kind === "project"
                   ? "Project actions"
-                  : "Add to project"
+                  : menu.kind === "private-work"
+                    ? `Actions for MY WORK ${menu.work.name}`
+                  : menu.kind === "proposal"
+                      ? `Actions for proposal ${menu.proposal.title}`
+                      : server.active?.contextId
+                        ? "Create artifact in MY WORK"
+                        : "Add to project"
           }
         />
       )}
@@ -3736,10 +3905,10 @@ export default function App() {
 
       {pendingDelete && (
         <ConfirmDialog
-          title={`Delete ${pendingDelete.kind} “${pendingDelete.name}”?`}
+          title={pendingDelete.kind === "private-work" ? `Delete MY WORK “${pendingDelete.name}”?` : `Delete ${pendingDelete.kind} “${pendingDelete.name}”?`}
           message={deleteMessage(pendingDelete.kind, folderOpen)}
-          confirmLabel={folderOpen ? "Delete from disk" : "Delete"}
-          alternativeLabel={folderOpen ? "Remove from app" : undefined}
+          confirmLabel={pendingDelete.kind === "private-work" ? "Delete MY WORK" : folderOpen ? "Delete from disk" : "Delete"}
+          alternativeLabel={folderOpen && pendingDelete.kind !== "private-work" ? "Remove from app" : undefined}
           onAlternative={() => {
             void confirmDelete("app");
           }}
@@ -3750,12 +3919,21 @@ export default function App() {
         />
       )}
 
+      {pendingProposalWithdrawal && <ConfirmDialog
+        idPrefix="proposal-withdrawal-dialog"
+        title={`Withdraw proposal “${pendingProposalWithdrawal.title}”?`}
+        message="The proposal will remain in history and its reviews will be preserved. This does not delete its source MY WORK or change SHARED."
+        confirmLabel="Withdraw proposal"
+        onConfirm={() => { void confirmProposalWithdrawal(); }}
+        onCancel={() => setPendingProposalWithdrawal(null)}
+      />}
+
       {prompt && (
         <PromptDialog
           title={promptTitle(prompt)}
           label={promptLabel(prompt)}
           initialValue={promptInitial(prompt)}
-          confirmLabel={prompt.kind.startsWith("rename") ? "Rename" : "Save"}
+          confirmLabel={prompt.kind.startsWith("rename") ? "Rename" : prompt.kind === "create-private-work" ? "Create draft" : "Save"}
           onConfirm={(value) => {
             void confirmPrompt(value);
           }}
@@ -3769,6 +3947,8 @@ export default function App() {
 /** The heading for a rename/title prompt. */
 function promptTitle(target: PromptTarget): string {
   switch (target.kind) {
+    case "create-private-work":
+      return "Create MY WORK draft";
     case "rename-symbol":
       return `Rename ${target.name}`;
     case "rename-project":
@@ -3786,6 +3966,7 @@ function promptTitle(target: PromptTarget): string {
 
 /** The input label for a rename/title prompt. */
 function promptLabel(target: PromptTarget): string {
+  if (target.kind === "create-private-work") return "Draft name";
   if (target.kind === "rename-symbol") return "New name";
   if (target.kind === "rename-project") return "Project name";
   return target.kind.startsWith("rename") ? "File name" : "Title";
@@ -3794,6 +3975,8 @@ function promptLabel(target: PromptTarget): string {
 /** The input's starting value for a rename/title prompt. */
 function promptInitial(target: PromptTarget): string {
   switch (target.kind) {
+    case "create-private-work":
+      return "";
     case "rename-symbol":
       return target.name;
     case "rename-project":
@@ -3823,7 +4006,10 @@ function deleteMessage(
       ? "diagram"
       : kind === "note"
         ? "note"
+        : kind === "private-work"
+          ? "MY WORK context and all of its private resources"
         : "project and its diagrams and notes";
+  if (kind === "private-work") return "This permanently removes the private context and its resources. The server refuses deletion while any submitted proposal references this context.";
   if (folderOpen) {
     return `Remove the ${thing} from the app but keep the file on disk, or delete it from disk for good. Deleting from disk cannot be undone.`;
   }

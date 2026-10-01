@@ -502,25 +502,36 @@ async function waitForServerContent(
 
 /** Create and open the first editable MY WORK document for the active project. */
 async function createMyWorkDocument(page, projectName) {
+  await page.locator('[data-testid="explorer-my-work-create"]').click();
+  const draftName = `work-${projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+  await page.getByLabel("Draft name").fill(draftName);
+  await page.getByRole("button", { name: "Create draft" }).click();
+  const project = await serverProjectByName(page, projectName);
+  if (project === null) throw new Error(`no server project named ${projectName}`);
+  const deadline = Date.now() + UI_TIMEOUT_MS;
+  let contextId = null;
+  while (Date.now() < deadline) {
+    const contexts = await apiRequest(page, `/api/projects/${project.id}/private-work`);
+    const context = (contexts.json?.contexts ?? []).find((entry) => entry.name === draftName);
+    if (context) {
+      contextId = context.id;
+      break;
+    }
+    await delay(100);
+  }
+  if (!contextId) throw new Error(`no MY WORK context was created for ${projectName}`);
+  await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
   const tabsBefore = await page.locator('[data-testid="tab"]').count();
   await page.locator('[data-testid="explorer-my-work-create"]').click();
+  await page.getByRole("menuitem", { name: "New diagram" }).click();
   await page.waitForFunction(
     (expected) =>
       document.querySelectorAll('[data-testid="tab"]').length === expected,
     tabsBefore + 1,
     { timeout: UI_TIMEOUT_MS },
   );
-  const project = await serverProjectByName(page, projectName);
-  if (project === null) throw new Error(`no server project named ${projectName}`);
-  const contexts = await apiRequest(
-    page,
-    `/api/projects/${project.id}/private-work`,
-  );
-  const context = (contexts.json?.contexts ?? []).find((entry) =>
-    entry.name.startsWith("work-"),
-  );
-  if (!context) throw new Error(`no MY WORK context was created for ${projectName}`);
-  return context.id;
+  return contextId;
 }
 
 /** Reopen an existing MY WORK context after a browser reload. */
@@ -2819,6 +2830,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           .filter({ hasText: proposalTitle })
           .filter({ hasText: state });
         await row.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await row.locator('[data-testid="explorer-proposal-menu"]').click();
+        await page.getByRole("menuitem", { name: "Copy proposal ID" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        if (state === "OPEN") {
+          await page.getByRole("menuitem", { name: "Edit revision…" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+          await page.getByRole("menuitem", { name: "Withdraw proposal…" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        }
+        await page.keyboard.press("Escape");
         await row.locator('[data-testid="explorer-proposal-open"]').click();
         await waitForText(
           page.locator('section[aria-label="Architectural Proposal"]'),
@@ -2831,7 +2849,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
         const work = page.locator('[data-testid="explorer-private-context"]');
         await work.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        await work.getByRole("button", { name: "Submit new proposal" }).click();
+        await work.getByRole("button", { name: /Actions for MY WORK/ }).click();
+        await page.getByRole("menuitem", { name: "Copy MY WORK ID" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByRole("menuitem", { name: "Delete MY WORK" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByRole("menuitem", { name: revision ? "Review and submit revision…" : "Create proposal from this draft…" }).click();
         await page.locator('section[aria-label="Submit architectural proposal"]').waitFor({
           state: "visible",
           timeout: UI_TIMEOUT_MS,
@@ -2855,19 +2876,31 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       };
       const createGovernedMyWorkDocument = async () => {
         await page.locator('[data-testid="explorer-my-work-create"]').click();
+        await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByLabel("Draft name").fill("work-governed-lifecycle");
+        await page.getByRole("button", { name: "Create draft" }).click();
         const deadline = Date.now() + UI_TIMEOUT_MS;
+        let createdContextId = null;
         while (Date.now() < deadline) {
           const contexts = await apiRequest(
             page,
             `/api/projects/${(await serverProjectByName(page, projectName)).id}/private-work`,
           );
           const context = (contexts.json?.contexts ?? []).find((entry) =>
-            entry.name.startsWith("work-"),
+            entry.name === "work-governed-lifecycle",
           );
-          if (context) return context.id;
+          if (context) {
+            createdContextId = context.id;
+            break;
+          }
           await delay(100);
         }
-        throw new Error("the governed MY WORK context was not created");
+        if (!createdContextId) throw new Error("the governed MY WORK context was not created");
+        await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.locator('[data-testid="explorer-my-work-create"]').click();
+        await page.getByRole("menuitem", { name: "New diagram" }).click();
+        await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        return createdContextId;
       };
 
       try {
@@ -2973,7 +3006,6 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
          await v1Inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("selecting a change leaves the proposal selected", await page.locator('[data-testid="explorer-proposal-open"][aria-current="true"]').count() === 1);
 
-           await page.getByText("Proposal actions", { exact: true }).click();
            await page.getByRole("button", { name: "Edit revision" }).click();
             await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').nth(1).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
             check("revision session opens every proposal artifact in tabs", await page.locator('[data-testid="tab-bar"] [data-testid="tab"]').count() === 2);
@@ -3020,8 +3052,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           check("back restores the selected change", await restoredChange.getAttribute("aria-pressed") === "true");
           check("back restores the inspector mode", await restoredInspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
           check("back to proposal does not submit revision", (await proposalById(project.id, v1.id)).lifecycle?.state === "OPEN");
-          await page.getByText("Proposal actions", { exact: true }).click();
-          await page.getByRole("button", { name: "Edit revision" }).click();
+           await page.getByRole("button", { name: "Edit revision" }).click();
          await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').first().click();
          await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         check("Revise alone leaves v1 OPEN", afterRevise.lifecycle?.state === "OPEN");

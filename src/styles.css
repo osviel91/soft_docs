@@ -2793,6 +2793,7 @@ body {
 }
 .explorer__section-add:hover,
 .explorer__section-add:focus-visible { background: var(--bg-hover); border-color: var(--accent); }
+.explorer__section-add--menu { margin-left: -8px; }
 
 .explorer__section-toggle:hover,
 .explorer__section-toggle:focus-visible {
@@ -4502,6 +4503,9 @@ body {
 .explorer__context-list button { min-width: 0; overflow: hidden; color: var(--text); background: transparent; border: 0; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .explorer__context-list button:hover,
 .explorer__context-list button:focus-visible { color: var(--accent); }
+.explorer__context-list button.explorer__context-menu { flex: 0 0 22px; width: 22px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 16px; line-height: 1; text-align: center; }
+.explorer__context-list button.explorer__context-menu:hover,
+.explorer__context-list button.explorer__context-menu:focus-visible { border-color: var(--accent); color: var(--accent); background: var(--bg-hover); }
 .explorer__context-item--selected { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
 .explorer__context-item--selected button { color: var(--accent); font-weight: 600; }
 .explorer__context-list li > button:last-child { flex: 0 0 auto; color: var(--accent); font-size: 11px; }

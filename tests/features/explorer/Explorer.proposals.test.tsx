@@ -44,14 +44,27 @@ describe("Explorer proposal indicators", () => {
     expect(screen.getByText("SUPERSEDED")).toBeInTheDocument();
   });
 
-  it("does not mark withdrawn proposals as revising and names MY WORK submission as a new proposal", () => {
-    render(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} architecturalProposals={[
+  it("does not mark withdrawn proposals as revising and moves draft actions into a context menu", () => {
+    const onMyWorkMenu = vi.fn();
+    const onProposalMenu = vi.fn();
+    render(<Explorer {...props} serverMode privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]} onMyWorkMenu={onMyWorkMenu} onProposalMenu={onProposalMenu} architecturalProposals={[
       { id: "withdrawn", title: "Withdrawn", authorUserId: "u", status: "withdrawn", baseSharedRevision: "r", lifecycle: { state: "WITHDRAWN" } },
     ]} revisingProposalId="withdrawn" />);
 
-    expect(screen.getByRole("button", { name: "Submit new proposal" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit new proposal" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for MY WORK Draft" }));
+    expect(onMyWorkMenu).toHaveBeenCalledWith(expect.objectContaining({ id: "work" }), expect.any(Object));
+    fireEvent.click(screen.getByRole("button", { name: "Actions for proposal Withdrawn" }));
+    expect(onProposalMenu).toHaveBeenCalledWith(expect.objectContaining({ id: "withdrawn" }), expect.any(Object));
     expect(screen.getByTestId("explorer-proposal")).not.toHaveAttribute("data-revising", "true");
     expect(screen.queryByTestId("explorer-revision-origin")).not.toBeInTheDocument();
+  });
+
+  it("uses the MY WORK plus button to add an artifact to the active context", () => {
+    const onAddMenu = vi.fn();
+    render(<Explorer {...props} serverMode activeContextId="work" onAddMenu={onAddMenu} onCreateMyWork={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Create artifact in MY WORK" }));
+    expect(onAddMenu).toHaveBeenCalledWith(expect.objectContaining({ id: "project-1" }), expect.any(Object));
   });
 
   it("expands populated private work and keeps proposal selection across refreshes", () => {

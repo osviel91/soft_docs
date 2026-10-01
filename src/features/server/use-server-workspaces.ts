@@ -247,7 +247,7 @@ export function useServerWorkspaces(
   const openPrivateWork = useCallback(
     async (contextId: string): Promise<void> => {
       if (!active || active.project.id === "") return;
-      const contexts = privateWorkContexts.length > 0
+      const contexts = privateWorkContexts.some((context) => context.id === contextId)
         ? privateWorkContexts
         : await client.listPrivateWorkContexts(active.project.id);
       if (!contexts.some((context) => context.id === contextId)) return;
