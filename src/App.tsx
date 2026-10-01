@@ -190,7 +190,7 @@ import { createServerWorkspaceRepository } from "./workspace/server/server-works
 import { useAuth } from "./features/server/use-auth";
 import { useServerWorkspaces } from "./features/server/use-server-workspaces";
 import AgentsAndTokens from "./features/server/AgentsAndTokens";
-import PlatformAdministration from "./features/server/PlatformAdministration";
+import ServerSettings from "./features/server/ServerSettings";
 import LoginScreen from "./features/server/LoginScreen";
 import { RevisionConflictError } from "./workspace/server/api-errors";
 import { supportsForcedWrite } from "./workspace/server/server-workspace-repository";
@@ -432,7 +432,10 @@ export default function App() {
   );
   const createServerWorkspace = useCallback(
     (name: string) => {
-      void apiClient.createWorkspace(name).then(refreshServerWorkspaces);
+      void apiClient.createWorkspace(name).then((created) => {
+        setSelectedServerWorkspaceId(created.id);
+        refreshServerWorkspaces();
+      });
     },
     [apiClient, refreshServerWorkspaces],
   );
@@ -3113,8 +3116,8 @@ export default function App() {
               type="button"
               className="icon-button app__settings-button"
               data-testid="workspace-settings"
-              aria-label="Open workspace settings"
-              title="Workspace settings"
+              aria-label="Open settings"
+              title="Settings"
               onClick={openSettings}
             >
               ⚙
@@ -3132,11 +3135,13 @@ export default function App() {
           onBack={() => setPage("workspace")}
         />
       ) : page === "settings" ? (
-        <PlatformAdministration
+        <ServerSettings
           auth={auth}
           adminUsers={adminUsers}
           onSetUserStatus={setAdminUserStatus}
           workspaces={serverWorkspaces}
+          selectedWorkspaceId={selectedServerWorkspaceId}
+          onSelectWorkspace={setSelectedServerWorkspaceId}
           workspaceMembersByWorkspaceId={workspaceMembersByWorkspaceId}
           onSetWorkspaceMemberRole={setWorkspaceMemberRole}
           onRemoveWorkspaceMember={removeWorkspaceMember}
