@@ -13,6 +13,9 @@ export interface WorkspaceRepository {
   ): Promise<ServerWorkspace>;
   delete(workspaceId: string): Promise<void>;
   listForUser(userId: string): Promise<ServerWorkspace[]>;
+  listAll(userId: string): Promise<ServerWorkspace[]>;
+  authorSelfReviewAllowed(workspaceId: string): Promise<boolean>;
+  setAuthorSelfReviewAllowed(workspaceId: string, allowed: boolean): Promise<void>;
   listMembers(workspaceId: string): Promise<WorkspaceMember[]>;
   roleOf(workspaceId: string, userId: string): Promise<WorkspaceRole | null>;
   setMember(

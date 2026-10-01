@@ -61,6 +61,33 @@ export function createWorkspaceRepository(
       return result.rows.map(toServerWorkspace);
     },
 
+    async listAll(userId) {
+      const result = await client.query(
+        `SELECT w.*, m.role
+           FROM workspaces w
+           LEFT JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = $1
+          ORDER BY w.created_at ASC, w.id ASC`,
+        [userId],
+      );
+      return result.rows.map((row) => toServerWorkspace({ ...row, role: row.role ?? "VIEWER" }));
+    },
+
+    async authorSelfReviewAllowed(workspaceId) {
+      const result = await client.query(
+        "SELECT allow_author_self_review FROM workspaces WHERE id = $1",
+        [workspaceId],
+      );
+      return result.rows[0]?.allow_author_self_review === true || result.rows[0]?.allow_author_self_review === "true";
+    },
+
+    async setAuthorSelfReviewAllowed(workspaceId, allowed) {
+      const result = await client.query(
+        "UPDATE workspaces SET allow_author_self_review = $2, updated_at = now() WHERE id = $1 RETURNING id",
+        [workspaceId, allowed],
+      );
+      if (!result.rows[0]) throw new Error(`No workspace with id ${workspaceId}.`);
+    },
+
     async listMembers(workspaceId) {
       const result = await client.query(
         `SELECT m.workspace_id, m.user_id, m.role, m.created_at,

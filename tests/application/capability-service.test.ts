@@ -4,7 +4,7 @@ import type { ApplicationContext } from "../../src/application/context";
 import type { AuthorizationPolicy } from "../../src/application/authorization";
 import type { ServerProject } from "../../src/domain/project/server-project";
 import type { Permission } from "../../src/domain/access/permissions";
-import type { WorkspaceAdminGovernance } from "../../src/application/authorization";
+import type { WorkspaceAdminGovernance, WorkspaceSelfReviewPolicy } from "../../src/application/authorization";
 
 const project: ServerProject = {
   id: "p1", workspaceId: "w1", ownerId: "owner", name: "Project", slug: "project",
@@ -28,7 +28,7 @@ function policy(role: "OWNER" | "EDITOR" | "VIEWER" | null = "OWNER"): Authoriza
   };
 }
 
-function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE", workspaceAdmin?: WorkspaceAdminGovernance) {
+function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE", workspaceAdmin?: WorkspaceAdminGovernance, workspaceSelfReview?: WorkspaceSelfReviewPolicy) {
   return createCapabilityService({
     policy: policy(role),
     knowledgeContexts: {
@@ -40,6 +40,7 @@ function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "own
     proposals: { get: async () => ({ id: "proposal", projectId: "p1", authorUserId: "author", sourcePrivateContextId: "work", title: "Proposal", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, baseManifestRevision: 1, createdAt: new Date(0), submittedAt: new Date(0), resources: [], semanticMessages: [], relationships: [] }), list: async () => [], submit: async () => { throw new Error("not used"); }, hasForContext: async () => false, currentSharedRevision: async () => ({ revision: "r1", resources: {} }) },
     promotion: { preview: async () => ({ proposalId: "proposal", projectId: "p1", reviewStatus: blockerCode === "REVIEW_REQUIRED" ? "none" : "approved", eligible: promotionEligible, blockers: promotionEligible ? [] : [{ code: blockerCode, message: blockerCode === "REVIEW_REQUIRED" ? "review required" : "stale" }], baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, creates: [], updates: [], retires: [], semanticIdentityAdditions: [], semanticIdentityReuses: [], semanticChanges: [], relationships: [] }), execute: async () => { throw new Error("not used"); }, recover: async () => ({ examined: 0, completed: 0, pending: 0 }) },
     workspaceAdmin,
+    workspaceSelfReview,
   });
 }
 
@@ -83,6 +84,11 @@ describe("capability service", () => {
 
     const reviewer = await service("EDITOR").proposal(context("reviewer"), "p1", "proposal");
     expect(reviewer["proposal.review"]).toMatchObject({ allowed: true, requiredPermission: "resource:update" });
+  });
+
+  it("reports author approval as available when the workspace policy enables it", async () => {
+    const capabilities = await service("OWNER", "author", "active", true, "STALE_BASE", undefined, async () => true).proposal(context("author"), "p1", "proposal");
+    expect(capabilities["proposal.review"]).toMatchObject({ allowed: true, requiredPermission: "resource:update" });
   });
 
   it("intersects PAT scopes with the project role", async () => {

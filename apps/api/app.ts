@@ -28,7 +28,7 @@ import { createArchitecturalProposalService } from "../../src/application/archit
 import { createPromotionService } from "../../src/application/promotion-service";
 import { createCapabilityService } from "../../src/application/capability-service";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
-import { createAuthorizationPolicy, createWorkspaceAdminGovernance } from "../../src/application/authorization";
+import { createAuthorizationPolicy, createWorkspaceAdminGovernance, createWorkspaceSelfReviewPolicy } from "../../src/application/authorization";
 import { createCredentialMint } from "./auth/agent-credential";
 import type { ServerConfig } from "./config";
 import type { ServerProject } from "../../src/domain/project/server-project";
@@ -145,6 +145,7 @@ export async function createApp(
 
   const policy = createAuthorizationPolicy<ServerProject>(runtime.projects);
   const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces: runtime.workspaces });
+  const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces: runtime.workspaces });
   const promotion = createPromotionService({
     proposals: runtime.architecturalProposals,
     projects: runtime.projects,
@@ -163,6 +164,7 @@ export async function createApp(
     proposals: runtime.architecturalProposals,
     promotion,
     workspaceAdmin,
+    workspaceSelfReview,
   });
 
   const catalog = createProjectCatalog({
@@ -220,6 +222,7 @@ export async function createApp(
       promotions: runtime.promotions,
       policy,
       workspaceAdmin,
+      workspaceSelfReview,
     }),
     promotion,
     capabilities,

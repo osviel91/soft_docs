@@ -11,6 +11,7 @@ export interface ServerWorkspace {
   ownerId: string;
   name: string;
   isDefault: boolean;
+  allowAuthorSelfReview: boolean;
   createdAt: Date;
   updatedAt: Date;
   role: WorkspaceRole;

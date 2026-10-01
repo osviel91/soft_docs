@@ -18,7 +18,7 @@ import { createAuthoritativeBatchRepository } from "../../src/persistence/author
 import { createPromotionRepository } from "../../src/persistence/promotion-repository";
 import { createPromotionService } from "../../src/application/promotion-service";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
-import { createAuthorizationPolicy, createWorkspaceAdminGovernance } from "../../src/application/authorization";
+import { createAuthorizationPolicy, createWorkspaceAdminGovernance, createWorkspaceSelfReviewPolicy } from "../../src/application/authorization";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
 import type { SqlClient } from "../../src/persistence/sql-client";
@@ -45,6 +45,7 @@ beforeAll(async () => {
   const workspaces = createWorkspaceRepository(client);
   const policy = createAuthorizationPolicy<ServerProject>(projects);
   const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces });
+  const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces });
   users = createUserRepository(client);
   const knowledgeContexts = createKnowledgeContextRepository(client);
   architecturalProposals = createArchitecturalProposalRepository(client);
@@ -63,6 +64,7 @@ beforeAll(async () => {
     reviews: createProposalReviewRepository(client),
     policy,
     workspaceAdmin,
+    workspaceSelfReview,
   });
   promotionService = createPromotionService({
     proposals: architecturalProposals,
@@ -282,10 +284,22 @@ it("persists append-only review history, aggregates latest decisions, and keeps 
   expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.content).toBe("event PaymentRequested\n");
 });
 
+it("allows an author to approve only when platform configuration enables it for the workspace", async () => {
+  const owner = await user("self-review-enabled-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Self review", workspaceId: owner })).project;
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "candidate" });
+  const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "candidate.md", type: "markdown-document", content: "# Candidate\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Self review" });
+
+  await expect(service.review(contextFor(owner), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" })).rejects.toMatchObject({ code: "invalid" });
+  await createWorkspaceRepository(client).setAuthorSelfReviewAllowed(project.workspaceId, true);
+  await expect(service.review(contextFor(owner), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" })).resolves.toMatchObject({ decision: "APPROVE" });
+});
+
 it("revises from current MY WORK with a fresh base and no transferred reviews", async () => {
   const owner = await user("revision-owner");
   const reviewer = await user("revision-reviewer");
-  const project = (await catalog.createProject(contextFor(owner), { name: "Revision", workspaceId: owner })).project;
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Revision", resources: [{ path: "revision.md", type: "markdown-document", content: "base\n" }] });
   await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "revision-work" });
   const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "revision.md", type: "markdown-document", content: "one\n" });
@@ -299,6 +313,16 @@ it("revises from current MY WORK with a fresh base and no transferred reviews", 
   expect(second.baseSharedRevision).toBe((await service.get(contextFor(owner), project.id, second.id)).currentSharedRevision);
   expect(second.resources[0]?.content).toBe("two\n");
   expect(second.resources[0]?.sourceRevision).toBe(current.revision);
+  expect((await service.diff(contextFor(owner), project.id, second.id)).resources[0]).toMatchObject({
+    path: "revision.md",
+    type: "markdown-document",
+    operation: "MODIFIED",
+    baseContent: "base\n",
+    proposedContent: "two\n",
+  });
+  await client.query("UPDATE architectural_proposal_resources SET type = 'UPDATE' WHERE proposal_id = $1", [second.id]);
+  expect((await service.diff(contextFor(owner), project.id, second.id)).resources[0]?.type).toBe("markdown-document");
+  expect((await service.get(contextFor(owner), project.id, second.id)).resources[0]?.type).toBe("markdown-document");
   expect((await service.reviews(contextFor(owner), project.id, second.id)).reviews).toHaveLength(0);
   expect((await service.reviews(contextFor(owner), project.id, first.id)).reviews).toHaveLength(1);
   expect((await service.get(contextFor(owner), project.id, first.id)).status).toBe("superseded");

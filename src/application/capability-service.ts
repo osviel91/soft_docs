@@ -1,5 +1,5 @@
 import type { ApplicationContext } from "./context";
-import type { AuthorizationPolicy, WorkspaceAdminGovernance } from "./authorization";
+import type { AuthorizationPolicy, WorkspaceAdminGovernance, WorkspaceSelfReviewPolicy } from "./authorization";
 import type { Permission, ProjectRole } from "../domain/access/permissions";
 import type { ServerProject } from "../domain/project/server-project";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
@@ -57,6 +57,7 @@ export function createCapabilityService(options: {
   proposals: ArchitecturalProposalRepository;
   promotion: PromotionService;
   workspaceAdmin?: WorkspaceAdminGovernance;
+  workspaceSelfReview?: WorkspaceSelfReviewPolicy;
 }): CapabilityService {
   const permission = async (context: ApplicationContext, projectId: string, capability: Capability, requiredPermission: Permission): Promise<CapabilityDecision> => {
     const outcome = await options.policy.decide(context, projectId, requiredPermission);
@@ -117,7 +118,7 @@ export function createCapabilityService(options: {
         };
       }
        let review = await governancePermission(context, projectId, "proposal.review", "resource:update");
-      if (review.allowed && proposal.authorUserId === context.principal.subjectUserId) {
+       if (review.allowed && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, projectId))) {
         review.allowed = false;
         review.reason = "self_review";
       }

@@ -201,6 +201,22 @@ export function createRouter(dependencies: AppDependencies): Router {
 
   // ---- Server workspaces ----------------------------------------------------
 
+  router.patch("/api/admin/workspaces/:workspaceId/self-review", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      if (typeof body.allowed !== "boolean") {
+        return errorResponse(422, "invalid", "allowed must be a boolean.");
+      }
+      await dependencies.workspaceService.setAuthorSelfReviewAllowed(
+        context,
+        params.workspaceId,
+        body.allowed,
+      );
+      return json(204, null);
+    }),
+  );
+
   router.get("/api/workspaces", async (request) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
@@ -962,6 +978,7 @@ function workspaceView(workspace: {
   ownerId: string;
   name: string;
   isDefault: boolean;
+  allowAuthorSelfReview: boolean;
   role: WorkspaceRole;
   createdAt: Date;
   updatedAt: Date;
@@ -971,6 +988,7 @@ function workspaceView(workspace: {
     ownerId: workspace.ownerId,
     name: workspace.name,
     isDefault: workspace.isDefault,
+    allowAuthorSelfReview: workspace.allowAuthorSelfReview,
     role: workspace.role,
     createdAt: workspace.createdAt.toISOString(),
     updatedAt: workspace.updatedAt.toISOString(),

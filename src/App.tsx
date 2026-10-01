@@ -450,6 +450,16 @@ export default function App() {
     },
     [apiClient, refreshServerWorkspaces],
   );
+  const setWorkspaceAuthorSelfReview = useCallback(
+    (workspaceId: string, allowed: boolean) => {
+      void apiClient.setWorkspaceAuthorSelfReview(workspaceId, allowed).then(() => {
+        setServerWorkspaces((workspaces) => workspaces.map((workspace) =>
+          workspace.id === workspaceId ? { ...workspace, allowAuthorSelfReview: allowed } : workspace,
+        ));
+      });
+    },
+    [apiClient],
+  );
   const [page, setPage] = useState<AppPage>("workspace");
   const [view, setView] = useState<EditorView>("code");
   const [historyResourceScoped, setHistoryResourceScoped] = useState(false);
@@ -3133,6 +3143,7 @@ export default function App() {
           onCreateWorkspace={createServerWorkspace}
           onRenameWorkspace={renameServerWorkspace}
           onDeleteWorkspace={deleteServerWorkspace}
+          onSetWorkspaceAuthorSelfReview={setWorkspaceAuthorSelfReview}
           onBack={() => setPage("workspace")}
         />
       ) : (

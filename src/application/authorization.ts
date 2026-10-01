@@ -130,6 +130,21 @@ export type WorkspaceAdminGovernance = (
   permission: Permission,
 ) => Promise<boolean>;
 
+export type WorkspaceSelfReviewPolicy = (
+  context: ApplicationContext,
+  projectId: string,
+) => Promise<boolean>;
+
+export function createWorkspaceSelfReviewPolicy(options: {
+  policy: AuthorizationPolicy<ServerProject>;
+  workspaces: WorkspaceRepository;
+}): WorkspaceSelfReviewPolicy {
+  return async (context, projectId) => {
+    const access = await options.policy.decide(context, projectId, "project:read");
+    return access.allowed && options.workspaces.authorSelfReviewAllowed(access.project.workspaceId);
+  };
+}
+
 /**
  * A workspace admin may govern proposals only in projects they can already
  * read, and only when their credential also carries the operation's scope.

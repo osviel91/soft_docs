@@ -1,7 +1,7 @@
 import type { ArchitecturalProposalRepository } from "../application/ports/architectural-proposal-repository";
 import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalResourceSnapshot, ProposalSemanticMessageSnapshot } from "../domain/workspace/architectural-proposal";
 import type { ResourceMetadata } from "../domain/workspace/resource-metadata";
-import type { ResourceType } from "../domain/workspace/resource-id";
+import { resourceTypeOfName, type ResourceType } from "../domain/workspace/resource-id";
 import type { SqlClient } from "./sql-client";
 import { createIdGenerator, type IdGenerator } from "../shared/ids/uuid";
 
@@ -16,6 +16,10 @@ function date(value: unknown): Date {
 function metadata(value: unknown): ResourceMetadata | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as ResourceMetadata;
+}
+
+function isResourceType(value: unknown): value is ResourceType {
+  return value === "sequence-diagram" || value === "event-flow" || value === "markdown-document";
 }
 
 function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSnapshot[], messages: ProposalSemanticMessageSnapshot[], relationships: ProposalRelationshipSnapshot[]): ArchitecturalProposal {
@@ -46,18 +50,31 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
 
   const children = async (db: SqlClient, proposalId: string) => {
     const [resourceRows, messageRows, relationshipRows] = await Promise.all([
-      db.query("SELECT * FROM architectural_proposal_resources WHERE proposal_id = $1 ORDER BY path, source_resource_id", [proposalId]),
+      db.query(`SELECT apr.*, source_revision.type AS source_revision_type
+                  FROM architectural_proposal_resources apr
+                  LEFT JOIN resource_revisions source_revision
+                    ON source_revision.resource_id = apr.source_resource_id
+                   AND source_revision.revision = apr.source_revision
+                 WHERE apr.proposal_id = $1
+                 ORDER BY apr.path, apr.source_resource_id`, [proposalId]),
       db.query("SELECT * FROM architectural_proposal_messages WHERE proposal_id = $1 ORDER BY name, message_id", [proposalId]),
       db.query("SELECT * FROM architectural_proposal_relationships WHERE proposal_id = $1 ORDER BY source_id, target_id", [proposalId]),
     ]);
-    const resources = resourceRows.rows.map((row): ProposalResourceSnapshot => ({
-      sourceResourceId: String(row.source_resource_id), path: String(row.path), type: row.type as ResourceType,
-      sourceRevision: Number(row.source_revision), content: String(row.content), ...(metadata(row.metadata) ? { metadata: metadata(row.metadata) } : {}),
-      ...(row.operation == null ? {} : { operation: row.operation as ProposalResourceSnapshot["operation"] }),
-       ...(row.base_resource_id == null ? {} : { baseResourceId: String(row.base_resource_id) }),
-       ...(row.base_path == null ? {} : { basePath: String(row.base_path) }),
-       ...(row.base_revision == null ? {} : { baseRevision: Number(row.base_revision) }),
-    }));
+    const resources = resourceRows.rows.map((row): ProposalResourceSnapshot => {
+      const type = isResourceType(row.type)
+        ? row.type
+        : isResourceType(row.source_revision_type)
+          ? row.source_revision_type
+          : resourceTypeOfName(String(row.path));
+      return {
+        sourceResourceId: String(row.source_resource_id), path: String(row.path), type,
+        sourceRevision: Number(row.source_revision), content: String(row.content), ...(metadata(row.metadata) ? { metadata: metadata(row.metadata) } : {}),
+        ...(row.operation == null ? {} : { operation: row.operation as ProposalResourceSnapshot["operation"] }),
+         ...(row.base_resource_id == null ? {} : { baseResourceId: String(row.base_resource_id) }),
+         ...(row.base_path == null ? {} : { basePath: String(row.base_path) }),
+         ...(row.base_revision == null ? {} : { baseRevision: Number(row.base_revision) }),
+      };
+    });
     const messages = messageRows.rows.map((row): ProposalSemanticMessageSnapshot => ({ id: String(row.message_id), name: String(row.name), kind: row.kind as "event" | "command", sourceContextId: String(row.source_context_id), operation: row.operation as ProposalSemanticMessageSnapshot["operation"], ...(row.base_name == null ? {} : { baseName: String(row.base_name) }), ...(row.base_kind == null ? {} : { baseKind: row.base_kind as "event" | "command" }) }));
     const relationships = relationshipRows.rows.map((row): ProposalRelationshipSnapshot => ({
       kind: row.kind as ProposalRelationshipSnapshot["kind"], sourceId: String(row.source_id), targetId: String(row.target_id), sourceContextId: String(row.source_context_id),
@@ -181,7 +198,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
            const selection = input.selections.find((candidate) => candidate.resourceId === String(row.id))!;
            const shared = await tx.query("SELECT id, path, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE'", [input.projectId]);
            const base = selection.baseResourceId ? shared.rows.find((candidate) => String(candidate.id) === selection.baseResourceId) : shared.rows.find((candidate) => String(candidate.path) === String(row.path));
-           await tx.query("INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)", [proposalId, String(row.id), selection.path ?? String(row.path), selection.operation ?? (base ? "UPDATE" : "CREATE"), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), selection.operation ?? (base ? "UPDATE" : "CREATE"), base ? String(base.id) : null, base ? String(base.path) : null, selection.baseRevision ?? (base ? Number(base.revision) : null)]);
+            await tx.query("INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)", [proposalId, String(row.id), selection.path ?? String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {}), selection.operation ?? (base ? "UPDATE" : "CREATE"), base ? String(base.id) : null, base ? String(base.path) : null, selection.baseRevision ?? (base ? Number(base.revision) : null)]);
          }
          for (const row of retired.rows) await tx.query("INSERT INTO architectural_proposal_resources (proposal_id, source_resource_id, path, type, source_revision, content, metadata, operation, base_resource_id, base_path, base_revision) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'RETIRE', $2, $3, $5)", [proposalId, String(row.id), String(row.path), String(row.snapshot_type), Number(row.revision), String(row.snapshot_content), typeof row.snapshot_metadata === "string" ? row.snapshot_metadata : JSON.stringify(row.snapshot_metadata ?? {})]);
          const requestedMessages = input.semanticMessages ?? input.privateMessageIds.map((id) => ({ id, name: undefined, kind: undefined, operation: "ADD" as const, baseName: undefined, baseKind: undefined }));

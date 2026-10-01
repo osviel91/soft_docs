@@ -6,6 +6,7 @@ describe("PlatformAdministration", () => {
   it("keeps account approval controls in the settings page", () => {
     const onSetUserStatus = vi.fn();
     const onSetWorkspaceMemberRole = vi.fn();
+    const onSetWorkspaceAuthorSelfReview = vi.fn();
     render(
       <PlatformAdministration
         auth={{
@@ -36,6 +37,7 @@ describe("PlatformAdministration", () => {
             ownerId: "admin",
             name: "Ada Workspace",
             isDefault: true,
+            allowAuthorSelfReview: false,
             role: "ADMIN",
             createdAt: new Date(0).toISOString(),
             updatedAt: new Date(0).toISOString(),
@@ -58,6 +60,7 @@ describe("PlatformAdministration", () => {
         onCreateWorkspace={vi.fn()}
         onRenameWorkspace={vi.fn()}
         onDeleteWorkspace={vi.fn()}
+        onSetWorkspaceAuthorSelfReview={onSetWorkspaceAuthorSelfReview}
         onBack={vi.fn()}
       />,
     );
@@ -80,5 +83,7 @@ describe("PlatformAdministration", () => {
       "pending",
       "VIEWER",
     );
+    fireEvent.click(screen.getByLabelText("Allow authors to approve proposals in Ada Workspace"));
+    expect(onSetWorkspaceAuthorSelfReview).toHaveBeenCalledWith("workspace-1", true);
   });
 });

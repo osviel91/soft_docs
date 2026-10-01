@@ -21,6 +21,7 @@ export interface PlatformAdministrationProps {
   onCreateWorkspace: (name: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
+  onSetWorkspaceAuthorSelfReview: (workspaceId: string, allowed: boolean) => void;
   onBack: () => void;
 }
 
@@ -35,6 +36,7 @@ export default function PlatformAdministration({
   onCreateWorkspace,
   onRenameWorkspace,
   onDeleteWorkspace,
+  onSetWorkspaceAuthorSelfReview,
   onBack,
 }: PlatformAdministrationProps) {
   const user = auth.user;
@@ -140,6 +142,19 @@ export default function PlatformAdministration({
           <p className="settings-card__muted">
             Manage who can access this workspace and what they can do.
           </p>
+          {user?.platformAdmin && (
+            <label className="settings-user">
+              <span>Allow proposal authors to approve their own proposals</span>
+              <input
+                type="checkbox"
+                aria-label={`Allow authors to approve proposals in ${workspace.name}`}
+                checked={workspace.allowAuthorSelfReview}
+                onChange={(event) =>
+                  onSetWorkspaceAuthorSelfReview(workspace.id, event.target.checked)
+                }
+              />
+            </label>
+          )}
           {workspace.role === "ADMIN" && (
             <form
               className="workspaces__create"

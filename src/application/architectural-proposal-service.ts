@@ -1,7 +1,7 @@
 import type { ApplicationContext } from "./context";
 import { actorIdOf, actorTypeOf, credentialIdOf } from "./context";
 import { conflict, invalid, notFound } from "./errors";
-import type { AuthorizationPolicy, WorkspaceAdminGovernance } from "./authorization";
+import type { AuthorizationPolicy, WorkspaceAdminGovernance, WorkspaceSelfReviewPolicy } from "./authorization";
 import { createAuthorizationPolicy } from "./authorization";
 import type { ServerProject } from "../domain/project/server-project";
 import type { ProjectRepository } from "./ports/project-repository";
@@ -71,6 +71,7 @@ export function createArchitecturalProposalService(options: {
   reviews?: import("./ports/proposal-review-repository").ProposalReviewRepository;
   policy?: AuthorizationPolicy<ServerProject>;
   workspaceAdmin?: WorkspaceAdminGovernance;
+  workspaceSelfReview?: WorkspaceSelfReviewPolicy;
   storage?: (projectId: string) => ProjectStorage;
   promotions?: import("./ports/promotion-repository").PromotionRepository;
 }): ArchitecturalProposalService {
@@ -326,7 +327,7 @@ export function createArchitecturalProposalService(options: {
        const proposal = await options.proposals.get(input.projectId, input.proposalId);
        if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
        if (proposal.status !== "open") throw conflict("Only open proposals may be reviewed.", { state: proposal.status });
-      if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId) throw invalid("Proposal authors cannot approve their own proposal.");
+       if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, input.projectId))) throw invalid("Proposal authors cannot approve their own proposal.");
       const summary = input.summary?.trim();
       if (summary !== undefined && summary.length > 4000) throw invalid("Review summary must be 4000 characters or fewer.");
       const current = await options.proposals.currentSharedRevision(input.projectId);

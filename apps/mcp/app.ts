@@ -19,7 +19,7 @@ import { createChangeProposalService } from "../../src/application/change-propos
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createPromotionService } from "../../src/application/promotion-service";
-import { createAuthorizationPolicy, createWorkspaceAdminGovernance } from "../../src/application/authorization";
+import { createAuthorizationPolicy, createWorkspaceAdminGovernance, createWorkspaceSelfReviewPolicy } from "../../src/application/authorization";
 import { createCapabilityService } from "../../src/application/capability-service";
 import type { McpConfig } from "./config";
 import type { ServerProject } from "../../src/domain/project/server-project";
@@ -116,6 +116,7 @@ export async function createMcpService(
   });
   const policy = createAuthorizationPolicy<ServerProject>(runtime.projects);
   const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces: runtime.workspaces });
+  const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces: runtime.workspaces });
   const architecturalProposals = createArchitecturalProposalService({
     proposals: runtime.architecturalProposals,
     projects: runtime.projects,
@@ -126,10 +127,11 @@ export async function createMcpService(
     promotions: runtime.promotions,
     policy,
     workspaceAdmin,
+    workspaceSelfReview,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
   const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy, workspaceAdmin });
-  const capabilities = createCapabilityService({ policy, knowledgeContexts: runtime.knowledgeContexts, proposals: runtime.architecturalProposals, promotion, workspaceAdmin });
+  const capabilities = createCapabilityService({ policy, knowledgeContexts: runtime.knowledgeContexts, proposals: runtime.architecturalProposals, promotion, workspaceAdmin, workspaceSelfReview });
 
   const deps: McpHandlerDeps = {
     config,

@@ -22,6 +22,7 @@ export interface WorkspaceService {
     workspaceId: string,
   ): Promise<void>;
   listWorkspaces(context: ApplicationContext): Promise<ServerWorkspace[]>;
+  setAuthorSelfReviewAllowed(context: ApplicationContext, workspaceId: string, allowed: boolean): Promise<void>;
   listMembers(
     context: ApplicationContext,
     workspaceId: string,
@@ -101,7 +102,16 @@ export function createWorkspaceService(
     },
 
     listWorkspaces(context) {
-      return repository.listForUser(context.principal.subjectUserId);
+      return context.principal.platformAdmin === true
+        ? repository.listAll(context.principal.subjectUserId)
+        : repository.listForUser(context.principal.subjectUserId);
+    },
+
+    async setAuthorSelfReviewAllowed(context, workspaceId, allowed) {
+      if (context.principal.platformAdmin !== true) {
+        throw forbidden("Platform administrator access is required.");
+      }
+      await repository.setAuthorSelfReviewAllowed(workspaceId, allowed);
     },
 
     async listMembers(context, workspaceId) {

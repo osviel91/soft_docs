@@ -13,6 +13,7 @@ const workspace: ServerWorkspace = {
   ownerId: "admin",
   name: "Personal Workspace",
   isDefault: true,
+  allowAuthorSelfReview: false,
   role: "ADMIN",
   createdAt: new Date(0),
   updatedAt: new Date(0),
@@ -28,6 +29,12 @@ function context(userId: string): ApplicationContext {
       scopes: [],
     },
   };
+}
+
+function platformAdminContext(): ApplicationContext {
+  const ctx = context("platform-admin");
+  ctx.principal.platformAdmin = true;
+  return ctx;
 }
 
 function repository(): WorkspaceRepository {
@@ -64,6 +71,9 @@ function repository(): WorkspaceRepository {
       userId === "admin" || userId === "editor"
         ? [{ ...workspace, role: userId === "admin" ? "ADMIN" : "EDITOR" }]
         : [],
+    listAll: async () => [workspace],
+    authorSelfReviewAllowed: async () => false,
+    setAuthorSelfReviewAllowed: async () => {},
     listMembers: async () => members,
     roleOf: async (_workspaceId, userId) =>
       members.find((member) => member.userId === userId)?.role ?? null,
@@ -120,5 +130,12 @@ describe("workspace service", () => {
     await expect(
       service.setMember(context("admin"), "w1", "admin", "VIEWER"),
     ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("restricts author self-review policy changes to platform admins", async () => {
+    const service = createWorkspaceService(repository());
+    await expect(service.setAuthorSelfReviewAllowed(context("admin"), "w1", true)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(service.setAuthorSelfReviewAllowed(platformAdminContext(), "w1", true)).resolves.toBeUndefined();
+    await expect(service.listWorkspaces(platformAdminContext())).resolves.toHaveLength(1);
   });
 });

@@ -70,6 +70,7 @@ export interface ServerWorkspace {
   ownerId: string;
   name: string;
   isDefault: boolean;
+  allowAuthorSelfReview: boolean;
   role: ServerWorkspaceRole;
   createdAt: string;
   updatedAt: string;
@@ -430,6 +431,14 @@ export class ServerApiClient {
       "/api/workspaces",
     );
     return body.workspaces ?? [];
+  }
+
+  async setWorkspaceAuthorSelfReview(workspaceId: string, allowed: boolean): Promise<void> {
+    await this.request<unknown>(
+      "PATCH",
+      `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/self-review`,
+      { allowed },
+    );
   }
 
   async createWorkspace(name: string): Promise<ServerWorkspace> {

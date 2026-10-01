@@ -30,6 +30,7 @@ function workspace(id: string, name: string) {
     ownerId: "u1",
     name,
     isDefault: id === "w1",
+    allowAuthorSelfReview: false,
     role: "ADMIN" as const,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
