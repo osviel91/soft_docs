@@ -107,7 +107,9 @@ describe("ArchitecturalProposalDetail", () => {
     expect(await screen.findByText("Document governed publication model")).toBeInTheDocument();
     expect(screen.getByText("Alice Reviewer")).toBeInTheDocument();
     expect(screen.getByText("Explain why publication remains separately governed.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Impact" }));
     expect(screen.getByTestId("proposal-impact")).toHaveTextContent("1 modified");
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(screen.getByRole("heading", { name: "Review state" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Comparison for overview.md")).not.toBeInTheDocument();
     expect(onDiffLoaded).toHaveBeenCalledWith(diff);
