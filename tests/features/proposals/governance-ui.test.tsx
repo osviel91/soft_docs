@@ -53,8 +53,10 @@ describe("governance UI intent", () => {
     render(<ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} />);
     await screen.findByText("Checkout");
     fireEvent.click(screen.getByRole("button", { name: "Preview promotion" }));
+    expect(await screen.findByText(/Resource changed in SHARED/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Impact" }));
     expect(await screen.findByText(/CREATE/)).toBeInTheDocument();
-    expect(screen.getByText(/Resource changed in SHARED/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
     fireEvent.change(screen.getByPlaceholderText("Add a review summary (optional)"), { target: { value: "Looks good" } });
     fireEvent.click(screen.getByRole("button", { name: "Approve proposal" }));
     await waitFor(() => expect(review).toHaveBeenCalledWith("p1", "p1", { decision: "APPROVE", summary: "Looks good" }));
