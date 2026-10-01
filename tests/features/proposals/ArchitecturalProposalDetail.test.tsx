@@ -58,6 +58,24 @@ function client(): ServerApiClient {
 }
 
 describe("ArchitecturalProposalDetail", () => {
+  it.each(["withdrawn", "superseded"] as const)("hides promotion controls for a %s proposal", async (status) => {
+    const api = client();
+    vi.mocked(api.getArchitecturalProposal).mockResolvedValue({
+      ...proposal,
+      status,
+      lifecycle: { state: status === "withdrawn" ? "WITHDRAWN" : "SUPERSEDED" },
+      capabilities: {
+        ...proposal.capabilities,
+        "proposal.previewPromotion": { capability: "proposal.previewPromotion", allowed: true },
+      },
+    });
+    render(<ArchitecturalProposalDetail client={api} projectId="project-1" proposalId="proposal-1" onBack={vi.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: proposal.title })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Proposal promotion")).not.toBeInTheDocument();
+    expect(screen.getByText(status.toUpperCase())).toBeInTheDocument();
+  });
+
   it("shows proposal actions beside each other and matches the workspace hide-control styling", async () => {
     const api = client();
     const onRevise = vi.fn();

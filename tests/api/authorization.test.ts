@@ -22,11 +22,14 @@ import {
 } from "../../src/domain/access/permissions";
 import {
   createAuthorizationPolicy,
+  createWorkspaceAdminGovernance,
   credentialAllowsProject,
   restrictionOf,
 } from "../../src/application/authorization";
 import { ApplicationError } from "../../src/application/errors";
 import type { ApplicationContext } from "../../src/application/context";
+import type { WorkspaceRepository } from "../../src/application/ports/workspace-repository";
+import type { ServerProject } from "../../src/domain/project/server-project";
 
 /** A context for a user with no credential restriction. */
 function contextFor(
@@ -151,6 +154,29 @@ describe("the policy", () => {
     // does not read the same row twice.
     expect(outcome).toMatchObject({ allowed: true, role: "EDITOR" });
     expect(outcome.allowed && outcome.project.id).toBe("p1");
+  });
+
+  it("allows workspace admins to govern proposals only in projects they can read and within credential scope", async () => {
+    const project: ServerProject = {
+      id: "p1", workspaceId: "w1", ownerId: "owner", name: "Project", slug: "project",
+      createdAt: new Date(0), updatedAt: new Date(0),
+    };
+    const policy = createAuthorizationPolicy<ServerProject>({
+      findById: async (id) => id === project.id ? project : null,
+      roleOf: async (projectId, userId) => projectId === project.id && userId !== "outsider" ? "VIEWER" : null,
+    });
+    const workspaces = {
+      roleOf: async (workspaceId: string, userId: string) => workspaceId === "w1" && userId === "admin" ? "ADMIN" : "EDITOR",
+    } as unknown as WorkspaceRepository;
+    const canGovern = createWorkspaceAdminGovernance({ policy, workspaces });
+
+    expect(await canGovern(contextFor("admin"), "p1", "resource:update")).toBe(true);
+    expect(await canGovern(contextFor("outsider"), "p1", "resource:update")).toBe(false);
+    const readOnlyPat: ApplicationContext = {
+      ...contextFor("admin"),
+      principal: { ...contextFor("admin").principal, authType: "pat", scopes: ["project:read"] },
+    };
+    expect(await canGovern(readOnlyPat, "p1", "resource:update")).toBe(false);
   });
 
   it("refuses a viewer's write with `forbidden`, distinguishing it from invisible", async () => {

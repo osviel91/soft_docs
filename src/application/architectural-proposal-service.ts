@@ -1,7 +1,7 @@
 import type { ApplicationContext } from "./context";
 import { actorIdOf, actorTypeOf, credentialIdOf } from "./context";
 import { conflict, invalid, notFound } from "./errors";
-import type { AuthorizationPolicy } from "./authorization";
+import type { AuthorizationPolicy, WorkspaceAdminGovernance } from "./authorization";
 import { createAuthorizationPolicy } from "./authorization";
 import type { ServerProject } from "../domain/project/server-project";
 import type { ProjectRepository } from "./ports/project-repository";
@@ -70,6 +70,7 @@ export function createArchitecturalProposalService(options: {
   audit?: AuditRepository;
   reviews?: import("./ports/proposal-review-repository").ProposalReviewRepository;
   policy?: AuthorizationPolicy<ServerProject>;
+  workspaceAdmin?: WorkspaceAdminGovernance;
   storage?: (projectId: string) => ProjectStorage;
   promotions?: import("./ports/promotion-repository").PromotionRepository;
 }): ArchitecturalProposalService {
@@ -316,7 +317,11 @@ export function createArchitecturalProposalService(options: {
       return { status, approvals, changesRequested, reviews };
     },
     async review(context, input) {
-      await policy.requirePermission(context, input.projectId, "resource:update");
+      const access = await policy.decide(context, input.projectId, "resource:update");
+      const workspaceAdmin = !access.allowed && access.reason === "forbidden" && options.workspaceAdmin
+        ? await options.workspaceAdmin(context, input.projectId, "resource:update")
+        : false;
+      if (!access.allowed && !workspaceAdmin) await policy.requirePermission(context, input.projectId, "resource:update");
       if (!options.reviews) throw invalid("Proposal reviews are not configured.");
        const proposal = await options.proposals.get(input.projectId, input.proposalId);
        if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);

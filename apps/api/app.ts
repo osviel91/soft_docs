@@ -28,9 +28,10 @@ import { createArchitecturalProposalService } from "../../src/application/archit
 import { createPromotionService } from "../../src/application/promotion-service";
 import { createCapabilityService } from "../../src/application/capability-service";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
-import { createAuthorizationPolicy } from "../../src/application/authorization";
+import { createAuthorizationPolicy, createWorkspaceAdminGovernance } from "../../src/application/authorization";
 import { createCredentialMint } from "./auth/agent-credential";
 import type { ServerConfig } from "./config";
+import type { ServerProject } from "../../src/domain/project/server-project";
 
 /** Everything the route table needs, built once per process. */
 export interface AppDependencies {
@@ -142,6 +143,8 @@ export async function createApp(
     );
   });
 
+  const policy = createAuthorizationPolicy<ServerProject>(runtime.projects);
+  const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces: runtime.workspaces });
   const promotion = createPromotionService({
     proposals: runtime.architecturalProposals,
     projects: runtime.projects,
@@ -149,15 +152,17 @@ export async function createApp(
     batches: runtime.authoritativeBatches,
     promotions: runtime.promotions,
     storage: runtime.storageFor,
-    policy: createAuthorizationPolicy(runtime.projects),
+    policy,
+    workspaceAdmin,
   });
   await promotion.recover();
 
   const capabilities = createCapabilityService({
-    policy: createAuthorizationPolicy(runtime.projects),
+    policy,
     knowledgeContexts: runtime.knowledgeContexts,
     proposals: runtime.architecturalProposals,
     promotion,
+    workspaceAdmin,
   });
 
   const catalog = createProjectCatalog({
@@ -174,7 +179,7 @@ export async function createApp(
     batches: runtime.authoritativeBatches,
     storage: runtime.storageFor,
     createProject: (context, input) => catalog.createProject(context, input),
-    policy: createAuthorizationPolicy(runtime.projects),
+    policy,
     audit: runtime.audit,
   });
   return {
@@ -213,6 +218,8 @@ export async function createApp(
       reviews: runtime.proposalReviews,
       storage: runtime.storageFor,
       promotions: runtime.promotions,
+      policy,
+      workspaceAdmin,
     }),
     promotion,
     capabilities,

@@ -1,6 +1,6 @@
 import type { ApplicationContext } from "./context";
 import { actorIdOf, actorTypeOf, credentialIdOf } from "./context";
-import type { AuthorizationPolicy } from "./authorization";
+import type { AuthorizationPolicy, WorkspaceAdminGovernance } from "./authorization";
 import type { ProjectRepository } from "./ports/project-repository";
 import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
 import type { ProposalReviewRepository } from "./ports/proposal-review-repository";
@@ -33,6 +33,7 @@ export function createPromotionService(options: {
   promotions: import("./ports/promotion-repository").PromotionRepository;
   storage: (projectId: string) => ProjectStorage;
   policy: AuthorizationPolicy<ServerProject>;
+  workspaceAdmin?: WorkspaceAdminGovernance;
 }): PromotionService {
   const newId = createIdGenerator();
   const plan = async (projectId: string, proposalId: string) => {
@@ -162,8 +163,12 @@ export function createPromotionService(options: {
       return { proposalId, projectId, reviewStatus: value.reviewStatus as PromotionPreview["reviewStatus"], eligible: blockers.length === 0, blockers, baseSharedRevision: value.proposal.baseSharedRevision, currentSharedRevision: value.current.revision, staleBase: value.proposal.baseSharedRevision !== value.current.revision, creates: value.entries.filter((entry) => entry.operation === "CREATE"), updates: value.entries.filter((entry) => entry.operation === "UPDATE"), retires: value.entries.filter((entry) => entry.operation === "RETIRE"), semanticIdentityAdditions: value.semanticMessages.filter((message) => message.operation === "ADD").map((message) => message.message.id), semanticIdentityReuses: [], semanticChanges: value.semanticMessages, relationships: value.relationships };
     },
     async execute(context, projectId, proposalId, idempotencyKey) {
-      const authorization = await options.policy.requirePermission(context, projectId, "promotion:execute");
-      if (authorization.role !== "OWNER") throw forbidden("Only project owners may promote proposals.");
+      const authorization = await options.policy.decide(context, projectId, "promotion:execute");
+      const workspaceAdmin = !authorization.allowed && authorization.reason === "forbidden" && options.workspaceAdmin
+        ? await options.workspaceAdmin(context, projectId, "promotion:execute")
+        : false;
+      if (!authorization.allowed && !workspaceAdmin) await options.policy.requirePermission(context, projectId, "promotion:execute");
+      if (authorization.allowed && authorization.role !== "OWNER" && !workspaceAdmin) throw forbidden("Only project owners or workspace admins may promote proposals.");
       const addressed = await options.proposals.get(projectId, proposalId);
       if (!addressed) throw notFound(`No architectural proposal with id ${proposalId}.`);
       if (addressed.status !== "open") throw conflict("Only open proposals may be promoted.", { state: addressed.status });

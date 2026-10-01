@@ -124,6 +124,7 @@ export interface ServerCapabilityDecision {
   reason?: string;
   requiredPermission?: string;
   requiredRole?: string;
+  requiredWorkspaceRole?: "ADMIN";
   state?: string;
 }
 

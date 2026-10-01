@@ -18,10 +18,11 @@ import { createAuthoritativeBatchRepository } from "../../src/persistence/author
 import { createPromotionRepository } from "../../src/persistence/promotion-repository";
 import { createPromotionService } from "../../src/application/promotion-service";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
-import { createAuthorizationPolicy } from "../../src/application/authorization";
+import { createAuthorizationPolicy, createWorkspaceAdminGovernance } from "../../src/application/authorization";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
 import type { SqlClient } from "../../src/persistence/sql-client";
+import type { ServerProject } from "../../src/domain/project/server-project";
 
 let client: SqlClient;
 let volume: string;
@@ -41,12 +42,15 @@ beforeAll(async () => {
   client = await openTestDatabase();
   volume = await mkdtemp(path.join(tmpdir(), "sd-proposal-"));
   const projects = createProjectRepository(client);
+  const workspaces = createWorkspaceRepository(client);
+  const policy = createAuthorizationPolicy<ServerProject>(projects);
+  const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces });
   users = createUserRepository(client);
   const knowledgeContexts = createKnowledgeContextRepository(client);
   architecturalProposals = createArchitecturalProposalRepository(client);
   catalog = createProjectCatalog({
     projects,
-    workspaces: createWorkspaceRepository(client),
+     workspaces,
     knowledgeContexts,
     operations: createWorkspaceOperationRepository(client),
     storage: (projectId, contextId) => createFsProjectStorage({ root: path.join(volume, projectId, contextId ? ".private" : "", contextId ?? "") }),
@@ -57,6 +61,8 @@ beforeAll(async () => {
     projects,
     knowledgeContexts,
     reviews: createProposalReviewRepository(client),
+    policy,
+    workspaceAdmin,
   });
   promotionService = createPromotionService({
     proposals: architecturalProposals,
@@ -65,7 +71,8 @@ beforeAll(async () => {
     batches: createAuthoritativeBatchRepository(client),
     promotions: createPromotionRepository(client),
     storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }),
-    policy: createAuthorizationPolicy(projects),
+    policy,
+    workspaceAdmin,
   });
   bootstrapService = createProjectBootstrapService({
     projects,
@@ -176,6 +183,31 @@ it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", asy
   const retry = await promotionService.execute(contextFor(owner), project.id, proposal.id, "promotion-test-key");
   expect(retry.id).toBe(promotion.id);
   expect((await createPromotionRepository(client).listForResource(project.id, sharedA.id))).toHaveLength(1);
+});
+
+it("allows a workspace ADMIN project member to approve and promote without OWNER project role", async () => {
+  const owner = await user("workspace-governance-owner");
+  const administrator = await user("workspace-governance-admin");
+  const project = await bootstrapService.bootstrap(contextFor(owner), {
+    workspaceId: owner,
+    name: "Workspace Governance",
+    resources: [{ path: "governance.md", type: "markdown-document", content: "Before\n" }],
+  });
+  const workspaceId = project.workspaceId;
+  await createWorkspaceRepository(client).setMember(workspaceId, administrator, "ADMIN");
+  await catalog.setMember(contextFor(owner), project.id, administrator, "VIEWER");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "governance-review" });
+  const shared = (await catalog.listResources(contextFor(owner), project.id))[0];
+  if (!shared) throw new Error("Bootstrap did not create a SHARED governance fixture.");
+  const candidate = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "governance.md", type: "markdown-document", content: "After\n" });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [candidate.id], title: "Workspace admin review" });
+
+  await service.review(contextFor(administrator), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  const promoted = await promotionService.execute(contextFor(administrator), project.id, proposal.id, "workspace-admin-promotion");
+
+  expect(promoted.status).toBe("COMPLETED");
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ resource: { revision: shared.revision + 1 } });
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ content: "After\n" });
 });
 
 it("promotes a governed path-only move with content in the same update", async () => {

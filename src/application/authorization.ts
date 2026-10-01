@@ -29,6 +29,8 @@ import {
   roleAllows,
 } from "../domain/access/authorize";
 import type { Permission, ProjectRole } from "../domain/access/permissions";
+import type { ServerProject } from "../domain/project/server-project";
+import type { WorkspaceRepository } from "./ports/workspace-repository";
 
 /** The roles that may read a project. */
 export const READ_ROLES: readonly ProjectRole[] = ["OWNER", "EDITOR", "VIEWER"];
@@ -119,6 +121,32 @@ export interface AuthorizationPolicy<
     projectId: string,
     roles: readonly ProjectRole[],
   ): Promise<boolean>;
+}
+
+/** Narrow override for proposal governance by a workspace administrator. */
+export type WorkspaceAdminGovernance = (
+  context: ApplicationContext,
+  projectId: string,
+  permission: Permission,
+) => Promise<boolean>;
+
+/**
+ * A workspace admin may govern proposals only in projects they can already
+ * read, and only when their credential also carries the operation's scope.
+ */
+export function createWorkspaceAdminGovernance(options: {
+  policy: AuthorizationPolicy<ServerProject>;
+  workspaces: WorkspaceRepository;
+}): WorkspaceAdminGovernance {
+  return async (context, projectId, permission) => {
+    if (!credentialGrants(context.principal, permission)) return false;
+    const access = await options.policy.decide(context, projectId, "project:read");
+    if (!access.allowed) return false;
+    return (await options.workspaces.roleOf(
+      access.project.workspaceId,
+      context.principal.subjectUserId,
+    )) === "ADMIN";
+  };
 }
 
 /** Whether a credential is restricted to a specific set of projects. */

@@ -1,5 +1,5 @@
 import type { ApplicationContext } from "./context";
-import type { AuthorizationPolicy } from "./authorization";
+import type { AuthorizationPolicy, WorkspaceAdminGovernance } from "./authorization";
 import type { Permission, ProjectRole } from "../domain/access/permissions";
 import type { ServerProject } from "../domain/project/server-project";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
@@ -39,6 +39,7 @@ export interface CapabilityDecision {
   reason?: CapabilityReason;
   requiredPermission?: Permission;
   requiredRole?: ProjectRole;
+  requiredWorkspaceRole?: "ADMIN";
   state?: string;
 }
 
@@ -55,6 +56,7 @@ export function createCapabilityService(options: {
   knowledgeContexts: KnowledgeContextRepository;
   proposals: ArchitecturalProposalRepository;
   promotion: PromotionService;
+  workspaceAdmin?: WorkspaceAdminGovernance;
 }): CapabilityService {
   const permission = async (context: ApplicationContext, projectId: string, capability: Capability, requiredPermission: Permission): Promise<CapabilityDecision> => {
     const outcome = await options.policy.decide(context, projectId, requiredPermission);
@@ -63,6 +65,13 @@ export function createCapabilityService(options: {
       return { capability, allowed: false, requiredPermission };
     }
     return { capability, allowed: false, reason: outcome.reason, requiredPermission, ...(outcome.role === null ? {} : { requiredRole: outcome.role }) };
+  };
+
+  const governancePermission = async (context: ApplicationContext, projectId: string, capability: Capability, requiredPermission: Permission): Promise<CapabilityDecision> => {
+    const decision = await permission(context, projectId, capability, requiredPermission);
+    if (decision.allowed || decision.reason !== "forbidden" || !options.workspaceAdmin) return decision;
+    if (!await options.workspaceAdmin(context, projectId, requiredPermission)) return decision;
+    return { capability, allowed: true, requiredPermission, requiredWorkspaceRole: "ADMIN" };
   };
 
   const ownerContext = async (context: ApplicationContext, projectId: string, contextId: string): Promise<{ context: Awaited<ReturnType<KnowledgeContextRepository["findPrivate"]>>; reason?: CapabilityReason }> => {
@@ -107,7 +116,7 @@ export function createCapabilityService(options: {
           "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "proposal_not_eligible", requiredPermission: "promotion:execute" },
         };
       }
-      let review = await permission(context, projectId, "proposal.review", "resource:update");
+       let review = await governancePermission(context, projectId, "proposal.review", "resource:update");
       if (review.allowed && proposal.authorUserId === context.principal.subjectUserId) {
         review.allowed = false;
         review.reason = "self_review";
@@ -119,13 +128,16 @@ export function createCapabilityService(options: {
       const privateContext = author ? await options.knowledgeContexts.findPrivate(projectId, proposal.sourcePrivateContextId, context.principal.subjectUserId) : null;
       const revise = { ...revisePermission, capability: "proposal.revise" as const, allowed: revisePermission.allowed && author && proposal.status === "open" && privateContext?.lifecycle === "active", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}), ...(author && !privateContext ? { reason: "not_owner" as const } : {}), ...(author && privateContext?.lifecycle === "archived" ? { reason: "archived_context" as const } : {}) };
       const withdraw = { ...withdrawPermission, capability: "proposal.withdraw" as const, allowed: withdrawPermission.allowed && author && proposal.status === "open", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}) };
-      const preview = await permission(context, projectId, "proposal.previewPromotion", "project:read");
-      const promotePermission = await permission(context, projectId, "proposal.promote", "promotion:execute");
-      if (!promotePermission.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };
-      if (!preview.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: preview.reason, requiredPermission: "project:read" } };
-      const authorization = await options.policy.decide(context, projectId, "promotion:execute");
-      if (!authorization.allowed || authorization.role !== "OWNER") {
-        return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "forbidden", requiredPermission: "promotion:execute", requiredRole: "OWNER" } };
+       const preview = await permission(context, projectId, "proposal.previewPromotion", "project:read");
+        const promotePermission = await governancePermission(context, projectId, "proposal.promote", "promotion:execute");
+        if (!promotePermission.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };
+       const requiredGovernanceRole = promotePermission.requiredWorkspaceRole === "ADMIN"
+         ? { requiredWorkspaceRole: "ADMIN" as const }
+         : { requiredRole: "OWNER" as const };
+       if (!preview.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: preview.reason, requiredPermission: "project:read" } };
+       const authorization = await options.policy.decide(context, projectId, "promotion:execute");
+       if ((!authorization.allowed || authorization.role !== "OWNER") && promotePermission.requiredWorkspaceRole !== "ADMIN") {
+         return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "forbidden", requiredPermission: "promotion:execute", ...requiredGovernanceRole } };
       }
       const promotion = await options.promotion.preview(context, projectId, proposalId);
       const blocker = promotion.blockers[0];
@@ -138,8 +150,8 @@ export function createCapabilityService(options: {
         "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw,
         "proposal.previewPromotion": preview,
         "proposal.promote": blocker
-          ? { capability: "proposal.promote", allowed: false, reason: blocker.code === "REVIEW_REQUIRED" ? "review_required" : blocker.code === "COMPLETION_PENDING" ? "completion_pending" : blocker.code.includes("STALE") ? "proposal_not_eligible" : "conflict", requiredPermission: "promotion:execute", requiredRole: "OWNER", state: blocker.code }
-          : { capability: "proposal.promote", allowed: true, requiredPermission: "promotion:execute", requiredRole: "OWNER" },
+           ? { capability: "proposal.promote", allowed: false, reason: blocker.code === "REVIEW_REQUIRED" ? "review_required" : blocker.code === "COMPLETION_PENDING" ? "completion_pending" : blocker.code.includes("STALE") ? "proposal_not_eligible" : "conflict", requiredPermission: "promotion:execute", ...requiredGovernanceRole, state: blocker.code }
+           : { capability: "proposal.promote", allowed: true, requiredPermission: "promotion:execute", ...requiredGovernanceRole },
       };
     },
   };

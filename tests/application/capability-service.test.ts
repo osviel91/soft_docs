@@ -4,6 +4,7 @@ import type { ApplicationContext } from "../../src/application/context";
 import type { AuthorizationPolicy } from "../../src/application/authorization";
 import type { ServerProject } from "../../src/domain/project/server-project";
 import type { Permission } from "../../src/domain/access/permissions";
+import type { WorkspaceAdminGovernance } from "../../src/application/authorization";
 
 const project: ServerProject = {
   id: "p1", workspaceId: "w1", ownerId: "owner", name: "Project", slug: "project",
@@ -19,7 +20,7 @@ function policy(role: "OWNER" | "EDITOR" | "VIEWER" | null = "OWNER"): Authoriza
     decide: async (ctx, projectId, permission) => {
       if (projectId !== project.id || role === null) return { allowed: false, reason: "not_found", role: null, missing: permission };
       if (ctx.principal.authType !== "session" && !ctx.principal.scopes.includes(permission)) return { allowed: false, reason: "scope", role: null, missing: permission };
-      const allowed = role === "OWNER" || (role === "EDITOR" && !["project:delete", "project:members:write", "promotion:execute"].includes(permission));
+      const allowed = role === "OWNER" || (role === "EDITOR" && !["project:delete", "project:members:write", "promotion:execute"].includes(permission)) || (role === "VIEWER" && permission === "project:read");
       return allowed ? { allowed: true, role, project } : { allowed: false, reason: "forbidden", role, missing: permission };
     },
     requirePermission: async () => { throw new Error("not used"); },
@@ -27,7 +28,7 @@ function policy(role: "OWNER" | "EDITOR" | "VIEWER" | null = "OWNER"): Authoriza
   };
 }
 
-function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE") {
+function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE", workspaceAdmin?: WorkspaceAdminGovernance) {
   return createCapabilityService({
     policy: policy(role),
     knowledgeContexts: {
@@ -37,7 +38,8 @@ function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "own
       listPrivateMessages: async () => [], createPrivateMessage: async () => { throw new Error("not used"); }, updatePrivateMessages: async () => [],
     },
     proposals: { get: async () => ({ id: "proposal", projectId: "p1", authorUserId: "author", sourcePrivateContextId: "work", title: "Proposal", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, baseManifestRevision: 1, createdAt: new Date(0), submittedAt: new Date(0), resources: [], semanticMessages: [], relationships: [] }), list: async () => [], submit: async () => { throw new Error("not used"); }, hasForContext: async () => false, currentSharedRevision: async () => ({ revision: "r1", resources: {} }) },
-     promotion: { preview: async () => ({ proposalId: "proposal", projectId: "p1", reviewStatus: blockerCode === "REVIEW_REQUIRED" ? "none" : "approved", eligible: promotionEligible, blockers: promotionEligible ? [] : [{ code: blockerCode, message: blockerCode === "REVIEW_REQUIRED" ? "review required" : "stale" }], baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, creates: [], updates: [], retires: [], semanticIdentityAdditions: [], semanticIdentityReuses: [], semanticChanges: [], relationships: [] }), execute: async () => { throw new Error("not used"); }, recover: async () => ({ examined: 0, completed: 0, pending: 0 }) },
+    promotion: { preview: async () => ({ proposalId: "proposal", projectId: "p1", reviewStatus: blockerCode === "REVIEW_REQUIRED" ? "none" : "approved", eligible: promotionEligible, blockers: promotionEligible ? [] : [{ code: blockerCode, message: blockerCode === "REVIEW_REQUIRED" ? "review required" : "stale" }], baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, creates: [], updates: [], retires: [], semanticIdentityAdditions: [], semanticIdentityReuses: [], semanticChanges: [], relationships: [] }), execute: async () => { throw new Error("not used"); }, recover: async () => ({ examined: 0, completed: 0, pending: 0 }) },
+    workspaceAdmin,
   });
 }
 
@@ -59,6 +61,18 @@ describe("capability service", () => {
 
     const owner = await service("OWNER", "owner", "active", false).proposal(context("owner"), "p1", "proposal");
     expect(owner["proposal.promote"]).toMatchObject({ allowed: false, reason: "proposal_not_eligible", state: "STALE_BASE" });
+  });
+
+  it("allows workspace admins with project visibility to review and promote without elevating their project role", async () => {
+    const workspaceAdmin: WorkspaceAdminGovernance = async (_context, projectId, permission) => projectId === "p1" && ["resource:update", "promotion:execute"].includes(permission);
+    const capabilities = await service("VIEWER", "owner", "active", true, "STALE_BASE", workspaceAdmin).proposal(context("admin"), "p1", "proposal");
+    expect(capabilities["proposal.review"]).toMatchObject({ allowed: true, requiredWorkspaceRole: "ADMIN" });
+    expect(capabilities["proposal.promote"]).toMatchObject({ allowed: true, requiredWorkspaceRole: "ADMIN" });
+
+    const author = await service("VIEWER", "owner", "active", true, "STALE_BASE", workspaceAdmin).proposal(context("author"), "p1", "proposal");
+    expect(author["proposal.review"]).toMatchObject({ allowed: false, reason: "self_review" });
+    const ordinaryViewer = await service("VIEWER").proposal(context("viewer"), "p1", "proposal");
+    expect(ordinaryViewer["proposal.review"]).toMatchObject({ allowed: false, reason: "forbidden" });
   });
 
   it("denies proposal authors self-review while allowing another authorized reviewer", async () => {
