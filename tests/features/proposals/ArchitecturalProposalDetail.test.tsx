@@ -58,7 +58,7 @@ function client(): ServerApiClient {
 }
 
 describe("ArchitecturalProposalDetail", () => {
-  it("groups proposal actions and matches the workspace hide-control styling", async () => {
+  it("shows proposal actions beside each other and matches the workspace hide-control styling", async () => {
     const api = client();
     const onRevise = vi.fn();
     vi.mocked(api.getArchitecturalProposal).mockResolvedValue({
@@ -73,11 +73,13 @@ describe("ArchitecturalProposalDetail", () => {
 
     expect(await screen.findByRole("heading", { name: proposal.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Hide proposal details" })).toHaveClass("button", "button--ghost", "button--small");
-    expect(screen.getByText("Proposal actions").closest("details")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Proposal actions"));
-    fireEvent.click(screen.getByRole("button", { name: "Edit revision" }));
+    const edit = screen.getByRole("button", { name: "Edit revision" });
+    const withdraw = screen.getByRole("button", { name: "Withdraw proposal" });
+    expect(edit).toHaveClass("button", "button--ghost", "button--small");
+    expect(withdraw).toHaveClass("button", "button--ghost", "button--small", "button--danger-text");
+    expect(edit.closest(".proposal-detail__actions")).toBe(withdraw.closest(".proposal-detail__actions"));
+    fireEvent.click(edit);
     expect(onRevise).toHaveBeenCalledWith("context-1", "proposal-1", "overview", [{ resourceId: "overview", path: "overview.md", type: "markdown-document", content: diff.resources[0].proposedContent }], proposal.title, proposal.description);
-    expect(screen.getByRole("button", { name: "Withdraw proposal" })).toBeInTheDocument();
   });
 
   it("keeps the center concise and sends the selected canonical change to the inspector", async () => {

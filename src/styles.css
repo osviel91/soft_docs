@@ -109,11 +109,7 @@ body {
 .proposal-detail__source-diff > div { margin-bottom: 12px; }
 .proposal-detail__intent { max-width: 68ch; font-size: 16px; line-height: 1.5; }
 .proposal-detail__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.proposal-detail__menu { position: relative; }
-.proposal-detail__menu summary { cursor: pointer; list-style: none; }
-.proposal-detail__menu summary::-webkit-details-marker { display: none; }
-.proposal-detail__menu > div { position: absolute; z-index: 2; top: 100%; left: 0; display: grid; min-width: max-content; padding: 4px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgb(0 0 0 / 24%); }
-.proposal-detail__menu > div button { margin: 0; padding: 8px 12px; text-align: left; }
+.proposal-detail__actions button { margin: 0; }
 .proposal-detail__decision-hint { color: var(--text-muted); font-size: 12px; }
 .proposal-detail__decision-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .proposal-inspector { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; flex-direction: column; overflow: auto; padding: 16px; }
