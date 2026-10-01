@@ -2984,25 +2984,28 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes(owner.name),
           );
           check(
-            "proposal decision workspace shows intent and impact",
+            "proposal decision workspace shows its intent",
             (await page.locator('section[aria-label="Architectural Proposal"]').textContent()).includes("Initial governed snapshot") &&
-              (await page.locator('[data-testid="proposal-impact"]').count()) === 1,
+              (await page.locator('[data-testid="proposal-impact"]').count()) === 0,
           );
+          await page.getByRole("button", { name: "Impact", exact: true }).click();
+          check("proposal decision workspace shows impact in its tab", (await page.locator('[data-testid="proposal-impact"]').count()) === 1);
+         check(
+           "proposal decision workspace exposes its first canonical change",
+           /(?:ADDED|MODIFIED|DELETED)/.test(await page.locator('section[aria-label="Architectural Proposal"]').textContent() ?? ""),
+         );
+          const v1Change = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
+          await v1Change.click();
+          await page.getByRole("button", { name: "Review", exact: true }).click();
          check(
            "v1 has no reviews",
            (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("none · 0 approvals"),
          );
          check(
-           "proposal decision workspace exposes its first canonical change",
-           /(?:ADDED|MODIFIED|DELETED)/.test(await page.locator('section[aria-label="Architectural Proposal"]').textContent() ?? ""),
-         );
-         check(
            "proposal decision workspace keeps author review unavailable",
            (await page.locator('section[aria-label="Proposal review"]').textContent()).includes("cannot approve your own proposal"),
          );
-         const v1Change = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
-         await v1Change.click();
-         const v1Inspector = page.locator('section[aria-label^="Comparison for "]');
+          const v1Inspector = page.locator('section[aria-label^="Comparison for "]');
          await v1Inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("selecting a change leaves the proposal selected", await page.locator('[data-testid="explorer-proposal-open"][aria-current="true"]').count() === 1);
 
@@ -3046,8 +3049,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           const afterRevise = await proposalById(project.id, v1.id);
           check("Revise opens MY WORK for editing", await editor.isVisible());
           check("revision context remains visible after resource selection", await page.getByRole("button", { name: "Back to proposal" }).isVisible());
-          await page.getByRole("button", { name: "Back to proposal" }).click();
-           const restoredChange = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
+           await page.getByRole("button", { name: "Back to proposal" }).click();
+            await page.getByRole("button", { name: "Impact", exact: true }).click();
+            const restoredChange = page.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first();
           const restoredInspector = page.locator('section[aria-label^="Comparison for "]');
           check("back restores the selected change", await restoredChange.getAttribute("aria-pressed") === "true");
           check("back restores the inspector mode", await restoredInspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
@@ -3136,11 +3140,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             await page.locator('section[aria-label^="Comparison for "]').count() > 0 &&
               await page.locator('.proposal-detail__comparison').count() === 0,
           );
-          await v2AuthorDetail.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first().click();
+           await page.getByRole("button", { name: "Impact", exact: true }).click();
+           await v2AuthorDetail.locator('section[aria-label="Changes"] button').filter({ hasText: /\.seq/ }).first().click();
+           await page.getByRole("button", { name: "Review", exact: true }).click();
           const inspector = page.locator('section[aria-label^="Comparison for "]');
          await inspector.getByRole("button", { name: "Compare", exact: true }).click();
          check("diagram inspector switches comparison mode", await inspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed") === "true");
-        await page.getByRole("button", { name: "Preview promotion" }).click();
+           await page.getByRole("button", { name: "Preview promotion" }).click();
         await waitForText(
           page.locator('section[aria-label="Proposal promotion"]'),
           (text) => text.includes("REVIEW REQUIRED"),
