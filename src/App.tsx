@@ -568,6 +568,7 @@ export default function App() {
     revisionTabsOpened.current = null;
     setArchitecturalProposalId(null);
     setRevisionProposalId(proposalId);
+    setView("code");
     setArchitecturalProposalContextId(null);
     setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId });
     void server.openPrivateWork(contextId);
@@ -816,6 +817,7 @@ export default function App() {
       setArchitecturalProposalContextId(null);
       setRevisionProposalId(null);
       setArchitecturalProposalId(location.proposalId);
+      setView("changes");
     } else {
       setArchitecturalProposalId(null);
       setArchitecturalProposalContextId(null);
@@ -3342,7 +3344,7 @@ export default function App() {
                 editorWidth === null ? undefined : { flexBasis: editorWidth }
               }
             >
-                {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
+                {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); setView("changes"); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
                 {architecturalProposalId && view === "changes" && server.active ? (
                     <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
@@ -3611,6 +3613,7 @@ export default function App() {
                       setRevisionDescription("");
                       setRevisionReturnContext(null);
                       setArchitecturalProposalId(newProposalId);
+                      setView("changes");
                       setProposalInspector({ proposalId: newProposalId, diff: null, selectedPath: null, mode: "unified" });
                       setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: newProposalId });
                     }}

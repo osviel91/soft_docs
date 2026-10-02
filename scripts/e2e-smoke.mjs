@@ -708,7 +708,7 @@ async function openServerProject(page, name) {
   const active = page.locator('[data-testid="workspace-active-project"]');
   if (await active.count() > 0 && await active.isVisible()) {
     if ((await active.textContent())?.includes(name) && await page.locator('.explorer__context-note').count() === 0) return;
-    await back.click();
+    if ((await back.getAttribute("aria-expanded")) !== "true") await back.click();
   }
   await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({
     state: "detached",
