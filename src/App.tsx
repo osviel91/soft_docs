@@ -833,7 +833,7 @@ export default function App() {
   }, [architecturalProposalId, browserLocationState, revisionProposalId, server.active, server.openPrivateWork, server.openProject, server.projects]);
 
   useEffect(() => {
-    if (!server.active || !browserLocationHydrated.current) return;
+    if (!server.active || !browserLocationHydrated.current || server.opening) return;
     const resourceId = selectedDiagramId ?? selectedNoteId;
     const next = {
       projectId: server.active.project.id,
@@ -845,7 +845,7 @@ export default function App() {
       setBrowserLocationState(next);
       window.history.replaceState({}, "", locationUrl(next));
     }
-  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation, view]);
+  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, server.opening, setBrowserLocation, view]);
 
   useEffect(() => {
     if (!revisionProposalId) return;

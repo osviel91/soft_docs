@@ -34,6 +34,12 @@ const PROJECT = {
   createdAt: new Date(0).toISOString(),
   updatedAt: new Date(0).toISOString(),
 };
+const SECOND_PROJECT = {
+  ...PROJECT,
+  id: "p2",
+  name: "Reporting",
+  slug: "reporting",
+};
 
 /** The one resource the fake API holds. */
 interface FakeResource {
@@ -48,6 +54,7 @@ interface FakeResource {
 /** What the fake API should answer with, per test. */
 interface FakeState {
   signedIn: boolean;
+  multipleProjects: boolean;
   contextId: string | null;
   resources: Map<string, FakeResource>;
   proposals: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; baseSharedRevision: string; submittedAt?: string }>;
@@ -61,6 +68,7 @@ interface FakeState {
 
 const state: FakeState = {
   signedIn: false,
+  multipleProjects: false,
   contextId: null,
   resources: new Map(),
   proposals: [],
@@ -130,7 +138,11 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   }
   if (path === "/api/projects") {
     return Promise.resolve(
-      reply(200, { projects: state.signedIn ? [PROJECT] : [] }),
+      reply(200, {
+        projects: state.signedIn
+          ? [PROJECT, ...(state.multipleProjects ? [SECOND_PROJECT] : [])]
+          : [],
+      }),
     );
   }
   if (path === "/api/workspaces") {
@@ -155,6 +167,24 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   if (path === "/api/workspaces/w1/members") {
     return Promise.resolve(reply(200, { members: [] }));
   }
+  if (path === "/api/projects/p2/access") {
+    return Promise.resolve(
+      reply(200, {
+        projectId: "p2",
+        role: "OWNER",
+        permissions: [
+          "project:read",
+          "resource:read",
+          "resource:update",
+          "project:delete",
+        ],
+      }),
+    );
+  }
+  if (path === "/api/projects/p2/private-work") return Promise.resolve(reply(200, { contexts: [] }));
+  if (path === "/api/projects/p2/architectural-proposals") return Promise.resolve(reply(200, { proposals: [] }));
+  if (path === "/api/projects/p2/resources") return Promise.resolve(reply(200, { resources: [] }));
+  if (path === "/api/projects/p2/relationships") return Promise.resolve(reply(200, { relationships: [] }));
   if (path === "/api/projects/p1/private-work") {
     if (method === "GET") {
       return Promise.resolve(
@@ -263,6 +293,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
 beforeEach(() => {
   window.history.replaceState({}, "", "/");
   state.signedIn = false;
+  state.multipleProjects = false;
   state.contextId = null;
   state.resources = new Map();
   state.proposals = [];
@@ -304,7 +335,7 @@ describe("App — anonymous browser", () => {
 
 describe("App — authenticated browser", () => {
   /** Sign in, open the server project, and wait for its document. */
-  async function openServerProject(content = "title Checkout") {
+  async function openServerProject(content = "title Checkout", enterMyWork = true) {
     state.signedIn = true;
     state.resources = new Map([
       [
@@ -322,14 +353,17 @@ describe("App — authenticated browser", () => {
     render(<App />);
 
     await screen.findByTestId("workspace-server-project-filter");
-    const row = await screen.findByTestId("workspace-server-project");
-    expect(row).toHaveTextContent("Payments");
+    const row = (await screen.findAllByTestId("workspace-server-project")).find(
+      (item) => item.textContent?.includes("Payments"),
+    );
+    expect(row).toBeDefined();
     await act(async () => {
-      fireEvent.click(row);
+      fireEvent.click(row!);
     });
     await waitFor(() => {
       expect(screen.getByTestId("dsl-textarea")).toHaveValue(content);
     });
+    if (!enterMyWork) return;
     const myWork = screen.getByTestId("explorer-my-work-section");
     const myWorkToggle = within(myWork).getByTestId("explorer-my-work-toggle");
     if (state.contextId === null) {
@@ -365,6 +399,24 @@ describe("App — authenticated browser", () => {
     expect(state.calls.map((call) => `${call.method} ${call.path}`)).toContain(
       "GET /api/projects/p1/access",
     );
+  });
+
+  it("keeps the project selected from the explorer instead of navigating back to the previous one", async () => {
+    state.multipleProjects = true;
+    await openServerProject("title Checkout", false);
+
+    act(() => fireEvent.click(screen.getByTestId("workspace-back-to-projects")));
+    const reporting = await screen.findByRole("button", { name: /Reporting/ });
+    act(() => fireEvent.click(reporting));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-active-project")).toHaveTextContent("Reporting");
+      expect(new URLSearchParams(window.location.search).get("project")).toBe("p2");
+    });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.getByTestId("workspace-active-project")).toHaveTextContent("Reporting");
+    expect(new URLSearchParams(window.location.search).get("project")).toBe("p2");
+    expect(state.calls.filter((call) => call.path === "/api/projects/p1/access")).toHaveLength(1);
   });
 
   it("ends a stale revision session when its proposal has been withdrawn", async () => {
