@@ -319,3 +319,20 @@ jobs:
           reference="${{ env.REGISTRY }}/${{ matrix.image }}@${{ steps.meta.outputs.digest }}"
           echo "${{ matrix.service }} image: $reference" >> "$GITHUB_STEP_SUMMARY"
           docker buildx imagetools inspect "$reference" || true
+
+  deploy:
+    name: Redeploy Portainer stack
+    runs-on: ubuntu-latest
+    needs: publish
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Call Portainer webhook
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PORTAINER_WEBHOOK_URL" ]; then
+            echo "::error::Configure the PORTAINER_WEBHOOK_URL repository secret"
+            exit 1
+          fi
+          curl --fail --silent --show-error --request POST "$PORTAINER_WEBHOOK_URL"

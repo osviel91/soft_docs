@@ -237,6 +237,9 @@ docker compose up --build -d
 It serves the browser at <http://localhost:8080/> by default. Portainer users
 can use [`deploy/portainer-stack.yml`](./deploy/portainer-stack.yml); pin
 `IMAGE_TAG` to an immutable image tag for repeatable deployments.
+To redeploy automatically after images publish, configure the repository secret
+`PORTAINER_WEBHOOK_URL` with the stack's Portainer webhook URL. The workflow calls
+it only after all image publish jobs succeed, and never for pull requests.
 
 The full server deployment runs the reverse proxy, web app, API, remote MCP,
 and PostgreSQL:
