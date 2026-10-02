@@ -82,6 +82,7 @@ export function useServerWorkspaces(
   const [privateWorkContexts, setPrivateWorkContexts] = useState<ServerPrivateWorkContext[]>([]);
   const [architecturalProposals, setArchitecturalProposals] = useState<ServerArchitecturalProposal[]>([]);
   const activeRef = useRef<ActiveServerWorkspace | null>(null);
+  const privateWorkRequest = useRef(0);
   // Repository authority changes only when the project/session/workspace changes.
   // Same-project navigation refreshes the read model without replacing it.
   const repositoryGeneration = useRef(0);
@@ -247,19 +248,27 @@ export function useServerWorkspaces(
   const openPrivateWork = useCallback(
     async (contextId: string): Promise<void> => {
       if (!active || active.project.id === "") return;
+      const request = ++privateWorkRequest.current;
+      const projectId = active.project.id;
+      const repositoryGenerationAtStart = repositoryGeneration.current;
       const contexts = privateWorkContexts.some((context) => context.id === contextId)
         ? privateWorkContexts
-        : await client.listPrivateWorkContexts(active.project.id);
+        : await client.listPrivateWorkContexts(projectId);
       if (!contexts.some((context) => context.id === contextId)) return;
-      const access = await client.access(active.project.id);
-      setActive({
-        ...active,
+      const access = await client.access(projectId);
+      if (
+        request !== privateWorkRequest.current ||
+        repositoryGeneration.current !== repositoryGenerationAtStart ||
+        activeRef.current?.project.id !== projectId
+      ) return;
+      setActive((current) => current?.project.id !== projectId ? current : {
+        ...current,
         contextId,
         repository: createServerWorkspaceRepository({
           client,
-          projectId: active.project.id,
-          projectName: active.project.name,
-         writable: access.permissions.includes("resource:update"),
+          projectId,
+          projectName: current.project.name,
+          writable: access.permissions.includes("resource:update"),
           contextId,
         }),
       });
@@ -288,6 +297,7 @@ export function useServerWorkspaces(
 
   const close = useCallback((): void => {
     repositoryGeneration.current += 1;
+    privateWorkRequest.current += 1;
     projectReadModelGeneration.current += 1;
     setActive(null);
     setOpenError(null);

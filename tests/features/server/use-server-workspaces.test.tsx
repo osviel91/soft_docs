@@ -258,6 +258,49 @@ describe("useServerWorkspaces", () => {
     expect(result.current.active?.contextId).toBe("work-1");
   });
 
+  it("does not let a pending private-work open restore the previous project", async () => {
+    const client = new ServerApiClient();
+    const project2 = { ...PROJECT, id: "p2", name: "Other project", slug: "other-project" };
+    vi.spyOn(client, "listProjects").mockResolvedValue([PROJECT, project2]);
+    vi.spyOn(client, "listPrivateWorkContexts").mockResolvedValue([{
+      id: "work-1",
+      projectId: "p1",
+      ownerUserId: "u1",
+      name: "Retry work",
+      lifecycle: "active",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    }]);
+    let resolveWorkAccess!: (value: Awaited<ReturnType<ServerApiClient["access"]>>) => void;
+    let workAccessPending = false;
+    vi.spyOn(client, "access").mockImplementation((projectId) => {
+      if (projectId === "p1" && workAccessPending) {
+        return new Promise((resolve) => { resolveWorkAccess = resolve; });
+      }
+      return Promise.resolve({ projectId, role: "OWNER", permissions: ["resource:update"] });
+    });
+    const { result } = renderHook(() => useServerWorkspaces(client, signedIn, "w1"));
+    await waitFor(() => expect(result.current.projects).toHaveLength(2));
+    await act(async () => { await result.current.openProject(PROJECT); });
+
+    workAccessPending = true;
+    let openingWork!: Promise<void>;
+    await act(async () => {
+      openingWork = result.current.openPrivateWork("work-1");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(resolveWorkAccess).toBeTypeOf("function"));
+    await act(async () => { await result.current.openProject(project2); });
+    expect(result.current.active?.project.id).toBe("p2");
+
+    await act(async () => {
+      resolveWorkAccess({ projectId: "p1", role: "OWNER", permissions: ["resource:update"] });
+      await openingWork;
+    });
+    expect(result.current.active?.project.id).toBe("p2");
+    expect(result.current.active?.contextId).toBeNull();
+  });
+
   it("creates a project and opens it", async () => {
     const api = fakeApi({ signedIn: true });
     const client = new ServerApiClient({ fetch: api.fetch });

@@ -44,6 +44,7 @@ import WorkspaceSwitcher, {
 } from "./features/explorer/WorkspaceSwitcher";
 import type {
   ServerAdminUser,
+  ServerProject,
   ServerWorkspace,
   ServerWorkspaceMember,
   ServerArchitecturalProposal,
@@ -539,6 +540,12 @@ export default function App() {
     setBrowserLocationState(next);
     window.history[replace ? "replaceState" : "pushState"]({}, "", locationUrl(next));
   }, []);
+
+  const selectServerProject = useCallback((project: ServerProject): void => {
+    navigationProjectRequested.current = project.id;
+    setBrowserLocation({ projectId: project.id, contextId: null, resourceId: null, proposalId: null });
+    void server.openProject(project);
+  }, [server.openProject, setBrowserLocation]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -3264,10 +3271,7 @@ export default function App() {
                       serverOpenError={server.openError}
                       onOpenLocal={openLocalWorkspace}
                       onOpenFolder={openFolder}
-                       onOpenServerProject={(project) => {
-                         setBrowserLocation({ projectId: project.id, contextId: null, resourceId: null, proposalId: null });
-                         void server.openProject(project);
-                      }}
+                        onOpenServerProject={selectServerProject}
                       onCreateServerProject={(name) => {
                         void server.createProject(name);
                       }}
