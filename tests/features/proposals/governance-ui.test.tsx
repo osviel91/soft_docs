@@ -127,4 +127,17 @@ describe("governance UI intent", () => {
     expect(await screen.findByText(state, { exact: false })).toBeInTheDocument();
     expect(get).toHaveBeenCalledTimes(2);
   });
+
+  it("opens resulting SHARED knowledge only for a promoted proposal", async () => {
+    const onOpenShared = vi.fn();
+    const client = clientWith({
+      getArchitecturalProposal: vi.fn().mockResolvedValue({ id: "p1", projectId: "p1", authorUserId: "u1", title: "Checkout", status: "open", lifecycle: { state: "PROMOTED" }, baseSharedRevision: "r1", baseSharedResourceRevisions: {}, createdAt: "2026-01-01", submittedAt: "2026-01-01", resources: [], semanticMessages: [], relationships: [], capabilities: {} }),
+      getArchitecturalProposalReviews: vi.fn().mockResolvedValue({ status: "none", approvals: 0, changesRequested: 0, reviews: [] }),
+    });
+    render(<ArchitecturalProposalDetail client={client} projectId="p1" proposalId="p1" onBack={vi.fn()} onOpenShared={onOpenShared} />);
+    await screen.findByText("Checkout");
+    fireEvent.click(screen.getByRole("button", { name: "Base status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open resulting SHARED knowledge" }));
+    expect(onOpenShared).toHaveBeenCalledOnce();
+  });
 });

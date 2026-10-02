@@ -312,6 +312,7 @@ export default function App() {
   );
   const [adminUsers, setAdminUsers] = useState<ServerAdminUser[]>([]);
   const [architecturalProposalId, setArchitecturalProposalId] = useState<string | null>(null);
+  const [proposalCodeTarget, setProposalCodeTarget] = useState<{ path: string; contextId: string | null } | null>(null);
   const [architecturalProposalContextId, setArchitecturalProposalContextId] = useState<string | null>(null);
   const [revisionProposalId, setRevisionProposalId] = useState<string | null>(null);
   const [revisionResources, setRevisionResources] = useState<Array<{ resourceId: string; path: string; type: ServerResourceType; content: string }>>([]);
@@ -554,6 +555,7 @@ export default function App() {
     setRevisionProposalId(null);
     setProposalInspector((current) => current.proposalId === proposalId ? current : { proposalId, diff: null, selectedPath: null, mode: "unified" });
     setArchitecturalProposalId(proposalId);
+    setView("changes");
     setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
   }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
 
@@ -750,6 +752,38 @@ export default function App() {
   const { diagrams: sharedDiagrams, notes: sharedNotes } = sharedWorkspace;
 
   useEffect(() => {
+    if (!proposalCodeTarget || (proposalCodeTarget.contextId !== null && server.active?.contextId !== proposalCodeTarget.contextId)) return;
+    const resources = proposalCodeTarget.contextId === null ? [...sharedDiagrams, ...sharedNotes] : [...diagrams, ...notes];
+    const resource = resources.find((entry) => entry.name === proposalCodeTarget.path);
+    if (!resource) return;
+    if ("source" in resource) loadDiagram(resource);
+    else loadNote(resource);
+    setProposalCodeTarget(null);
+  }, [diagrams, loadDiagram, loadNote, notes, proposalCodeTarget, server.active?.contextId, sharedDiagrams, sharedNotes]);
+
+  const openProposalArtifactInCode = useCallback(async (): Promise<void> => {
+    if (!architecturalProposalId || !server.active) return;
+    try {
+      const proposal = await apiClient.getArchitecturalProposal(server.active.project.id, architecturalProposalId);
+      const selected = proposal.resources.find((resource) => resource.path === proposalInspector.selectedPath) ?? proposal.resources[0];
+      if (!selected) return;
+      const contextId = proposal.revisionContextId ?? proposal.sourcePrivateContextId ?? null;
+      setView("code");
+      if (contextId && server.privateWorkContexts.some((context) => context.id === contextId)) {
+        setProposalCodeTarget({ path: selected.path, contextId });
+        setBrowserLocation({ projectId: server.active.project.id, contextId, resourceId: selected.path, proposalId: null });
+        await server.openPrivateWork(contextId);
+      } else {
+        setProposalCodeTarget({ path: selected.path, contextId: null });
+        setBrowserLocation({ projectId: server.active.project.id, contextId: null, resourceId: selected.path, proposalId: null });
+        if (server.active.contextId !== null) await server.openProject(server.active.project);
+      }
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "Could not open the proposal artifact.");
+    }
+  }, [apiClient, architecturalProposalId, proposalInspector.selectedPath, server.active, server.openPrivateWork, server.openProject, server.privateWorkContexts, setBrowserLocation]);
+
+  useEffect(() => {
     if (!browserLocationState.projectId || server.projects.length === 0 || server.opening) return;
     if (server.active?.project.id === browserLocationState.projectId) {
       browserLocationHydrated.current = true;
@@ -796,13 +830,13 @@ export default function App() {
       projectId: server.active.project.id,
       contextId: server.active.contextId,
       resourceId: server.active.contextId ? resourceId : null,
-      proposalId: architecturalProposalId ?? revisionProposalId,
+      proposalId: view === "changes" ? architecturalProposalId ?? revisionProposalId : revisionProposalId,
     };
     if (locationUrl(next) !== locationUrl(browserLocationState)) {
       setBrowserLocationState(next);
       window.history.replaceState({}, "", locationUrl(next));
     }
-  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation]);
+  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, setBrowserLocation, view]);
 
   useEffect(() => {
     if (!revisionProposalId) return;
@@ -2948,7 +2982,7 @@ export default function App() {
                 className={`segmented__option${view === "code" ? " segmented__option--active" : ""}`}
                 data-testid="view-code"
                 aria-selected={view === "code"}
-                onClick={() => setView("code")}
+                onClick={() => { setProposalReviewOpen(false); if (architecturalProposalId) void openProposalArtifactInCode(); else setView("code"); }}
               >
                 <span aria-hidden="true">{"</>"}</span> Code
               </button>
@@ -2958,7 +2992,7 @@ export default function App() {
                 className={`segmented__option${view === "outline" ? " segmented__option--active" : ""}`}
                 data-testid="view-outline"
                 aria-selected={view === "outline"}
-                onClick={() => setView("outline")}
+                onClick={() => { setView("outline"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">≡</span> Outline
               </button>
@@ -2968,7 +3002,7 @@ export default function App() {
                 className={`segmented__option${view === "problems" ? " segmented__option--active" : ""}`}
                 data-testid="view-problems"
                 aria-selected={view === "problems"}
-                onClick={() => setView("problems")}
+                onClick={() => { setView("problems"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">⚠</span> Problems
                 {projectDiagnostics.length > 0
@@ -2981,7 +3015,7 @@ export default function App() {
                 className={`segmented__option${view === "overview" ? " segmented__option--active" : ""}`}
                 data-testid="view-overview"
                 aria-selected={view === "overview"}
-                onClick={() => setView("overview")}
+                onClick={() => { setView("overview"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">◫</span> Overview
               </button>
@@ -2994,6 +3028,7 @@ export default function App() {
                 onClick={() => {
                   setHistoryResourceScoped(false);
                   setView("history");
+                  setProposalReviewOpen(false);
                 }}
               >
                 <span aria-hidden="true">⟲</span> History
@@ -3238,10 +3273,6 @@ export default function App() {
                       onReloadServerProjects={() => {
                         void syncServerWorkspace();
                       }}
-                       onBackToProjects={() => {
-                         setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null });
-                         server.close();
-                       }}
                     />
                   }
                   onAddMenu={(project, position) =>
@@ -3312,8 +3343,8 @@ export default function App() {
               }
             >
                 {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
-                {architecturalProposalId && server.active ? (
-                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { void server.openProject(server.active!.project); }} />
+                {architecturalProposalId && view === "changes" && server.active ? (
+                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}
@@ -3612,10 +3643,10 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label={architecturalProposalId ? "Show proposal details" : "Show editor"} title={architecturalProposalId ? "Show proposal details" : "Show editor"}>›</button> : null}
+                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label={architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {revisionProposalId && server.active?.contextId ? (
                     revisionComparisonResource ? <ProposalResourceComparison resource={revisionComparisonResource} mode={revisionComparisonMode} onModeChange={setRevisionComparisonMode} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" inspectorLabel="REVISION COMPARISON" headingLabel="EDITING" /> : <section className="proposal-inspector" aria-label="Revision comparison"><p className="governance-eyebrow">REVISION COMPARISON</p><p>Select a proposal artifact tab to compare MY WORK with the submitted version.</p></section>
-                  ) : architecturalProposalId && proposalInspector.proposalId === architecturalProposalId ? (
+                  ) : architecturalProposalId && view === "changes" && proposalInspector.proposalId === architecturalProposalId ? (
                     proposalInspector.diff?.resources.find((entry) => entry.path === proposalInspector.selectedPath) ? <ProposalResourceComparison
                       resource={proposalInspector.diff.resources.find((entry) => entry.path === proposalInspector.selectedPath) ?? null}
                       mode={proposalInspector.mode}

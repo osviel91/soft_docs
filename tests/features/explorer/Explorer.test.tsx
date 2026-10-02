@@ -144,6 +144,13 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-proposal")).toBeInTheDocument();
   });
 
+  it("keeps all MY WORK contexts available while displaying the active context resources", () => {
+    render(<Explorer projects={[project]} diagrams={[diagram]} selectedProjectId={project.id} selectedDiagramId={diagram.id} isLoading={false} onCreateProject={vi.fn()} onLoadDiagram={vi.fn()} serverMode activeContextId="work-1" privateWorkContexts={[{ id: "work-1", name: "Draft one", lifecycle: "active" }, { id: "work-2", name: "Draft two", lifecycle: "active" }]} onOpenMyWork={vi.fn()} />);
+    expect(screen.getByTestId("explorer-private-context-open-work-1")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByTestId("explorer-private-context-open-work-2")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Load diagram Welcome")).toHaveLength(2);
+  });
+
   it("opens a proposal by its stable id without depending on its status", () => {
     const onOpenArchitecturalProposal = vi.fn();
     render(
