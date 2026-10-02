@@ -3683,7 +3683,7 @@ export default function App() {
                        serverWorkspaces={serverWorkspaces}
                        selectedServerWorkspaceId={selectedServerWorkspaceId}
                        onSelectServerWorkspace={setSelectedServerWorkspaceId}
-                       onOpenServerProject={(project) => { void server.openProject(project); }}
+                        onOpenServerProject={selectServerProject}
                        relationships={metadata?.relationships ?? []}
                      />
                   ) : noteMode ? (
