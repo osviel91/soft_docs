@@ -279,14 +279,19 @@ body {
 }
 .workspaces__local-entry h2 { margin: 0 0 4px; }
 .workspaces__reload {
-  padding: 3px 6px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 26px;
+  padding: 0;
   color: var(--text-muted);
-  background: transparent;
+  background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 14px;
 }
 .workspaces__reload:hover,
 .workspaces__reload:focus-visible {
@@ -294,28 +299,34 @@ body {
   border-color: var(--accent);
 }
 .workspaces.workspaces--project {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   flex: 0 0 auto;
   min-height: 0;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 7px;
+  padding: 10px 11px 9px;
   border-bottom: 1px solid var(--border);
 }
+.workspaces__project-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .workspaces__back {
-  grid-column: 1 / -1;
-  justify-self: start;
-  padding: 0;
+  min-height: 26px;
+  padding: 3px 8px;
   color: var(--accent);
-  background: transparent;
-  border: 0;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 .workspaces__back:hover,
-.workspaces__back:focus-visible { color: var(--text); }
+.workspaces__back:focus-visible { color: var(--text); border-color: var(--accent); }
 .workspaces__active-project {
   display: flex;
   flex-direction: column;
@@ -329,6 +340,35 @@ body {
   font-size: 14px;
 }
 .workspaces__active-project span { color: var(--text-muted); font-size: 11px; }
+.workspaces__project-picker {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 2px;
+}
+.workspaces__project-picker .workspaces__filter { padding: 0; }
+.workspaces__project-picker .workspaces__projects-scroll {
+  max-height: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+}
+.workspaces__project-picker .workspaces__item[aria-current="true"] {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+.workspaces__workspace-select select {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+}
 .proposal-review {
   width: 100%;
   max-width: none;
@@ -4503,6 +4543,14 @@ body {
 .explorer__resource .explorer__note-menu:focus-visible { opacity: 1; }
 .explorer__context-list { display: grid; gap: 4px; }
 .explorer__context-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 5px 8px; color: var(--text-muted); font-size: 12px; }
+.explorer__context-list li[data-testid="explorer-private-context"] { display: block; padding: 4px 0; border-radius: var(--radius-sm); }
+.explorer__context-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 3px 8px; }
+.explorer__context-row > button:first-child { flex: 1 1 auto; }
+.explorer__context-list li[data-testid="explorer-private-context"].explorer__context-item--selected { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.explorer__context-list li[data-testid="explorer-private-context"].explorer__context-item--selected .explorer__context-row > button:first-child { color: var(--accent); font-weight: 600; }
+.explorer__context-children { margin: 2px 0 0 12px; padding: 2px 0 2px 5px; border-left: 1px solid var(--border-strong); }
+.explorer__context-children .explorer__context-note { padding: 3px 8px 4px; }
+.explorer__context-children .explorer__resource-list { padding: 2px 0 2px 3px; }
 .explorer__context-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer__context-list button { min-width: 0; overflow: hidden; color: var(--text); background: transparent; border: 0; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .explorer__context-list button:hover,

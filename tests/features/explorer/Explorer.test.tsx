@@ -149,6 +149,7 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-private-context-open-work-1")).toHaveAttribute("aria-current", "true");
     expect(screen.getByTestId("explorer-private-context-open-work-2")).toBeInTheDocument();
     expect(screen.getAllByLabelText("Load diagram Welcome")).toHaveLength(2);
+    expect(screen.getByTestId("explorer-private-context-open-work-1").closest("li")?.querySelector(".explorer__context-children [data-testid='explorer-resources']")).toBeInTheDocument();
   });
 
   it("opens a proposal by its stable id without depending on its status", () => {

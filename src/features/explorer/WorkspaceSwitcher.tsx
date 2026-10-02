@@ -62,19 +62,17 @@ export default function WorkspaceSwitcher({
           <strong title={activeServerProjectName ?? activeProject?.name}>{activeServerProjectName ?? activeProject?.name ?? "Project"}</strong>
           <span>{workspace?.name ?? "Workspace"}</span>
         </div>
-        <button type="button" className="workspaces__back" data-testid="workspace-back-to-projects" aria-expanded={projectPickerOpen} onClick={() => setProjectPickerOpen((open) => !open)}>
-          {projectPickerOpen ? "Hide projects" : "Switch project"}
-        </button>
-        {onReloadServerProjects ? (
-          <button type="button" className="workspaces__reload" data-testid="workspace-server-refresh" onClick={onReloadServerProjects} title="Refresh project data" aria-label="Refresh project data">
-            ↻
+        <div className="workspaces__project-actions">
+          <button type="button" className="workspaces__back" data-testid="workspace-back-to-projects" aria-expanded={projectPickerOpen} onClick={() => setProjectPickerOpen((open) => !open)}>
+            {projectPickerOpen ? "Hide projects" : "Switch project"}
           </button>
-        ) : null}
-        {projectPickerOpen ? <>
+          {onReloadServerProjects ? <button type="button" className="workspaces__reload" data-testid="workspace-server-refresh" onClick={onReloadServerProjects} title="Refresh project data" aria-label="Refresh project data">↻</button> : null}
+        </div>
+        {projectPickerOpen ? <div className="workspaces__project-picker">
           {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label className="workspaces__workspace-select"><span className="visually-hidden">Workspace</span><select data-testid="workspace-server-workspace-select" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>{serverWorkspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
           <label className="workspaces__filter"><span className="visually-hidden">Search projects</span><input className="explorer__input" data-testid="workspace-server-project-filter" type="search" placeholder="Search projects…" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} /></label>
-          <ul className="workspaces__list">{visibleProjects.map((project) => <li key={project.id}><button type="button" className="workspaces__item" data-testid="workspace-server-project" aria-current={project.id === activeServerProjectId ? "true" : undefined} onClick={() => onOpenServerProject(project)}><span className="workspaces__item-icon" aria-hidden="true">☁</span><span>{project.name}</span></button></li>)}</ul>
-        </> : null}
+          <div className="workspaces__projects-scroll"><ul className="workspaces__list">{visibleProjects.map((project) => <li key={project.id}><button type="button" className="workspaces__item" data-testid="workspace-server-project" aria-current={project.id === activeServerProjectId ? "true" : undefined} onClick={() => onOpenServerProject(project)}><span className="workspaces__item-icon" aria-hidden="true">☁</span><span>{project.name}</span></button></li>)}</ul></div>
+        </div> : null}
       </nav>
     );
   }
