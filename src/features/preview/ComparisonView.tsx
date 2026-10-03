@@ -150,6 +150,7 @@ function ComparisonPane({
             onSemanticOccurrenceSelect={selectOccurrence}
             activeNodeId={activeNodeId}
             activeSemanticMessageId={activeSemanticMessageId ?? selectedMessageId ?? counterpartMessageId}
+            comparisonMode
           />
         ) : (
           <Preview
@@ -159,6 +160,7 @@ function ComparisonPane({
             onSemanticOccurrenceSelect={selectOccurrence}
             activeNodeId={activeNodeId}
             activeSemanticMessageId={activeSemanticMessageId ?? selectedMessageId ?? counterpartMessageId}
+            comparisonMode
           />
         )}
       </div>

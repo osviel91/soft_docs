@@ -2649,6 +2649,45 @@ body {
   box-shadow: var(--shadow-pop);
 }
 
+.diagram-guidance { position: relative; }
+.diagram-guidance__trigger { font-size: 15px; }
+.diagram-guidance__panel {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: calc(100% + 8px);
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 16px 18px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  text-align: left;
+}
+.diagram-guidance__panel h2 { margin: 0 28px 12px 0; font-size: 15px; }
+.diagram-guidance__panel h3 { margin: 12px 0 4px; font-size: 12px; }
+.diagram-guidance__panel p, .diagram-guidance__panel ul { margin: 4px 0; font-size: 12px; line-height: 1.5; }
+.diagram-guidance__panel ul { padding-left: 18px; }
+.diagram-guidance__sample { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; background: var(--surface-muted); border-radius: var(--radius-sm); }
+.diagram-guidance__box { padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-elevated); font-size: 10px; }
+.diagram-guidance__message { position: relative; width: 42px; border-top: 2px solid currentColor; }
+.diagram-guidance__message::after { position: absolute; top: -5px; right: -1px; content: ""; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid currentColor; }
+.diagram-guidance__message--dashed { border-top-style: dashed; }
+.diagram-guidance__lifeline { align-self: stretch; margin: 0 6px; border-left: 1px dashed currentColor; }
+.diagram-guidance__caption { color: var(--text-muted); }
+.diagram-guidance__close { position: absolute; top: 8px; right: 8px; border: 0; background: transparent; color: inherit; font-size: 20px; cursor: pointer; }
+.event-flow-toolbar { position: relative; display: flex; align-items: center; gap: 6px; }
+.event-flow-toolbar > .diagram-guidance { margin-left: auto; }
+.event-flow-toolbar .diagram-guidance__panel { top: calc(100% + 6px); right: 0; }
+
+@media (max-width: 520px) {
+  .viewport__rail .diagram-guidance__panel { position: fixed; top: 12px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 24px); }
+  .event-flow-toolbar .diagram-guidance__panel { position: fixed; top: 12px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 24px); }
+}
+
 .viewport__zoom {
   padding: 2px 0;
   font-family: var(--font-mono);

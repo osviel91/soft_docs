@@ -865,6 +865,13 @@ async function runChecks(page, idp) {
   check("participant labels are drawn", sampleText.includes("User"));
   check("message labels are drawn", sampleText.includes("Find user"));
   check("diagram title is drawn", sampleText.includes("Login"));
+  await page.getByRole("button", { name: "How to read Sequence" }).click();
+  await page.getByRole("heading", { name: "How to read Sequence" }).waitFor({
+    state: "visible",
+    timeout: UI_TIMEOUT_MS,
+  });
+  check("contextual sequence guidance opens on demand", true);
+  await page.getByRole("button", { name: "Close diagram guidance" }).click();
   check(
     "no uncaught page errors",
     consoleErrors.length === 0,

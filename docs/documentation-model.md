@@ -351,6 +351,10 @@ representation must never be treated as proof that behavior is absent.
 
 ## Sequence Diagrams
 
+Visual representations provide opt-in contextual guidance from the diagram
+controls. Guidance opens on demand and does not permanently consume diagram
+workspace; its notation follows the active representation.
+
 ### Contract
 
 A Sequence Diagram documents one recognizable business or application flow.

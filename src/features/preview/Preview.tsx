@@ -53,6 +53,7 @@ export interface PreviewProps {
   activeReviewChange?: string | null;
   focusReviewChange?: string | null;
   reviewSide?: "base" | "proposed";
+  comparisonMode?: boolean;
 }
 
 export default function Preview({
@@ -74,6 +75,7 @@ export default function Preview({
   activeReviewChange = null,
   focusReviewChange = null,
   reviewSide = "proposed",
+  comparisonMode = false,
 }: PreviewProps) {
   const { ast, diagnostics } = useDiagram(source);
   // Which note bullets are expanded. The set resets whenever the source changes
@@ -162,6 +164,8 @@ export default function Preview({
             onTransformChange={onTransformChange}
             activeReviewChange={activeReviewChange}
             focusReviewChange={focusReviewChange}
+            comparisonMode={comparisonMode}
+            diffDecorations={reviewChanges.length > 0}
           />
           {!autoUpdate && (
             <div className="preview__pause" data-testid="preview-paused">

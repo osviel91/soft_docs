@@ -25,6 +25,7 @@ import DiagramViewport from "./DiagramViewport";
 import type { DiagramViewportTransform } from "./DiagramViewport";
 import type { SemanticChange } from "../../domain/diff/resource-diff";
 import { decorateReviewSvg } from "../proposals/review-decorations";
+import DiagramGuidance from "./DiagramGuidance";
 
 export type EventFlowView = "flow" | "catalog" | "topology" | "causal";
 
@@ -52,6 +53,7 @@ export interface EventFlowPreviewProps {
   activeReviewChange?: string | null;
   focusReviewChange?: string | null;
   reviewSide?: "base" | "proposed";
+  comparisonMode?: boolean;
 }
 
 export default function EventFlowPreview({
@@ -73,6 +75,7 @@ export default function EventFlowPreview({
   activeReviewChange = null,
   focusReviewChange = null,
   reviewSide = "proposed",
+  comparisonMode = false,
 }: EventFlowPreviewProps) {
   const document = useMemo(() => {
     // Parsing here rather than taking an AST keeps this component's contract the
@@ -104,8 +107,16 @@ export default function EventFlowPreview({
     () => renderEventFlowTopologyDocument(flow),
     [flow],
   );
+  const selectorGuidanceView = view === "causal" || view === "catalog"
+    ? view
+    : view === "topology" && topology.services.length === 0
+      ? "topology"
+      : view === "flow" && (document.width === 0 || document.height === 0)
+        ? "event-flow"
+        : null;
 
   const selector = (
+    <div className="event-flow-toolbar">
     <div
       className="segmented-control event-flow-view-selector"
       role="group"
@@ -165,6 +176,8 @@ export default function EventFlowPreview({
           {causalDetailsOpen ? "Hide details" : "Details"}
         </button>
       )}
+    </div>
+    {selectorGuidanceView && <DiagramGuidance view={selectorGuidanceView} comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} />}
     </div>
   );
 
@@ -312,6 +325,9 @@ export default function EventFlowPreview({
                 onTransformChange={onTransformChange}
                 activeReviewChange={activeReviewChange}
                 focusReviewChange={focusReviewChange}
+                guidanceView="topology"
+                comparisonMode={comparisonMode}
+                diffDecorations={reviewChanges.length > 0}
               />
               {topologyDetailsOpen && <div
                 id="topology-relationships"
@@ -450,6 +466,9 @@ export default function EventFlowPreview({
         onTransformChange={onTransformChange}
         activeReviewChange={activeReviewChange}
         focusReviewChange={focusReviewChange}
+        guidanceView="event-flow"
+        comparisonMode={comparisonMode}
+        diffDecorations={reviewChanges.length > 0}
       />
     </div>
   );
