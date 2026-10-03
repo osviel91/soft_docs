@@ -74,8 +74,12 @@ with authenticated server projects.
 - Invitations are not delivered yet.
 - Human users and agent identities are distinct actors, even when they access
   the same project.
-- Server resource creation, content updates, metadata updates, and moves atomically
-  write the canonical row and its matching revision snapshot. Delete cascades
-  history with the current resource; local resources remain non-revisioned.
-- Revisions are groundwork for future proposals, review, and merge. Those features
-  are not implemented here.
+- Server resource mutations commit the canonical row, immutable revision snapshot,
+  and journal intent in SQL, then recoverably settle matching project files. SQL
+  and filesystem do not share one atomic transaction; restore from a coherent
+  checkpoint of both. Local resources remain non-revisioned.
+- SHARED resources can be retired without deleting stable identity, revision
+  history, or historical relationship evidence. Legacy resource-scoped
+  `ChangeProposal` merge and the separate `ArchitecturalProposal` review/promotion
+  workflow are implemented; architectural proposals remain immutable snapshots
+  until explicit promotion.

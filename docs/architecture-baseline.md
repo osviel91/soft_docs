@@ -1,8 +1,10 @@
-# Current Architecture Baseline
+# H01 Architecture Baseline (Historical Snapshot)
 
-This is the H01 snapshot of behavior that later transformation work must
-preserve. It describes the implementation in the working tree, not a target
-architecture.
+This records the H01 snapshot of behavior, not a complete current-state
+specification. Later implementation supersedes H01-era status statements where
+they conflict; the current Architectural Proposal Governance section below is
+the maintained summary of that workflow. Normative representation and authority
+rules live in `docs/documentation-model.md`.
 
 ## Shape
 
@@ -80,6 +82,10 @@ architecture.
 
 ### Sequence Message Semantics
 
+The status bullets below are H01-era snapshot claims. D03.11.2 subsequently
+implemented stable semantic-message identity and explicit cross-resource binding;
+current rules are in the canonical documentation model.
+
 - Sequence messages may carry optional evidence-backed local semantics: `event`
   or `command`, with `publish`, `consume`, or `dispatch`.
 - The parser stores semantics on the message AST; labels and notes are not parsed
@@ -90,7 +96,7 @@ architecture.
 - D03.7 complementary-view relationships remain limited to execution and causal
   projections of the same complete behavior. An MSL Sequence producing an event
   and an unrelated downstream Event Flow consuming it are not complementary
-  views; D03.11.2 will provide message-mediated binding.
+  views, even when the occurrences share a D03.11.2 message identity.
 
 ### Event Flow Views
 
@@ -168,7 +174,7 @@ architecture.
   such as flow, catalogue, topology, or matrix views. Those views do not create
   new resource kinds or representations.
 
-### Dual Viewer Foundation
+### Context comparison
 
 - Comparison mode is a shell composition over two ordinary viewer instances. It
   does not introduce a comparison renderer or a second parsing/layout pipeline.
@@ -176,14 +182,12 @@ architecture.
   and owns its camera, Event Flow projection, node and semantic selection, note
   expansion, inspector, and Trace Explorer state. The current editor remains the
   only editable document; comparison is inspection-oriented.
-- The pane resource reference is intentionally independent of visibility or
-  publication. The current catalog supplies both panes, while a future private
-  resource source can implement the same reference contract without changing the
-  dual-view model.
-- Semantic identity navigation remains exact and pane-local. Comparison does not
-  synchronize panes, infer matches, create relationships, or calculate diffs.
-  Those are future semantic comparison responsibilities outside
-  `DiagramViewport`.
+- Analysis contexts carry provenance and preserve the authority boundary among
+  SHARED, MY WORK, and LOCAL. Semantic correlation is evidence-based; equal names
+  alone do not establish identity.
+- The Proposal Decision Workspace compares the proposal's immutable SHARED base
+  with its immutable submitted snapshot. Current SHARED informs staleness and
+  readiness, not the canonical historical diff.
 
 ### Workspace Explorer Foundation
 
@@ -193,8 +197,8 @@ architecture.
 - Explorer hierarchy is an organizational navigation projection only. Visual
   containment does not establish architectural relationships, semantic-message
   identity, complementary views, causality, bounded contexts, ownership, or
-  lineage. Private work, proposals, publication, and lineage remain future
-  lifecycle capabilities.
+  lineage. Current navigation includes SHARED, MY WORK, proposals and their
+  lifecycle/lineage; promotion evidence is durable and reloadable.
 
 ## Known Debt, Not H01 Work
 
@@ -218,15 +222,18 @@ architecture.
 H01 adds no public API, MCP, persistence, or domain-model redesign. It adds
 only characterization of the server event-flow path and this baseline record.
 
-## Proposal Review Presentation
+## Legacy Change Proposal Review Presentation
+
+This section records the separate resource-scoped `ChangeProposal` merge flow;
+it does not describe `ArchitecturalProposal` governance or promotion above.
 
 - `Changes` is pending collaboration work: the project Changes view and the
   proposal review sidebar contain open proposals only. Historical proposals do
   not contribute to counts or appear in the review queue.
 - `History` is completed trajectory. Project History is the project-wide
   projection; Resource History is the same trajectory filtered to one resource.
-  Merged proposals belong to that historical boundary, although the current
-  local version store does not yet persist proposal merge events.
+  Merged ChangeProposals belong to that historical boundary, although the
+  browser-local version store does not persist their merge events.
 - Resource actions use one Resource Action Bar. Explorer proposal indicators
   occupy a fixed status slot and mean open proposals only.
 - `Create checkpoint` is the UI label for the existing explicit manual version
@@ -240,3 +247,22 @@ only characterization of the server event-flow path and this baseline record.
   grouping and review-only SVG decoration are presentation projections. Visual
   decoration marks only entities that the semantic diff can identify and does
   not alter layout geometry or normal rendering.
+
+## Architectural Proposal Governance
+
+- Persisted disposition is `open`, `withdrawn`, or `superseded`; review and
+  promotion are separate evidence/state. Derived lifecycle may report `OPEN`,
+  `CHANGES_REQUESTED`, `APPROVED`, `PROMOTING`, `PROMOTED`, `WITHDRAWN`, or
+  `SUPERSEDED`.
+- Submitted snapshots are immutable. Revision creates a successor from edited
+  author-owned MY WORK, records lineage, captures a fresh SHARED base, and does
+  not transfer reviews.
+- Reviews (`APPROVE`, `REQUEST_CHANGES`) are persisted evidence, not publication.
+  Workspace `allow_author_self_review` defaults to false and workspace governance
+  can enable it.
+- Promotion preview reports readiness/blockers without mutation. Explicit
+  execution rechecks authority, review, proposal/base state, and conflicts. A
+  promotion remains `COMMITTED_COMPLETION_PENDING` until recovery settles the
+  filesystem and manifest; completed evidence is `COMPLETED`.
+- Capabilities are advisory. Application use cases re-evaluate credential scope,
+  project role, ownership, governance, and current state when a mutation executes.

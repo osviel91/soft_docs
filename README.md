@@ -75,8 +75,14 @@ Server mode adds authenticated shared projects. The API stores project identity,
 memberships, resource metadata, revisions, sessions, and audit events in
 PostgreSQL; resource content remains in the project storage volume. Workspace
 membership scopes which projects are visible and accessible, and project roles
- control permissions within an accessible project. Server writes use optimistic
- revisions so stale edits are rejected instead of silently overwriting changes.
+control permissions within an accessible project. Server writes use optimistic
+revisions so stale edits are rejected instead of silently overwriting changes.
+In the full server composition, API and remote MCP share the project-data volume
+and database; the API runs migrations and the server application hosts run
+promotion recovery at startup. SQL and filesystem changes are journaled and
+recoverable, not one cross-system atomic transaction. Backups must capture a
+coherent checkpoint of both PostgreSQL and project files; restoring only one
+side can leave mismatched state.
 
 Server knowledge has two explicit contexts: **SHARED** is authoritative project
 knowledge, while **MY WORK** is private, tentative knowledge owned by one user
@@ -89,7 +95,10 @@ review: selected private resources are captured as an immutable, non-authoritati
 snapshot. The source context remains private and may continue changing. A proposal
 records the SHARED resource-revision vector used as its base; resource history is
 recoverable, but relationship and manifest history are not historical snapshots in
-this phase. Proposals do not accept, reject, merge, promote, or classify changes.
+this phase. Proposal review records approval or requested changes but does not
+publish. Explicit, separately authorized promotion applies an eligible proposal to
+SHARED; preview reports readiness and blockers but does not mutate SHARED. Proposal
+lifecycle, review evidence, and durable promotion completion are distinct states.
 
 The browser uses the same editor for local and server projects. The remote MCP
 service is a separately deployable, authenticated service over the shared
@@ -124,17 +133,18 @@ software -> human/agent implementation -> architectural knowledge
 Documentation is therefore an interface between people and software-development
 agents, not only an output of implementation.
 
-## Analysis Workspace Direction
+## Analysis Workspace
 
-The emerging Analysis Workspace is intended to inspect two architectural
-contexts simultaneously. It is not merely a diagram comparison or text-diff
-feature. Its direction includes:
+The Analysis Workspace / Explorer supports cross-resource navigation and
+inspection of architectural contexts, including:
 
 - cross-resource analysis through shared semantic knowledge;
 - multi-perspective analysis across execution, causal, topology, and other views;
 - discovery of semantic connections that are not yet explicitly related;
-- eventual evolution analysis across states or revisions;
-- proposed-versus-shared architecture review before publication.
+- semantic comparison where explicit identities, relationships, and traces
+  support it;
+- proposal decision and comparison using the proposal's immutable SHARED base
+  and submitted snapshot.
 
 The long-term comparison is **current architectural knowledge versus proposed
 architectural knowledge**, not simply old DSL versus new DSL. Useful results may
@@ -143,12 +153,11 @@ producers or consumers, new consequences or effects, changed failure/retry
 semantics, knowledge asymmetry, unresolved candidates, and unknown boundaries.
 Absence from one resource is not proof that behavior is absent from the system.
 
-The Analysis Workspace now accepts explicit knowledge provenance for its two
-contexts, including SHARED, MY WORK, and LOCAL inputs. It correlates only shared
-semantic identities authoritatively, keeps private identities and relationships
-private, and reports asymmetry as "documented only in" a context. This is a
-comparison of resources and evidence, not architectural change history: lineage,
-proposals, publication, and added/removed/changed claims remain future work.
+Proposal comparison is a resource/semantic change inspection, not full
+Architectural Change Intelligence. Current SHARED may inform staleness and
+promotion readiness, but does not replace the proposal's historical base in its
+canonical diff. Broader cross-perspective impact reasoning and architecture
+evolution analysis remain future work (D04 and D05).
 
 ## Product Principles
 
@@ -255,6 +264,7 @@ Configure the required secrets, database, public URLs, and OIDC values from
 ## Documentation Map
 
 - [Canonical documentation model](./docs/documentation-model.md)
+- [Current roadmap](./docs/roadmap.md)
 - [Architecture and ADRs](./ARCHITECTURE.md)
 - [Current vocabulary](./CONTEXT.md)
 - [H01 architecture baseline](./docs/architecture-baseline.md)

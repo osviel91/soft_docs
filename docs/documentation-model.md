@@ -69,18 +69,21 @@ render, search, or persist them as dedicated diagram types.
 The current product supports Sequence, Event Flow, Markdown, semantic message
 identity and binding, causal handlers and effects, typed resource relationships,
 resource revisions, and agent-facing discovery and mutation surfaces. The
-Analysis Workspace direction extends this foundation toward simultaneous
-inspection of two architectural contexts, cross-resource and multi-perspective
-analysis, semantic discovery, evolution analysis, and proposed-versus-shared
-review. Server projects now also have explicit **MY WORK** contexts: private,
+Analysis Workspace supports simultaneous context inspection, cross-resource and
+multi-perspective analysis, semantic discovery, and proposal decision review.
+Broader architectural change and evolution intelligence remain future work. Server
+projects have explicit **MY WORK** contexts: private,
 tentative knowledge owned by one user inside the project. This is distinct from
 LOCAL machine knowledge and SHARED authoritative project knowledge. MY WORK may
 read SHARED, but SHARED never implicitly reads MY WORK; every private fact keeps
 its context provenance. Architectural Proposals are the explicit transition from MY
 WORK to team-visible review: a selected-resource snapshot is immutable,
 non-authoritative, and never a live alias of the source context. Proposal reads
-expose only submitted resources and dependencies. Proposal status is deliberately
-minimal (`open`); review evidence is separate from authoritative promotion.
+expose only submitted resources and dependencies. Persisted proposal disposition
+is `open`, `withdrawn`, or `superseded`; derived lifecycle also reflects review and
+promotion state (`OPEN`, `CHANGES_REQUESTED`, `APPROVED`, `PROMOTING`, `PROMOTED`,
+`WITHDRAWN`, `SUPERSEDED`). These are not all values of one persisted status enum:
+review and promotion have their own evidence/state.
 
 Authoritative SHARED resources have a non-destructive lifecycle: `ACTIVE -> RETIRED`.
 Retirement removes a resource from current listings, indexes, fingerprints, and
@@ -152,6 +155,37 @@ for human review, not automatic rejection or acceptance. Semantic/causal analysi
 anchors, provenance, effects, recovery, and traces are the primary review surface;
 textual diffs are not architectural impact.
 
+Self-review policy is workspace governance, not a universal proposal invariant.
+The workspace setting `allow_author_self_review` defaults to `false`; when enabled,
+an author may approve their own proposal, subject to ordinary review permission
+and proposal-state checks. Workspace administrators configure this policy. Review
+records remain associated with the proposal on which they were made and are not
+transferred to a revised successor.
+
+Capabilities expose advisory decisions based on credential scopes, project role,
+ownership, proposal state, workspace governance, and promotion readiness. They do
+not grant authority: every mutation use case rechecks permission and current state,
+so a change between capability discovery and mutation (TOCTOU) can result in a
+denial. PAT scopes and role are both relevant; neither UI visibility nor capability
+metadata replaces server-side authorization.
+
+Promotion is separate from review. A preview reports proposed changes and blockers
+without mutation. Execution rechecks `promotion:execute`, the OWNER requirement
+(or configured workspace-admin governance), review approval, proposal/base state,
+and conflicts. Only this authoritative path changes SHARED. Durable promotion
+evidence is `COMMITTED_COMPLETION_PENDING` while SQL state is committed but
+filesystem/manifest completion remains; it becomes `COMPLETED` after recovery
+settles the batch. The derived proposal lifecycle reports these as `PROMOTING` and
+`PROMOTED`, respectively.
+
+Revision does not edit a submitted snapshot. The author edits their active MY WORK
+and explicitly revises an open proposal, creating an immutable successor with a
+fresh SHARED base and `supersedesProposalId` lineage. The predecessor becomes
+`superseded`; its snapshot and reviews remain historical, and reviews do not carry
+to the successor. Withdrawal is non-destructive: an open proposal becomes
+`withdrawn`, retaining snapshot and reviews. Withdrawn and superseded proposals
+cannot be reviewed or promoted.
+
 Each submitted resource snapshot carries explicit `CREATE`, `UPDATE`, or `RETIRE`
 intent. Omission is not retirement. A RETIRE snapshot names the authoritative
 resource and exact base revision; promotion removes it from current SHARED state
@@ -188,12 +222,9 @@ does not infer authority, semantic identity, a relationship, ownership, or
 folder architecture. SHARED remains the only authoritative context; MY WORK,
 PROPOSALS, and LOCAL remain distinct. An approved proposal is still not SHARED.
 
-The ArchitecturalProposal API exposes persisted `open`, `withdrawn`, and
-`superseded` dispositions. It does not yet expose a durable promotion/lifecycle query that lets Explorer
-reconstruct `PROMOTED` after a reload. Until that follow-up capability exists,
-the governed UI reports a successful promotion immediately in proposal detail
-and offers explicit navigation to the resulting SHARED knowledge; it does not
-invent a durable promoted state in Explorer.
+Proposal reads expose predecessor/successor lineage and durable promotion
+evidence. The Explorer can reconstruct `PROMOTING`/`PROMOTED` after reload rather
+than relying on transient UI state.
 
 ## Representation Selection
 
@@ -282,15 +313,13 @@ a representation whose semantics do not match the observed system behavior.
 For example, synchronous HTTP routing represented as an asynchronous Event Flow
 is MISREPRESENTED, not merely incomplete.
 
-## Analysis Workspace Direction
+## Analysis Workspace: Current And Future
 
-The Analysis Workspace is an emerging inspection direction for viewing two
-architectural contexts together. It should support cross-resource analysis
-through shared semantic knowledge, multiple perspectives such as execution and
-causality, discovery of semantic connections that are not yet explicitly
-related, and eventual evolution analysis across states or revisions. With
-private work, it should support provenance-preserving inspection against SHARED
-before any future publication workflow.
+The Analysis Workspace / Explorer is the current inspection surface for project
+knowledge and proposals. It supports cross-resource navigation, provenance-aware
+inspection of SHARED, MY WORK, and LOCAL contexts, semantic comparison where
+implemented, and a Proposal Decision Workspace with canonical proposal diff and
+change inspection.
 
 D03.13.3 and D03.14.2 provide a read-only Analysis Workspace over two independent
 viewer sessions. An Analysis Session supplies context A, context B, an explicit
@@ -312,11 +341,13 @@ not added or removed history. Comparison of resources is not architectural chang
 history. Analysis results navigate to their indexed source evidence;
 the diagrams remain independently zoomed, panned, inspected, and rendered.
 
-Lineage, proposals, publication, and authoritative revision/state history remain
-future seams. They may later establish stronger added/removed/changed terminology;
-the current workspace deliberately does not claim those meanings.
-A missing resource-side representation must never be treated as proof that
-behavior is absent.
+The Proposal Decision Workspace separates Explorer/navigation, decision context,
+and Change Inspector. Its canonical comparison operands are the immutable SHARED
+base captured by the proposal and the immutable submitted snapshot. Current SHARED
+is consulted for staleness/readiness, not as a replacement for historical proposal
+evidence. This feature does not claim D04's richer cross-perspective impact
+reasoning or D05's architecture-evolution analysis. A missing resource-side
+representation must never be treated as proof that behavior is absent.
 
 ## Sequence Diagrams
 
@@ -482,7 +513,8 @@ Semantic-diff handoff: causal declarations already have stable identities in the
 domain model (`handler.id`, `effect.id`, and handler/message pairs) and source
 ranges for evidence. A later diff can therefore report handler, input, output,
 effect, and provenance additions/removals/changes without changing persistence;
-the causal diff UI and proposal-specific presentation remain future work.
+the causal semantic-diff UI and its proposal-specific presentation remain future
+work.
 
 ### Causal investigation view
 
