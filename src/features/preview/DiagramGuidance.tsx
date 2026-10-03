@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog";
 
@@ -41,24 +41,36 @@ export const DIAGRAM_GUIDES: Record<GuidanceView, Guide> = {
 export default function DiagramGuidance({ view, comparison = false, diffDecorations = false }: { view: GuidanceView; comparison?: boolean; diffDecorations?: boolean }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  const root = useRef<HTMLDivElement>(null);
   useEffect(() => setOpen(false), [view, comparison]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: KeyboardEvent | MouseEvent) => {
+      if (event instanceof KeyboardEvent && event.key === "Escape") setOpen(false);
+      else if (event instanceof MouseEvent && !root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("click", dismiss);
+    return () => { document.removeEventListener("keydown", dismiss); document.removeEventListener("click", dismiss); };
+  }, [open]);
   const guide = DIAGRAM_GUIDES[view];
-  return <div className="diagram-guidance">
-    <button type="button" className="icon-button diagram-guidance__trigger" aria-label={`How to read ${guide.title}`} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>ⓘ</button>
+  return <div className="diagram-guidance" ref={root}>
+    <button type="button" className="icon-button diagram-guidance__trigger" title={`How to read ${guide.title}`} aria-label={`How to read ${guide.title}`} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>ⓘ</button>
     {open && <aside id={panelId} className="diagram-guidance__panel" aria-label={`${guide.title} guidance`}>
       <button type="button" className="diagram-guidance__close" aria-label="Close diagram guidance" onClick={() => setOpen(false)}>×</button>
       <h2>How to read {guide.title}</h2>
-      {comparison && <section><h3>Compare</h3><p>Each viewer is a separate resource and context. Selecting a semantic identity can highlight its occurrences across viewers; the highlight identifies a selection, not a resource change.</p></section>}
-      {diffDecorations && <section><h3>Comparison states</h3><ul><li>Added and removed decorations mark resource differences.</li><li>Modified decorations distinguish syntactic from semantic changes.</li><li>Unchanged context has no change decoration. These are resource diff states, not relationship types.</li></ul></section>}
-      {view !== "catalog" && <section><h3>Visual key</h3><div className={`diagram-guidance__sample diagram-guidance__sample--${view}`} aria-label={`${guide.title} notation sample`}>
+      <p>{guide.read}</p>
+      {view !== "catalog" && <div className={`diagram-guidance__sample diagram-guidance__sample--${view}`} aria-label={`${guide.title} notation sample`}>
         {view === "sequence" && <><span className="diagram-guidance__lifeline" /><span className="diagram-guidance__message" /><span className="diagram-guidance__message diagram-guidance__message--dashed" /></>}
         {view === "event-flow" && <><span className="diagram-guidance__box">service</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">event</span></>}
         {view === "topology" && <><span className="diagram-guidance__box">producer</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">consumer</span></>}
         {view === "causal" && <><span className="diagram-guidance__box">message</span><span className="diagram-guidance__message diagram-guidance__message--dashed" /><span className="diagram-guidance__box">effect</span></>}
-      </div><p className="diagram-guidance__caption">Solid arrows indicate directed relationships; dashed treatments are limited to the meanings described above.</p></section>}
-      <section><h3>Notation</h3><ul>{guide.notation.map((entry) => <li key={entry}>{entry}</li>)}</ul></section>
-      <section><h3>How to read this view</h3><p>{guide.read}</p></section>
-      <section><h3>Interaction</h3><ul>{guide.interaction.map((entry) => <li key={entry}>{entry}</li>)}</ul></section>
+      </div>}
+      <details className="diagram-guidance__more"><summary>Learn more</summary>
+        {comparison && <p>Each viewer is a separate resource and context. A shared semantic selection highlights occurrences, not resource changes.</p>}
+        {diffDecorations && <p>Added, removed, and modified decorations are resource diff states, not relationship types.</p>}
+        <ul>{guide.notation.concat(guide.interaction).map((entry) => <li key={entry}>{entry}</li>)}</ul>
+      </details>
     </aside>}
   </div>;
 }

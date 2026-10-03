@@ -107,13 +107,7 @@ export default function EventFlowPreview({
     () => renderEventFlowTopologyDocument(flow),
     [flow],
   );
-  const selectorGuidanceView = view === "causal" || view === "catalog"
-    ? view
-    : view === "topology" && topology.services.length === 0
-      ? "topology"
-      : view === "flow" && (document.width === 0 || document.height === 0)
-        ? "event-flow"
-        : null;
+  const selectorGuidanceView = view === "flow" ? "event-flow" : view;
 
   const selector = (
     <div className="event-flow-toolbar">
@@ -177,7 +171,7 @@ export default function EventFlowPreview({
         </button>
       )}
     </div>
-    {selectorGuidanceView && <DiagramGuidance view={selectorGuidanceView} comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} />}
+    <DiagramGuidance view={selectorGuidanceView} comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} />
     </div>
   );
 
@@ -325,9 +319,6 @@ export default function EventFlowPreview({
                 onTransformChange={onTransformChange}
                 activeReviewChange={activeReviewChange}
                 focusReviewChange={focusReviewChange}
-                guidanceView="topology"
-                comparisonMode={comparisonMode}
-                diffDecorations={reviewChanges.length > 0}
               />
               {topologyDetailsOpen && <div
                 id="topology-relationships"
@@ -466,9 +457,6 @@ export default function EventFlowPreview({
         onTransformChange={onTransformChange}
         activeReviewChange={activeReviewChange}
         focusReviewChange={focusReviewChange}
-        guidanceView="event-flow"
-        comparisonMode={comparisonMode}
-        diffDecorations={reviewChanges.length > 0}
       />
     </div>
   );

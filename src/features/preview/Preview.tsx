@@ -21,6 +21,7 @@ import DiagramViewport from "./DiagramViewport";
 import type { DiagramViewportTransform } from "./DiagramViewport";
 import type { SemanticChange } from "../../domain/diff/resource-diff";
 import { decorateReviewSvg } from "../proposals/review-decorations";
+import DiagramGuidance from "./DiagramGuidance";
 
 export interface PreviewProps {
   /** The DSL source to render. */
@@ -124,6 +125,9 @@ export default function Preview({
     <div className="preview" data-testid="diagram-preview">
       {valid ? (
         <>
+          <div className="sequence-guidance-toolbar">
+            <DiagramGuidance view="sequence" comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} />
+          </div>
           {noteCount > 0 && (
             <div className="preview__notes" data-testid="preview-notes">
               <span className="preview__notes-label">
@@ -164,8 +168,6 @@ export default function Preview({
             onTransformChange={onTransformChange}
             activeReviewChange={activeReviewChange}
             focusReviewChange={focusReviewChange}
-            comparisonMode={comparisonMode}
-            diffDecorations={reviewChanges.length > 0}
           />
           {!autoUpdate && (
             <div className="preview__pause" data-testid="preview-paused">

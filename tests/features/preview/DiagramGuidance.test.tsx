@@ -13,6 +13,8 @@ describe("contextual diagram guidance", () => {
     render(<Preview source={"participant A\nparticipant B\nA -> B: call"} />);
     const help = screen.getByRole("button", { name: "How to read Sequence" });
     expect(help).toHaveAttribute("aria-expanded", "false");
+    expect(help.closest(".viewport__rail")).toBeNull();
+    expect(help.closest(".sequence-guidance-toolbar")).toBeInTheDocument();
     expect(screen.getByTestId("preview-svg")).toBeInTheDocument();
     help.focus();
     await userEvent.setup().keyboard("{Enter}");
@@ -31,6 +33,25 @@ describe("contextual diagram guidance", () => {
     fireEvent.click(screen.getByRole("button", { name: "How to read Event Flow · Causal" }));
     expect(screen.getByText(/authored causal facts/)).toBeInTheDocument();
     expect(screen.queryByText(/numbered message/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "How to read Event Flow · Causal" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Causal" }));
+    expect(screen.queryByText(/authored causal facts/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "How to read Event Flow · Causal" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "How to read Event Flow · Causal" }).closest(".event-flow-toolbar")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["flow", "How to read Event Flow"],
+    ["catalog", "How to read Event Flow · Catalog"],
+    ["topology", "How to read Event Flow · Topology"],
+    ["causal", "How to read Event Flow · Causal"],
+  ] as const)("keeps guidance attached to the toolbar for %s", (view, label) => {
+    render(<EventFlowPreview source="event A" view={view} />);
+    const help = screen.getByRole("button", { name: label });
+    expect(help.closest(".event-flow-toolbar")).toBeInTheDocument();
+    expect(help.closest(".viewport__rail")).toBeNull();
+    fireEvent.click(help);
+    expect(screen.getByRole("complementary", { name: `${label.replace("How to read ", "")} guidance` })).toBeInTheDocument();
   });
 
   it("distinguishes resource diff decorations from semantic relationships", () => {

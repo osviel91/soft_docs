@@ -2172,10 +2172,6 @@ body {
 }
 
 .event-flow-view-selector {
-  position: absolute;
-  z-index: 2;
-  top: 14px;
-  left: 14px;
   display: inline-flex;
   padding: 3px;
   gap: 2px;
@@ -2649,17 +2645,17 @@ body {
   box-shadow: var(--shadow-pop);
 }
 
-.diagram-guidance { position: relative; }
-.diagram-guidance__trigger { font-size: 15px; }
+.diagram-guidance { position: relative; flex: 0 0 auto; }
+.diagram-guidance__trigger { width: 30px; height: 30px; padding: 0; font-size: 15px; }
 .diagram-guidance__panel {
   position: absolute;
   z-index: 20;
-  top: 0;
-  right: calc(100% + 8px);
-  width: min(360px, calc(100vw - 32px));
-  max-height: min(70vh, 560px);
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(300px, calc(100vw - 24px));
+  max-height: min(55vh, 360px);
   overflow: auto;
-  padding: 16px 18px;
+  padding: 12px 14px;
   color: var(--text);
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
@@ -2667,25 +2663,24 @@ body {
   box-shadow: var(--shadow-pop);
   text-align: left;
 }
-.diagram-guidance__panel h2 { margin: 0 28px 12px 0; font-size: 15px; }
-.diagram-guidance__panel h3 { margin: 12px 0 4px; font-size: 12px; }
-.diagram-guidance__panel p, .diagram-guidance__panel ul { margin: 4px 0; font-size: 12px; line-height: 1.5; }
+.diagram-guidance__panel h2 { margin: 0 0 6px; font-size: 14px; }
+.diagram-guidance__panel p, .diagram-guidance__panel ul { margin: 4px 0; font-size: 11px; line-height: 1.4; }
 .diagram-guidance__panel ul { padding-left: 18px; }
-.diagram-guidance__sample { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; background: var(--surface-muted); border-radius: var(--radius-sm); }
+.diagram-guidance__sample { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; background: var(--surface-muted); border-radius: var(--radius-sm); }
 .diagram-guidance__box { padding: 4px 6px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-elevated); font-size: 10px; }
 .diagram-guidance__message { position: relative; width: 42px; border-top: 2px solid currentColor; }
 .diagram-guidance__message::after { position: absolute; top: -5px; right: -1px; content: ""; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid currentColor; }
 .diagram-guidance__message--dashed { border-top-style: dashed; }
 .diagram-guidance__lifeline { align-self: stretch; margin: 0 6px; border-left: 1px dashed currentColor; }
-.diagram-guidance__caption { color: var(--text-muted); }
-.diagram-guidance__close { position: absolute; top: 8px; right: 8px; border: 0; background: transparent; color: inherit; font-size: 20px; cursor: pointer; }
-.event-flow-toolbar { position: relative; display: flex; align-items: center; gap: 6px; }
-.event-flow-toolbar > .diagram-guidance { margin-left: auto; }
-.event-flow-toolbar .diagram-guidance__panel { top: calc(100% + 6px); right: 0; }
+.diagram-guidance__more { margin-top: 8px; font-size: 11px; }
+.diagram-guidance__more summary { color: var(--accent); cursor: pointer; }
+.event-flow-toolbar { position: absolute; z-index: 3; top: 14px; left: 14px; display: flex; align-items: center; gap: 4px; }
+.event-flow-toolbar > .diagram-guidance { margin-left: 2px; }
+.event-flow-toolbar .diagram-guidance__panel { left: auto; right: 0; }
+.sequence-guidance-toolbar { position: absolute; z-index: 3; top: 14px; left: 14px; }
 
 @media (max-width: 520px) {
-  .viewport__rail .diagram-guidance__panel { position: fixed; top: 12px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 24px); }
-  .event-flow-toolbar .diagram-guidance__panel { position: fixed; top: 12px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 24px); }
+  .event-flow-toolbar { max-width: calc(100vw - 28px); }
 }
 
 .viewport__zoom {

@@ -33,7 +33,6 @@ import {
   type Size,
   type ViewportTransform,
 } from "./viewport";
-import DiagramGuidance, { type GuidanceView } from "./DiagramGuidance";
 
 export type DiagramViewportTransform = ViewportTransform;
 
@@ -88,9 +87,6 @@ export interface DiagramViewportProps {
    * toggle must not depend on geometry.
    */
   focusReviewChange?: string | null;
-  guidanceView?: GuidanceView;
-  comparisonMode?: boolean;
-  diffDecorations?: boolean;
 }
 
 /** Pixels to pan per arrow key press. */
@@ -168,9 +164,6 @@ export default function DiagramViewport({
   onTransformChange,
   activeReviewChange = null,
   focusReviewChange = null,
-  guidanceView = "sequence",
-  comparisonMode = false,
-  diffDecorations = false,
 }: DiagramViewportProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -587,7 +580,6 @@ export default function DiagramViewport({
       </div>
 
       <div className="viewport__rail" role="group" aria-label="Zoom controls">
-        <DiagramGuidance view={guidanceView} comparison={comparisonMode} diffDecorations={diffDecorations} />
         <button
           type="button"
           className="icon-button"
