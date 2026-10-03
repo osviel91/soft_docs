@@ -66,7 +66,7 @@ let provider: TestProvider;
  * `oidcFetch` is the seam that keeps the *real* verification code in the test:
  * only the network is local, not the crypto.
  */
-function testConfig() {
+function testConfig(extraEnv: Record<string, string> = {}) {
   return loadConfig(
     {
       NODE_ENV: "test",
@@ -78,6 +78,7 @@ function testConfig() {
       OIDC_CLIENT_ID: provider.clientId,
       OIDC_CLIENT_SECRET: provider.clientSecret,
       OIDC_REDIRECT_URI: provider.redirectUri,
+      ...extraEnv,
     },
     { oidcFetch: provider.fetch },
   );
@@ -709,6 +710,76 @@ describe("the login-state cookie", () => {
 });
 
 describe("the authentication routes", () => {
+  async function oidcCallback(subject: string, email: string, app: AppDependencies = dependencies) {
+    const router = createRouter(app);
+    const start = await router.handle(request("GET", "/auth/login"));
+    const state = cookieFrom(start.headers, LOGIN_COOKIE) ?? "";
+    const transaction = decodeLoginState("a".repeat(48), state);
+    const code = provider.issueCode({
+      codeChallenge: codeChallengeS256(transaction?.codeVerifier ?? ""),
+      nonce: transaction?.nonce ?? "",
+      subject,
+      email,
+    });
+    return router.handle(
+      request("GET", `/auth/callback?code=${code}&state=${transaction?.state}`, {
+        headers: { cookie: `${LOGIN_COOKIE}=${encodeURIComponent(state)}` },
+      }),
+    );
+  }
+
+  it("preserves platform activation across OIDC logins without reactivating suspended accounts", async () => {
+    const app = await createApp(testConfig({ PLATFORM_ADMIN_EMAIL: "platform-admin@example.test" }));
+    const subject = `approved-oidc-${Date.now()}`;
+    try {
+      const first = await oidcCallback(subject, "approved@example.test", app);
+      const user = await app.users.findOrCreateByExternalIdentity({
+        issuer: provider.issuer,
+        subject,
+        displayName: subject,
+        email: "approved@example.test",
+      });
+      expect(cookieFrom(first.headers, SESSION_COOKIE) || null).toBeNull();
+      expect(user.status).toBe("PENDING");
+
+      await app.users.setStatus(user.id, "ACTIVE");
+      const approvedLogin = await oidcCallback(subject, "approved@example.test", app);
+      expect(cookieFrom(approvedLogin.headers, SESSION_COOKIE)).not.toBeNull();
+      expect((await app.users.findById(user.id))?.status).toBe("ACTIVE");
+
+      await app.users.setStatus(user.id, "SUSPENDED");
+      const suspendedLogin = await oidcCallback(subject, "approved@example.test", app);
+      expect(cookieFrom(suspendedLogin.headers, SESSION_COOKIE) || null).toBeNull();
+      expect((await app.users.findById(user.id))?.status).toBe("SUSPENDED");
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  it("activates the configured platform administrator once but preserves later suspension", async () => {
+    const app = await createApp(testConfig({ PLATFORM_ADMIN_EMAIL: "platform-admin@example.test" }));
+    const subject = `configured-admin-${Date.now()}`;
+    try {
+      const first = await oidcCallback(subject, "platform-admin@example.test", app);
+      const user = await app.users.findOrCreateByExternalIdentity({
+        issuer: provider.issuer,
+        subject,
+        displayName: subject,
+        email: "platform-admin@example.test",
+      });
+      expect(cookieFrom(first.headers, SESSION_COOKIE)).not.toBeNull();
+      expect(user.status).toBe("ACTIVE");
+      expect(user.platformAdmin).toBe(true);
+
+      await app.users.setStatus(user.id, "SUSPENDED");
+      const next = await oidcCallback(subject, "platform-admin@example.test", app);
+      expect(cookieFrom(next.headers, SESSION_COOKIE) || null).toBeNull();
+      expect((await app.users.findById(user.id))?.status).toBe("SUSPENDED");
+    } finally {
+      await closeApp(app);
+    }
+  });
+
   it("starts a login with a signed state cookie and a PKCE challenge", async () => {
     const router = createRouter(dependencies);
     const response = await router.handle(

@@ -225,23 +225,26 @@ export function createAuthRoutes(
         if (
           config.platformAdminEmail !== null &&
           user.email?.toLowerCase() === config.platformAdminEmail &&
-          (!user.platformAdmin || user.status !== "ACTIVE")
+          !user.platformAdmin &&
+          user.status !== "SUSPENDED"
         ) {
           await dependencies.sql.query(
-            "UPDATE users SET platform_admin = true, status = 'ACTIVE', updated_at = now() WHERE id = $1",
+            "UPDATE users SET platform_admin = true, status = 'ACTIVE', activated_at = COALESCE(activated_at, now()), updated_at = now() WHERE id = $1",
             [user.id],
           );
-          user = { ...user, platformAdmin: true, status: "ACTIVE" };
+          user = { ...user, platformAdmin: true, status: "ACTIVE", activatedAt: user.activatedAt ?? new Date() };
         } else if (
           config.platformAdminEmail !== null &&
-          user.status === "ACTIVE"
+          user.status === "ACTIVE" &&
+          user.activatedAt === null
         ) {
           await dependencies.sql.query(
             "UPDATE users SET status = 'PENDING', updated_at = now() WHERE id = $1",
             [user.id],
           );
+          user = { ...user, status: "PENDING" };
         }
-        if (user.status !== "ACTIVE" && !user.platformAdmin) {
+        if (user.status !== "ACTIVE") {
           await recordAudit({
             action: "login.rejected",
             subjectUserId: user.id,
