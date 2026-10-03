@@ -51,6 +51,7 @@ import { createArchitecturalProposalRepository } from "./architectural-proposal-
 import { createProposalReviewRepository } from "./proposal-review-repository";
 import { createAuthoritativeBatchRepository } from "./authoritative-batch-repository";
 import { createPromotionRepository } from "./promotion-repository";
+import { createWorkspaceInvitationRepository } from "./workspace-invitation-repository";
 
 /** The configuration the shared runtime needs. */
 export interface ServerRuntimeConfig {
@@ -82,6 +83,7 @@ export interface ServerRuntime {
   users: ReturnType<typeof createUserRepository>;
   projects: ReturnType<typeof createProjectRepository>;
   workspaces: ReturnType<typeof createWorkspaceRepository>;
+  invitations: ReturnType<typeof createWorkspaceInvitationRepository>;
   sessions: ReturnType<typeof createSessionRepository>;
   audit: ReturnType<typeof createAuditRepository>;
   agentIdentities: ReturnType<typeof createAgentIdentityRepository>;
@@ -181,6 +183,7 @@ export async function createServerRuntime(
     users: createUserRepository(sql),
     projects,
     workspaces,
+    invitations: createWorkspaceInvitationRepository(sql),
     sessions: createSessionRepository(sql),
     audit: createAuditRepository(sql),
     agentIdentities: createAgentIdentityRepository(sql),

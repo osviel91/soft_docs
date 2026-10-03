@@ -205,8 +205,9 @@ current rules are in the canonical documentation model.
 - `ARCHITECTURE.md` contains historical phase and ADR wording that does not
   always read as a current-state document.
 - Workspace membership and project membership are both present; project
-  authorization remains the effective server boundary, and invitation delivery
-  is not complete.
+  authorization remains the effective server boundary. Workspace invitation
+  links now support admin-created, seven-day, single-use role grants; project
+  invitations, email delivery, and browser invitation UX remain out of scope.
 - The local domain types still call the diagram collection `diagrams` even
   though it also stores event flows by filename. This is an existing persisted
   contract, not a reason to rename or generalize it in H01.

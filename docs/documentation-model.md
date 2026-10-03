@@ -108,6 +108,15 @@ manifest. A private context can consume readable SHARED resources, while a
 SHARED query excludes private resources, identities, relationships, indexes,
 and traces.
 
+Workspace invitation links are transferable bearer credentials, not email or
+account invitations. They grant one authenticated user a preselected workspace
+role once, expire after seven days, and are stored as a one-way hash. They never
+grant project membership independently, expose project knowledge anonymously, or
+act as PAT/MCP credentials. Invitation inspection is a minimal public preview;
+acceptance requires an active browser session. The resulting workspace role is
+not a project role, and existing project/workspace authorization gates remain in
+force. Revocation, acceptance, and membership creation are audited atomically.
+
 SHARED semantic identities are currently authoritative in the project manifest
 (`project.json`). Resource source carries stable `messageRef` values; the parser,
 ProjectIndex, validation, and traces resolve those references against the manifest.

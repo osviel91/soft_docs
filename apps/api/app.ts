@@ -21,6 +21,7 @@ import {
 } from "../../src/persistence/server-runtime";
 import { createProjectCatalog } from "../../src/application/project-catalog";
 import { createWorkspaceService } from "../../src/application/workspace-service";
+import { createWorkspaceInvitationService } from "../../src/application/workspace-invitation-service";
 import { createAgentService } from "../../src/application/agent-service";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
@@ -60,6 +61,7 @@ export interface AppDependencies {
    */
   catalog: ReturnType<typeof createProjectCatalog>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
+  invitationService: ReturnType<typeof createWorkspaceInvitationService>;
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   promotion: ReturnType<typeof createPromotionService>;
@@ -207,6 +209,7 @@ export async function createApp(
     // host uses, so there is one implementation of "update a resource".
     catalog,
     workspaceService: createWorkspaceService(runtime.workspaces),
+    invitationService: createWorkspaceInvitationService({ invitations: runtime.invitations, workspaces: runtime.workspaces }),
     proposals: createChangeProposalService({
       proposals: runtime.proposals,
       projects: runtime.projects,

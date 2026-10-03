@@ -90,6 +90,24 @@ async function signIn(): Promise<{ cookie: string; userId: string }> {
 }
 
 describe("workspace lifecycle API", () => {
+  it("creates, previews, and accepts a single-use workspace link via sessions", async () => {
+    const router = createRouter(dependencies);
+    const owner = await signIn();
+    const guest = await signIn();
+    const created = await router.handle(request("POST", "/api/workspaces", owner.cookie, { name: "Invite target" }));
+    const workspaceId = JSON.parse(created.body).workspace.id as string;
+    const minted = await router.handle(request("POST", `/api/workspaces/${workspaceId}/invitations`, owner.cookie, { role: "VIEWER" }));
+    expect(minted.status).toBe(201);
+    const { token } = JSON.parse(minted.body) as { token: string };
+    const preview = await router.handle(request("POST", "/api/invitations/inspect", "", { token }));
+    expect(JSON.parse(preview.body)).toMatchObject({ workspaceName: "Invite target", role: "VIEWER" });
+    const accepted = await router.handle(request("POST", "/api/invitations/accept", guest.cookie, { token }));
+    expect(accepted.status).toBe(200);
+    expect(JSON.parse(accepted.body)).toMatchObject({ workspaceId, role: "VIEWER" });
+    expect(await dependencies.workspaces.roleOf(workspaceId, guest.userId)).toBe("VIEWER");
+    expect((await router.handle(request("POST", "/api/invitations/accept", guest.cookie, { token }))).status).toBe(404);
+  });
+
   it("creates, renames and deletes a non-default workspace", async () => {
     const router = createRouter(dependencies);
     const { cookie } = await signIn();

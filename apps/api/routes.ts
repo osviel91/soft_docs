@@ -23,13 +23,14 @@ import { guarded } from "./http/errors";
 import { correlationId } from "./http/node-server";
 import { requireApiContext } from "./auth/api-auth";
 import { hasBearerCredential } from "./auth/agent-credential";
-import { resolveSession } from "./context";
+import { requireContext, resolveSession } from "./context";
 import { createAuthRoutes, oidcClientFor } from "./auth/routes";
 import { registerAgentRoutes } from "./agents/routes";
 import type { ProjectRole } from "../../src/domain/access/permissions";
 import { isProjectRole } from "../../src/domain/access/permissions";
 import type { WorkspaceRole } from "../../src/domain/workspace/server-workspace";
 import { isWorkspaceRole } from "../../src/domain/workspace/server-workspace";
+import { invitationState } from "../../src/domain/workspace/invitation";
 import { invalid } from "../../src/application/errors";
 import type { AppDependencies } from "./app";
 import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-metadata";
@@ -309,6 +310,53 @@ export function createRouter(dependencies: AppDependencies): Router {
         );
         return json(204, null);
       }),
+  );
+
+  router.post("/api/workspaces/:workspaceId/invitations", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await requireContext(dependencies.sessions, request);
+      const body = parseJsonBody(request.body);
+      const role = requireBodyString(body, "role");
+      if (!isWorkspaceRole(role)) return errorResponse(422, "invalid", "The role must be ADMIN, EDITOR or VIEWER.");
+      const created = await dependencies.invitationService.create(context, params.workspaceId, role);
+      return json(201, { token: created.token, invitation: invitationView(created.invitation) });
+    }),
+  );
+
+  router.get("/api/workspaces/:workspaceId/invitations", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await requireContext(dependencies.sessions, request);
+      const invitations = await dependencies.invitationService.list(context, params.workspaceId);
+      return json(200, { invitations: invitations.map(invitation => invitationView(invitation, invitationState(invitation, new Date()))) });
+    }),
+  );
+
+  router.delete("/api/workspaces/:workspaceId/invitations/:invitationId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await requireContext(dependencies.sessions, request);
+      await dependencies.invitationService.revoke(context, params.workspaceId, params.invitationId);
+      return json(204, null);
+    }),
+  );
+
+  router.post("/api/invitations/inspect", async (request) =>
+    guarded(correlationId(request), async () => {
+      const token = parseJsonBody(request.body).token;
+      if (typeof token !== "string") return errorResponse(404, "not_found", "Invitation is invalid or no longer active.");
+      const found = await dependencies.invitationService.inspect(token);
+      if (!found) return errorResponse(404, "not_found", "Invitation is invalid or no longer active.");
+      return json(200, { workspaceName: found.invitation.workspaceName, role: found.invitation.role, inviterName: found.invitation.creatorName, expiresAt: found.invitation.expiresAt.toISOString() });
+    }),
+  );
+
+  router.post("/api/invitations/accept", async (request) =>
+    guarded(correlationId(request), async () => {
+      const context = await requireContext(dependencies.sessions, request);
+      const token = parseJsonBody(request.body).token;
+      if (typeof token !== "string") return errorResponse(404, "not_found", "Invitation is invalid or no longer active.");
+      const invitation = await dependencies.invitationService.accept(context, token);
+      return json(200, { workspaceId: invitation.workspaceId, role: invitation.role });
+    }),
   );
 
   // ---- Change proposals -----------------------------------------------------
@@ -1010,6 +1058,16 @@ function workspaceMemberView(member: {
     email: member.email,
     role: member.role,
     createdAt: member.createdAt.toISOString(),
+  };
+}
+
+function invitationView(invitation: import("../../src/domain/workspace/invitation").WorkspaceInvitation, state?: string): Record<string, unknown> {
+  return {
+    id: invitation.id, workspaceId: invitation.workspaceId, workspaceName: invitation.workspaceName,
+    role: invitation.role, state: state ?? invitationState(invitation, new Date()), creatorUserId: invitation.creatorUserId, creatorName: invitation.creatorName,
+    createdAt: invitation.createdAt.toISOString(), expiresAt: invitation.expiresAt.toISOString(),
+    acceptedAt: invitation.acceptedAt?.toISOString() ?? null, acceptedBy: invitation.acceptedBy,
+    revokedAt: invitation.revokedAt?.toISOString() ?? null, revokedBy: invitation.revokedBy,
   };
 }
 
