@@ -45,11 +45,6 @@ describe("LoginScreen", () => {
       "Awaiting approval",
     );
     expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
-  });
-
-  it("offers an invitation code entry point", () => {
-    render(<LoginScreen auth={auth()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Invitation code" }));
-    expect(screen.getByTestId("login-invitation-code")).toBeInTheDocument();
+    expect(screen.queryByText("Invitation code")).toBeNull();
   });
 });

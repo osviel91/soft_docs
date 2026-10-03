@@ -47,6 +47,7 @@ import type {
   ServerProject,
   ServerWorkspace,
   ServerWorkspaceMember,
+  ServerWorkspaceInvitation,
   ServerArchitecturalProposal,
   ServerArchitecturalProposalDiff,
   ServerArchitecturalProposalDiffResource,
@@ -338,36 +339,41 @@ export default function App() {
   );
   const [workspaceMembersByWorkspaceId, setWorkspaceMembersByWorkspaceId] =
     useState<Record<string, ServerWorkspaceMember[]>>({});
+  const [workspaceInvitationsByWorkspaceId, setWorkspaceInvitationsByWorkspaceId] = useState<Record<string, ServerWorkspaceInvitation[]>>({});
   const refreshServerWorkspaces = useCallback(() => {
     void apiClient
       .listWorkspaces()
       .then((workspaces) => {
         setServerWorkspaces(workspaces);
-        setSelectedServerWorkspaceId((selected) =>
-          workspaces.some((workspace) => workspace.id === selected)
-            ? selected
-            : (workspaces[0]?.id ?? null),
-        );
+        const invitedWorkspace = new URLSearchParams(window.location.search).get("invitedWorkspace");
+        setSelectedServerWorkspaceId((selected) => invitedWorkspace && workspaces.some(item => item.id === invitedWorkspace)
+          ? invitedWorkspace
+          : workspaces.some((workspace) => workspace.id === selected) ? selected : (workspaces[0]?.id ?? null));
+        if (invitedWorkspace) { window.history.replaceState(null, "", window.location.pathname); }
         return Promise.all(
           workspaces.map(async (workspace) => {
             try {
+              const members = await apiClient.listWorkspaceMembers(workspace.id);
+              const invitations = workspace.role === "ADMIN" ? await apiClient.listWorkspaceInvitations(workspace.id).catch(() => []) : [];
               return [
                 workspace.id,
-                await apiClient.listWorkspaceMembers(workspace.id),
+                { members, invitations },
               ] as const;
             } catch {
-              return [workspace.id, []] as const;
+              return [workspace.id, { members: [] as ServerWorkspaceMember[], invitations: [] as ServerWorkspaceInvitation[] }] as const;
             }
           }),
         );
       })
       .then((entries) => {
         if (entries)
-          setWorkspaceMembersByWorkspaceId(Object.fromEntries(entries));
+          setWorkspaceMembersByWorkspaceId(Object.fromEntries(entries.map(([id, value]) => [id, value.members])));
+        if (entries) setWorkspaceInvitationsByWorkspaceId(Object.fromEntries(entries.map(([id, value]) => [id, value.invitations])));
       })
       .catch(() => {
         setServerWorkspaces([]);
         setWorkspaceMembersByWorkspaceId({});
+        setWorkspaceInvitationsByWorkspaceId({});
         setSelectedServerWorkspaceId(null);
       });
   }, [apiClient]);
@@ -432,6 +438,14 @@ export default function App() {
     },
     [apiClient],
   );
+  const createWorkspaceInvitation = useCallback(async (workspaceId: string, role: ServerWorkspaceMember["role"]): Promise<string> => {
+    const created = await apiClient.createWorkspaceInvitation(workspaceId, role);
+    setWorkspaceInvitationsByWorkspaceId(current => ({ ...current, [workspaceId]: [created.invitation, ...(current[workspaceId] ?? [])] }));
+    return `${window.location.origin}/invite/${encodeURIComponent(created.token)}`;
+  }, [apiClient]);
+  const revokeWorkspaceInvitation = useCallback((workspaceId: string, invitationId: string) => {
+    void apiClient.revokeWorkspaceInvitation(workspaceId, invitationId).then(() => apiClient.listWorkspaceInvitations(workspaceId)).then(invitations => setWorkspaceInvitationsByWorkspaceId(current => ({ ...current, [workspaceId]: invitations })));
+  }, [apiClient]);
   const createServerWorkspace = useCallback(
     (name: string) => {
       void apiClient.createWorkspace(name).then((created) => {
@@ -3189,6 +3203,9 @@ export default function App() {
           workspaceMembersByWorkspaceId={workspaceMembersByWorkspaceId}
           onSetWorkspaceMemberRole={setWorkspaceMemberRole}
           onRemoveWorkspaceMember={removeWorkspaceMember}
+          workspaceInvitationsByWorkspaceId={workspaceInvitationsByWorkspaceId}
+          onCreateWorkspaceInvitation={createWorkspaceInvitation}
+          onRevokeWorkspaceInvitation={revokeWorkspaceInvitation}
           onCreateWorkspace={createServerWorkspace}
           onRenameWorkspace={renameServerWorkspace}
           onDeleteWorkspace={deleteServerWorkspace}

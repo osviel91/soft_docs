@@ -4,6 +4,7 @@ import type {
   ServerAdminUser,
   ServerWorkspace,
   ServerWorkspaceMember,
+  ServerWorkspaceInvitation,
 } from "../../workspace/server/api-client";
 
 type SettingsArea = "workspaces" | "platform";
@@ -23,6 +24,9 @@ export interface ServerSettingsProps {
     role: ServerWorkspaceMember["role"],
   ) => void;
   onRemoveWorkspaceMember: (workspaceId: string, userId: string) => void;
+  workspaceInvitationsByWorkspaceId?: Record<string, ServerWorkspaceInvitation[]>;
+  onCreateWorkspaceInvitation?: (workspaceId: string, role: ServerWorkspaceMember["role"]) => Promise<string>;
+  onRevokeWorkspaceInvitation?: (workspaceId: string, invitationId: string) => void;
   onCreateWorkspace: (name: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
@@ -40,6 +44,9 @@ export default function ServerSettings({
   workspaceMembersByWorkspaceId,
   onSetWorkspaceMemberRole,
   onRemoveWorkspaceMember,
+  workspaceInvitationsByWorkspaceId,
+  onCreateWorkspaceInvitation,
+  onRevokeWorkspaceInvitation,
   onCreateWorkspace,
   onRenameWorkspace,
   onDeleteWorkspace,
@@ -53,7 +60,12 @@ export default function ServerSettings({
   const [topic, setTopic] = useState<WorkspaceTopic>("overview");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState("");
+  const [inviteRole, setInviteRole] = useState<ServerWorkspaceMember["role"]>("VIEWER");
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
   const workspace = workspaces.find((item) => item.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
+  const invitations = workspace ? workspaceInvitationsByWorkspaceId?.[workspace.id] ?? [] : [];
   const members = workspace ? workspaceMembersByWorkspaceId[workspace.id] ?? [] : [];
   const filteredWorkspaces = workspaces.filter((item) => item.name.toLowerCase().includes(workspaceFilter.trim().toLowerCase()));
 
@@ -278,6 +290,41 @@ export default function ServerSettings({
                     <span className="settings-card__count">{members.length} members</span>
                   </div>
                   <p className="settings-card__muted">Workspace members and their access level.</p>
+                  {workspace.role === "ADMIN" && <>
+                    <form className="settings-inline-form" onSubmit={event => {
+                      event.preventDefault(); setInviteError(null); setInviteLink(null); setInviteCopied(false);
+                      if (onCreateWorkspaceInvitation) void onCreateWorkspaceInvitation(workspace.id, inviteRole).then(setInviteLink).catch(reason => setInviteError(reason instanceof Error ? reason.message : "Invitation could not be created."));
+                    }}>
+                      <label htmlFor="workspace-invite-role">Invite collaborator as</label>
+                      <select id="workspace-invite-role" value={inviteRole} onChange={event => setInviteRole(event.target.value as ServerWorkspaceMember["role"])}>
+                        <option value="ADMIN">Admin</option><option value="EDITOR">Editor</option><option value="VIEWER">Viewer</option>
+                      </select>
+                      <button className="button button--small" type="submit">Create invitation link</button>
+                    </form>
+                    {inviteLink && <div className="settings-invitation-link" aria-label="Invitation link">
+                      <p>Copy this link now. It can be used once and expires in 7 days.</p>
+                      <input aria-label="One-time invitation link" readOnly value={inviteLink} onFocus={event => event.currentTarget.select()} />
+                      <button type="button" className="button button--small" onClick={async () => {
+                        const input = document.querySelector<HTMLInputElement>('.settings-invitation-link input');
+                        input?.select();
+                        try {
+                          if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+                          await navigator.clipboard.writeText(inviteLink);
+                          setInviteCopied(true);
+                        } catch { setInviteCopied(false); }
+                      }}>Copy link</button>
+                      <span role="status" aria-live="polite">{inviteCopied ? "Invitation link copied." : ""}</span>
+                    </div>}
+                    {inviteError && <p role="alert" className="login-card__error">{inviteError}</p>}
+                    <h4>Invitation history</h4>
+                    <div className="settings-users" role="list">
+                      {invitations.map(invitation => <div className="settings-user" role="listitem" key={invitation.id}>
+                        <div><strong>{invitation.role} · {invitation.state.toLowerCase()}</strong><span>Created {new Date(invitation.createdAt).toLocaleString()} · expires {new Date(invitation.expiresAt).toLocaleString()}</span></div>
+                        {invitation.state === "ACTIVE" && <button type="button" className="button button--small button--danger-text" onClick={() => { if (window.confirm("Revoke this invitation link? Anyone holding it will lose access.")) onRevokeWorkspaceInvitation?.(workspace.id, invitation.id); }}>Revoke</button>}
+                      </div>)}
+                      {invitations.length === 0 && <p className="settings-card__empty">No invitations yet.</p>}
+                    </div>
+                  </>}
                   {members.length > 0 ? (
                     <div className="settings-users" role="list">
                       {members.map((member) => (

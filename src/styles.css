@@ -144,6 +144,16 @@ body {
   height: 100%;
   min-width: 0;
 }
+.invitation-page .login-card { width: min(520px, calc(100vw - 32px)); }
+.invitation-page__scope { margin-top: 20px; padding: 12px; color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius); }
+.login-page--embedded { min-height: 0; padding: 16px 0 0; background: transparent; }
+.login-page--embedded .login-card { width: 100%; padding: 0; border: 0; box-shadow: none; }
+.login-page--embedded .login-card__brand { display: none; }
+.login-page--embedded .login-card__lead { display: none; }
+.invitation-sign-in { display: block; text-align: center; text-decoration: none; }
+.settings-invitation-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.settings-invitation-link p { flex-basis: 100%; margin: 0; color: var(--text-muted); }
+.settings-invitation-link input { flex: 1 1 240px; min-width: 0; padding: 9px; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 .proposal-review-panel__list {
   width: 190px;
   flex: 0 0 190px;

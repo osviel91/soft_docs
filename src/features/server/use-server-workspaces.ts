@@ -135,10 +135,6 @@ export function useServerWorkspaces(
     }
   }, [client, authenticated, selectedWorkspaceId]);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   // Losing the session closes whatever it had open. Keeping the binding would
   // leave one person's project rendered for the next person at the browser.
   useEffect(() => {
@@ -163,6 +159,10 @@ export function useServerWorkspaces(
       setArchitecturalProposals([]);
     }
   }, [active?.project.workspaceId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const openProject = useCallback(
     async (project: ServerProject): Promise<void> => {

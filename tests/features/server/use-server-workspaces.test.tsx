@@ -13,6 +13,7 @@ import { ServerApiClient } from "../../../src/workspace/server/api-client";
 import type {
   ServerArchitecturalProposal,
   ServerPrivateWorkContext,
+  ServerProject,
 } from "../../../src/workspace/server/api-client";
 import { useAuth } from "../../../src/features/server/use-auth";
 import type { AuthState } from "../../../src/features/server/use-auth";
@@ -338,6 +339,60 @@ describe("useServerWorkspaces", () => {
       expect(result.current.active).toBeNull();
     });
     expect(result.current.projects).toHaveLength(0);
+  });
+
+  it("closes the active project and reloads projects when workspace membership changes", async () => {
+    const client = new ServerApiClient();
+    const listProjects = vi.spyOn(client, "listProjects").mockImplementation(async (workspaceId) =>
+      workspaceId === "w1" ? [PROJECT] : [],
+    );
+    vi.spyOn(client, "access").mockResolvedValue({
+      projectId: "p1",
+      role: "OWNER",
+      permissions: ["resource:update"],
+    });
+    const { result, rerender } = renderHook(
+      ({ workspaceId }: { workspaceId: string }) =>
+        useServerWorkspaces(client, signedIn, workspaceId),
+      { initialProps: { workspaceId: "w1" } },
+    );
+    await waitFor(() => expect(result.current.projects).toEqual([PROJECT]));
+    await act(async () => { await result.current.openProject(PROJECT); });
+    expect(result.current.active?.project.id).toBe("p1");
+
+    rerender({ workspaceId: "w2" });
+
+    await waitFor(() => expect(listProjects).toHaveBeenLastCalledWith("w2"));
+    await waitFor(() => {
+      expect(result.current.projects).toEqual([]);
+      expect(result.current.active).toBeNull();
+      expect(result.current.projectsLoading).toBe(false);
+    });
+    expect(result.current.projectsError).toBeNull();
+  });
+
+  it("does not restore a prior workspace project when its stale listing resolves", async () => {
+    const client = new ServerApiClient();
+    let resolveOld!: (projects: ServerProject[]) => void;
+    vi.spyOn(client, "listProjects").mockImplementation((workspaceId) =>
+      workspaceId === "w1"
+        ? new Promise((resolve) => { resolveOld = resolve; })
+        : Promise.resolve([]),
+    );
+    const { result, rerender } = renderHook(
+      ({ workspaceId }: { workspaceId: string }) =>
+        useServerWorkspaces(client, signedIn, workspaceId),
+      { initialProps: { workspaceId: "w1" } },
+    );
+    await waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+
+    rerender({ workspaceId: "w2" });
+    await waitFor(() => expect(result.current.projectsLoading).toBe(false));
+    await act(async () => { resolveOld([PROJECT]); });
+
+    expect(result.current.projects).toEqual([]);
+    expect(result.current.active).toBeNull();
+    expect(result.current.projectsError).toBeNull();
   });
 
   it.each(["newer-first", "older-first"] as const)(

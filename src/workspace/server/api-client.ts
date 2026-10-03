@@ -85,6 +85,20 @@ export interface ServerWorkspaceMember {
   createdAt: string;
 }
 
+export interface WorkspaceInvitationPreview {
+  workspaceName: string;
+  role: ServerWorkspaceRole;
+  inviterName: string;
+  expiresAt: string;
+}
+
+export interface ServerWorkspaceInvitation extends WorkspaceInvitationPreview {
+  id: string;
+  workspaceId: string;
+  state: "ACTIVE" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  createdAt: string;
+}
+
 /** The type a server resource can carry. */
 export type ServerResourceType =
   "sequence-diagram" | "event-flow" | "markdown-document";
@@ -500,6 +514,27 @@ export class ServerApiClient {
       "DELETE",
       `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
     );
+  }
+
+  async createWorkspaceInvitation(workspaceId: string, role: ServerWorkspaceRole): Promise<{ token: string; invitation: ServerWorkspaceInvitation }> {
+    return this.request("POST", `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`, { role });
+  }
+
+  async listWorkspaceInvitations(workspaceId: string): Promise<ServerWorkspaceInvitation[]> {
+    const body = await this.request<{ invitations: ServerWorkspaceInvitation[] }>("GET", `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
+    return body.invitations ?? [];
+  }
+
+  async revokeWorkspaceInvitation(workspaceId: string, invitationId: string): Promise<void> {
+    await this.request("DELETE", `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`);
+  }
+
+  async inspectWorkspaceInvitation(token: string): Promise<WorkspaceInvitationPreview> {
+    return this.request("POST", "/api/invitations/inspect", { token });
+  }
+
+  async acceptWorkspaceInvitation(token: string): Promise<{ workspaceId: string; role: ServerWorkspaceRole }> {
+    return this.request("POST", "/api/invitations/accept", { token });
   }
 
   /** Every project the caller can access in one workspace. */

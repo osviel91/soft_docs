@@ -116,6 +116,10 @@ act as PAT/MCP credentials. Invitation inspection is a minimal public preview;
 acceptance requires an active browser session. The resulting workspace role is
 not a project role, and existing project/workspace authorization gates remain in
 force. Revocation, acceptance, and membership creation are audited atomically.
+The `/invite/<token>` route uses only that preview until an authenticated user
+explicitly accepts; it does not load project data first. OIDC returns to the same
+route through the existing short-lived signed login-state cookie. Local registration
+continues to require the platform's ordinary account approval before sign-in.
 
 SHARED semantic identities are currently authoritative in the project manifest
 (`project.json`). Resource source carries stable `messageRef` values; the parser,

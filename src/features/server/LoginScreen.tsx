@@ -1,19 +1,17 @@
 import { useState, type FormEvent } from "react";
 import type { AuthHook } from "./use-auth";
 
-type LoginMethod = "password" | "invite";
-
 interface LoginScreenProps {
   auth: AuthHook;
+  invitationMode?: boolean;
 }
 
-export default function LoginScreen({ auth }: LoginScreenProps) {
-  const [method, setMethod] = useState<LoginMethod>("password");
+export default function LoginScreen({ auth, invitationMode = false }: LoginScreenProps) {
+  const Container = invitationMode ? "div" : "main";
   const [localMode, setLocalMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -40,7 +38,7 @@ export default function LoginScreen({ auth }: LoginScreenProps) {
   };
 
   return (
-    <main className="login-page" data-testid="login-page">
+    <Container className={`login-page${invitationMode ? " login-page--embedded" : ""}`} data-testid="login-page">
       <section className="login-card" aria-labelledby="login-title">
         <div className="login-card__brand">
           <span className="app__brand-mark" aria-hidden="true">
@@ -48,8 +46,8 @@ export default function LoginScreen({ auth }: LoginScreenProps) {
           </span>
           <span>Software Docs Manager</span>
         </div>
-        <p className="login-card__eyebrow">Workspace platform</p>
-        <h1 id="login-title">Sign in to continue</h1>
+        {!invitationMode && <p className="login-card__eyebrow">Workspace platform</p>}
+        <h2 id="login-title">{invitationMode ? "Sign in or create an account" : "Sign in to continue"}</h2>
         <p className="login-card__lead">
           Choose how you want to access your workspaces and projects.
         </p>
@@ -64,36 +62,8 @@ export default function LoginScreen({ auth }: LoginScreenProps) {
             </p>
           )}
 
-        <div className="login-methods" role="tablist" aria-label="Sign-in method">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={method === "password"}
-            className={method === "password" ? "login-method--active" : ""}
-            onClick={() => {
-              setMethod("password");
-              setError(null);
-              setMessage(null);
-            }}
-          >
-            Email & password
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={method === "invite"}
-            className={method === "invite" ? "login-method--active" : ""}
-            onClick={() => {
-              setMethod("invite");
-              setError(null);
-              setMessage(null);
-            }}
-          >
-            Invitation code
-          </button>
-        </div>
+        <p className="login-card__eyebrow">Email &amp; password</p>
 
-        {method === "password" ? (
           <form className="login-form" onSubmit={submitPassword}>
             {localMode === "register" && (
               <label>
@@ -144,34 +114,6 @@ export default function LoginScreen({ auth }: LoginScreenProps) {
               {localMode === "login" ? "Create a local account" : "Use an existing account"}
             </button>
           </form>
-        ) : (
-          <form
-            className="login-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setError(null);
-              setMessage(
-                inviteCode.trim() === ""
-                  ? "Enter an invitation code."
-                  : "Invitation acceptance is not available yet.",
-              );
-            }}
-          >
-            <label>
-              Invitation code
-              <input
-                data-testid="login-invitation-code"
-                value={inviteCode}
-                onChange={(event) => setInviteCode(event.target.value)}
-                autoComplete="one-time-code"
-                placeholder="Paste your code"
-              />
-            </label>
-            <button type="submit" className="button login-form__submit">
-              Continue with code
-            </button>
-          </form>
-        )}
 
         <div className="login-divider"><span>or</span></div>
         <button
@@ -186,6 +128,6 @@ export default function LoginScreen({ auth }: LoginScreenProps) {
         {error && <p className="login-card__error" data-testid="login-error">{error}</p>}
         {message && <p className="login-card__message" data-testid="login-message">{message}</p>}
       </section>
-    </main>
+    </Container>
   );
 }

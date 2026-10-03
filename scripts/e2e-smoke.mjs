@@ -39,6 +39,7 @@ const PORT = Number(process.env.E2E_PORT ?? 4173);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const READY_TIMEOUT_MS = 30_000;
 const UI_TIMEOUT_MS = 10_000;
+let e2ePlatformAdminPage = null;
 
 /**
  * The API ports.
@@ -231,6 +232,7 @@ async function startApiServer({
     PROJECT_VOLUME: projectVolume,
     PGLITE_DIR: "memory://",
     COOKIE_SECRET,
+    PLATFORM_ADMIN_EMAIL: "platform-admin@e2e.test",
     OIDC_ISSUER: issuer,
     OIDC_CLIENT_ID: clientId,
     OIDC_CLIENT_SECRET: clientSecret,
@@ -564,7 +566,7 @@ async function bootstrapSharedProject(page, name, content) {
     }),
   });
   if (created.status !== 201) {
-    throw new Error(`shared project bootstrap failed: ${created.status}`);
+    throw new Error(`shared project bootstrap failed: ${created.status} ${created.text}; workspace=${workspace.name} (${workspace.id})`);
   }
 }
 
@@ -658,6 +660,22 @@ async function signIn(page, idp, subject) {
     .first();
   await button.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
   await button.click();
+  await page.waitForFunction(
+    () => Boolean(document.querySelector('[data-testid="toolbar-account"]')) || new URLSearchParams(location.search).get("auth") === "failed",
+    { timeout: UI_TIMEOUT_MS },
+  );
+  if (new URL(page.url()).searchParams.get("auth") === "failed" && e2ePlatformAdminPage && subject.email) {
+    const listed = await apiRequest(e2ePlatformAdminPage, "/api/admin/users");
+    const user = listed.json?.users?.find((entry) => entry.email === subject.email);
+    if (!user) throw new Error(`platform admin could not find pending OIDC user ${subject.email}`);
+    const activated = await apiRequest(e2ePlatformAdminPage, `/api/admin/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "ACTIVE" }),
+    });
+    if (activated.status !== 200) throw new Error(`platform admin could not activate ${subject.email}: ${activated.status}`);
+    await setNextIdentity(idp, subject);
+    await page.locator('[data-testid="login-google"], [data-testid="toolbar-sign-in"]').first().click();
+  }
   await page.locator('[data-testid="toolbar-account"]').waitFor({
     state: "visible",
     timeout: UI_TIMEOUT_MS,
@@ -680,6 +698,13 @@ async function waitForAuthEntry(page) {
 
 /** Create a server project and wait for the Project Explorer to open it. */
 async function createServerProject(page, name) {
+  let projectCreateFailure = null;
+  const captureFailure = async (response) => {
+    if (new URL(response.url()).pathname === "/api/projects" && response.status() >= 400) {
+      projectCreateFailure = `${response.status()} ${await response.text()}`;
+    }
+  };
+  page.on("response", captureFailure);
   await openServerCreation(page);
   await page
     .locator('[data-testid="workspace-new-server-project-input"]')
@@ -690,7 +715,12 @@ async function createServerProject(page, name) {
   await page
     .locator('[data-testid="workspace-active-project"]')
     .filter({ hasText: name })
-    .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+    .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS })
+    .catch(async (error) => {
+      const selectedWorkspace = await page.locator('[data-testid="workspace-server-workspace-select"]').inputValue().catch(() => "unavailable");
+      throw new Error(`${error.message}; selected workspace=${selectedWorkspace}; create response=${projectCreateFailure ?? "none"}`);
+    });
+  page.off("response", captureFailure);
 }
 
 /** Open the compact server-project creation form. */
@@ -2144,11 +2174,122 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     name: "E2E Owner",
     email: "owner@e2e.test",
   };
+  const platformAdmin = {
+    sub: "e2e-platform-admin",
+    name: "E2E Platform Admin",
+    email: "platform-admin@e2e.test",
+  };
   const viewer = {
     sub: "e2e-viewer",
     name: "E2E Viewer",
     email: "viewer@e2e.test",
   };
+
+  await scenario("Workspace invitations preserve authentication and membership boundaries", async () => {
+    const ownerContext = await browser.newContext();
+    const adminContext = await browser.newContext();
+    const recipientContext = await browser.newContext();
+    const ownerPage = await ownerContext.newPage();
+    const adminPage = await adminContext.newPage();
+    const recipientPage = await recipientContext.newPage();
+    const invitationWorkspaceIds = [];
+    try {
+      await ownerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(ownerPage);
+      await signIn(ownerPage, idp, owner);
+      await adminPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(adminPage);
+      await signIn(adminPage, idp, platformAdmin);
+      const protectedWorkspace = await apiRequest(ownerPage, "/api/workspaces", {
+        method: "POST", body: JSON.stringify({ name: "Protected Project Workspace" }),
+      });
+      invitationWorkspaceIds.push(protectedWorkspace.json.workspace.id);
+      const projectResponse = await apiRequest(ownerPage, "/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "Invite Boundary Project", workspaceId: protectedWorkspace.json.workspace.id }),
+      });
+      check("created a protected project for pre-acceptance access checks", projectResponse.status === 201, `${projectResponse.status} ${projectResponse.text}`);
+      const ownedProject = projectResponse.json.project;
+      const createInvitation = async (name, email) => {
+        const workspaceResponse = await apiRequest(ownerPage, "/api/workspaces", {
+          method: "POST", body: JSON.stringify({ name }),
+        });
+        check(`created invitation workspace ${name}`, workspaceResponse.status === 201);
+        const workspaceId = workspaceResponse.json.workspace.id;
+        invitationWorkspaceIds.push(workspaceId);
+        const invitationResponse = await apiRequest(ownerPage, `/api/workspaces/${workspaceId}/invitations`, {
+          method: "POST", body: JSON.stringify({ role: "VIEWER" }),
+        });
+        check(`created a VIEWER invitation for ${email}`, invitationResponse.status === 201);
+        return { workspaceId, token: invitationResponse.json.token };
+      };
+
+      const oidcInvitation = await createInvitation("OIDC Invite Workspace", viewer.email);
+      await recipientPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(recipientPage);
+      await setNextIdentity(idp, viewer);
+      await recipientPage.getByTestId("login-google").click();
+      await recipientPage.waitForURL(url => url.pathname === "/", { timeout: UI_TIMEOUT_MS });
+      const invitedOidcUser = (await apiRequest(adminPage, "/api/admin/users")).json.users.find(user => user.email === viewer.email);
+      check("OIDC recipient follows the existing account approval policy", Boolean(invitedOidcUser));
+      const activated = await apiRequest(adminPage, `/api/admin/users/${invitedOidcUser.id}`, {
+        method: "PATCH", body: JSON.stringify({ status: "ACTIVE" }),
+      });
+      check("platform approval activates the existing OIDC account", activated.status === 200);
+      await recipientPage.context().clearCookies();
+      await recipientPage.goto(`${BASE_URL}/invite/${oidcInvitation.token}`, { waitUntil: "domcontentloaded" });
+      await recipientPage.getByRole("heading", { name: "Join a workspace" }).waitFor({ timeout: UI_TIMEOUT_MS });
+      check("invite route renders the focused landing without the full application", await recipientPage.locator('[data-testid="app-shell"]').count() === 0);
+      check("invite preview identifies workspace and role", (await recipientPage.locator('[data-testid="invitation-page"]').textContent()).includes("OIDC Invite Workspace") && (await recipientPage.locator('[data-testid="invitation-page"]').textContent()).includes("VIEWER"));
+      await setNextIdentity(idp, viewer);
+      await recipientPage.getByTestId("login-google").click();
+      await recipientPage.getByRole("button", { name: "Accept invitation" }).waitFor({ timeout: UI_TIMEOUT_MS });
+      check("OIDC returns to the same invitation route", new URL(recipientPage.url()).pathname === `/invite/${oidcInvitation.token}`);
+      const beforeAccept = await apiRequest(recipientPage, `/api/projects/${ownedProject.id}`);
+      check("invitee cannot read an existing project before acceptance", beforeAccept.status === 404);
+      await recipientPage.getByRole("button", { name: "Accept invitation" }).click();
+      await recipientPage.locator('[data-testid="app-shell"]').waitFor({ timeout: UI_TIMEOUT_MS });
+      await recipientPage.locator('[data-testid="workspace-server-projects-empty"]').waitFor({ timeout: UI_TIMEOUT_MS });
+      check("invited workspace is selected and honestly shows no projects", await recipientPage.locator('[data-testid="workspace-server-workspace-select"]').inputValue() === oidcInvitation.workspaceId);
+      const joinedProjects = await apiRequest(recipientPage, `/api/projects?workspaceId=${oidcInvitation.workspaceId}`);
+      check("accepted workspace membership grants zero implicit project access", joinedProjects.status === 200 && joinedProjects.json.projects.length === 0);
+      const reused = await apiRequest(recipientPage, "/api/invitations/accept", { method: "POST", body: JSON.stringify({ token: oidcInvitation.token }) });
+      check("invitation is single use", reused.status === 404);
+
+      const localInvitation = await createInvitation("Local Invite Workspace", "invitee@e2e.test");
+      await recipientPage.context().clearCookies();
+      await recipientPage.goto(`${BASE_URL}/invite/${localInvitation.token}`, { waitUntil: "domcontentloaded" });
+      await recipientPage.getByRole("button", { name: "Create a local account" }).click();
+      await recipientPage.getByTestId("login-display-name").fill("Local Invitee");
+      await recipientPage.getByTestId("login-email").fill("invitee@e2e.test");
+      await recipientPage.getByTestId("login-password").fill("Correct-Horse-Battery-9!");
+      await recipientPage.getByRole("button", { name: "Create account" }).click();
+      await recipientPage.getByTestId("login-message").waitFor({ timeout: UI_TIMEOUT_MS });
+      check("registration uses the existing pending-approval workflow", (await recipientPage.getByTestId("login-message").textContent()).toLowerCase().includes("approval"));
+      const users = await apiRequest(adminPage, "/api/admin/users");
+      const localUser = users.json.users.find(user => user.email === "invitee@e2e.test");
+      check("platform admin can find the registered invitee", Boolean(localUser));
+      const approval = await apiRequest(adminPage, `/api/admin/users/${localUser.id}`, { method: "PATCH", body: JSON.stringify({ status: "ACTIVE" }) });
+      check("existing account approval activates invitee", approval.status === 200);
+      await recipientPage.getByRole("button", { name: "Use an existing account" }).click();
+      await recipientPage.getByTestId("login-email").fill("invitee@e2e.test");
+      await recipientPage.getByTestId("login-password").fill("Correct-Horse-Battery-9!");
+      await recipientPage.getByRole("button", { name: "Sign in", exact: true }).click();
+      await recipientPage.getByRole("button", { name: "Accept invitation" }).waitFor({ timeout: UI_TIMEOUT_MS });
+      await recipientPage.getByRole("button", { name: "Accept invitation" }).click();
+      await recipientPage.locator('[data-testid="app-shell"]').waitFor({ timeout: UI_TIMEOUT_MS });
+      await recipientPage.locator('[data-testid="workspace-server-projects-empty"]').waitFor({ timeout: UI_TIMEOUT_MS });
+      const localProjects = await apiRequest(recipientPage, `/api/projects?workspaceId=${localInvitation.workspaceId}`);
+      check("local registration continuation accepts into a zero-project workspace", localProjects.status === 200 && localProjects.json.projects.length === 0);
+    } finally {
+      for (const workspaceId of invitationWorkspaceIds) {
+        await apiRequest(ownerPage, `/api/workspaces/${workspaceId}`, { method: "DELETE" });
+      }
+      await ownerContext.close();
+      await adminContext.close();
+      await recipientContext.close();
+    }
+  });
 
   if (process.env.E2E_SCENARIO !== "governed-proposal") {
   await scenario(
@@ -3366,6 +3507,7 @@ async function main() {
   let mcp;
   let server;
   let browser;
+  let platformAdminContext;
   try {
     api = await startApiServer({
       port: apiPort,
@@ -3384,6 +3526,17 @@ async function main() {
     });
     server = await startPreviewServer();
     browser = await chromium.launch();
+    platformAdminContext = await browser.newContext();
+    e2ePlatformAdminPage = await platformAdminContext.newPage();
+    await e2ePlatformAdminPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+    await waitForAuthEntry(e2ePlatformAdminPage);
+    await setNextIdentity(idp, {
+      sub: "e2e-platform-admin",
+      name: "E2E Platform Admin",
+      email: "platform-admin@e2e.test",
+    });
+    await e2ePlatformAdminPage.getByTestId("login-google").click();
+    await e2ePlatformAdminPage.locator('[data-testid="toolbar-account"]').waitFor({ timeout: UI_TIMEOUT_MS });
     // The existing checks run in a window tall enough that the whole explorer
     // tree is visible without scrolling; see `runChecks` for why that matters.
     const checksContext = await browser.newContext({
@@ -3397,6 +3550,8 @@ async function main() {
     await runServerChecks(browser, idp, `http://127.0.0.1:${apiPort}`, mcp.mcpBase);
   } finally {
     await browser?.close().catch(() => {});
+    e2ePlatformAdminPage = null;
+    await platformAdminContext?.close().catch(() => {});
     server?.kill("SIGTERM");
     await mcp?.close().catch(() => {});
     await api?.close().catch(() => {});
