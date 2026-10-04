@@ -51,8 +51,8 @@ import {
 import { noteTitle } from "../../language/markdown/note-title";
 import { semanticMessagesOf } from "../diagram/semantic-messages";
 import { projectEventFlowToCausalView } from "../eventflow/causal-projection";
-import { parseConceptual } from "../../language/conceptual/parser";
-import { parseDatabase } from "../../language/database/parser";
+import { parseConceptual } from "../../language/conceptual/analyze";
+import { parseDatabase } from "../../language/database/analyze";
 
 /** A salt so a change to the analysis rules invalidates cached fingerprints. */
 const ANALYSIS_VERSION = "1";

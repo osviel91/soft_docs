@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseConceptual } from "../../../src/language/conceptual/parser";
+import { parseConceptual } from "../../../src/language/conceptual/analyze";
+import { parseConceptualSyntax } from "../../../src/language/conceptual/parser";
 
 describe("Conceptual DSL", () => {
   it("constructs distinct semantic identities, descriptions, and directions", () => {
@@ -24,5 +25,12 @@ relation also_places buyer -> order "also places"
     expect(first.map(({ code }) => code)).toContain("conceptual.unknown-target");
     expect(first).toEqual(parseConceptual(source).diagnostics);
     expect(first.find(({ code }) => String(code) === "conceptual.unknown-target")?.range?.start.line).toBe(2);
+  });
+
+  it("parses syntax separately from semantics and retains declaration spans", () => {
+    const parsed = parseConceptualSyntax('concept customer "Customer"\nrelation owns customer -> customer "owns"\n');
+    expect(parsed.ast.declarations.map(({ kind }) => kind)).toEqual(["concept", "relation"]);
+    expect(parsed.ast.declarations[1].range.start.line).toBe(1);
+    expect(parsed).not.toHaveProperty("model");
   });
 });

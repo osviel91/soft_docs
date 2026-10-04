@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseDatabase } from "../../../src/language/database/parser";
+import { parseDatabase } from "../../../src/language/database/analyze";
+import { parseDatabaseSyntax } from "../../../src/language/database/parser";
 
 describe("Database DSL", () => {
   it("preserves opaque types/defaults, optional column IDs, ordered keys and namespaces", () => {
@@ -19,5 +20,12 @@ describe("Database DSL", () => {
     expect(first.map(({ code }) => code)).toEqual(parseDatabase(source).diagnostics.map(({ code }) => code));
     expect(first.map(({ code }) => code)).toEqual(expect.arrayContaining(["database.unknown-column", "database.unknown-table", "database.fk-arity"]));
     expect(first.every(({ range }) => range !== undefined)).toBe(true);
+  });
+
+  it("parses syntax separately and preserves declaration spans", () => {
+    const parsed = parseDatabaseSyntax('table ledger - "ledger"\ncolumn ledger column_id "id" {uuid} not-null\n');
+    expect(parsed.ast.declarations.map(({ kind }) => kind)).toEqual(["table", "column"]);
+    expect(parsed.ast.declarations[1].range.start.line).toBe(1);
+    expect(parsed).not.toHaveProperty("model");
   });
 });

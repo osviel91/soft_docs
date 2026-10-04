@@ -1,7 +1,7 @@
 import { analyze } from "../../language/analyze";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
-import { parseConceptual } from "../../language/conceptual/parser";
-import { parseDatabase } from "../../language/database/parser";
+import { parseConceptual } from "../../language/conceptual/analyze";
+import { parseDatabase } from "../../language/database/analyze";
 import { eventsOf, type EventFlow } from "../eventflow/ast";
 import { resourceRepresentationOfType } from "../workspace/resource-id";
 import {

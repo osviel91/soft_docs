@@ -101,6 +101,42 @@ async function violations(
 }
 
 describe("dependency rule (ADR-039)", () => {
+  it("keeps artifact syntax, builders, models, and parsing free of host/rendering dependencies", async () => {
+    const modules = [
+      "src/domain/conceptual/model.ts",
+      "src/domain/database/model.ts",
+      "src/language/conceptual/parser.ts",
+      "src/language/conceptual/semantic-builder.ts",
+      "src/language/conceptual/analyze.ts",
+      "src/language/database/parser.ts",
+      "src/language/database/semantic-builder.ts",
+      "src/language/database/analyze.ts",
+    ];
+    const imports = new Map<string, string[]>();
+    for (const relative of modules) {
+      imports.set(relative, importsOf(await readFile(path.join(ROOT, relative), "utf8")));
+    }
+    for (const model of ["src/domain/conceptual/model.ts", "src/domain/database/model.ts"]) {
+      expect(imports.get(model)?.some((specifier) => /language|parser|syntax/.test(specifier))).toBe(false);
+    }
+    for (const module of modules.filter((file) => file.startsWith("src/language/"))) {
+      expect(imports.get(module)?.some((specifier) => /renderer|features|application|persistence|governance|mcp|apps\//.test(specifier))).toBe(false);
+    }
+    for (const parser of ["src/language/conceptual/parser.ts", "src/language/database/parser.ts"]) {
+      expect(imports.get(parser)?.some((specifier) => /semantic-builder|domain\/(conceptual|database)\/validate/.test(specifier))).toBe(false);
+    }
+    for (const [parser, syntax] of [
+      ["src/language/conceptual/parser.ts", "./syntax"],
+      ["src/language/database/parser.ts", "./syntax"],
+    ]) {
+      expect(imports.get(parser)).toContain(syntax);
+    }
+    for (const builder of ["src/language/conceptual/semantic-builder.ts", "src/language/database/semantic-builder.ts"]) {
+      expect(imports.get(builder)?.some((specifier) => specifier === "./syntax")).toBe(true);
+      expect(imports.get(builder)?.some((specifier) => /\/model/.test(specifier))).toBe(true);
+    }
+  });
+
   it("keeps the new semantic cores separate from each other and visualization", async () => {
     const conceptual = await readFile(path.join(ROOT, "src/domain/conceptual/model.ts"), "utf8");
     const database = await readFile(path.join(ROOT, "src/domain/database/model.ts"), "utf8");

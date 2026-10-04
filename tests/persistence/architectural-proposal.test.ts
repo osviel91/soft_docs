@@ -23,6 +23,8 @@ import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
 import type { SqlClient } from "../../src/persistence/sql-client";
 import type { ServerProject } from "../../src/domain/project/server-project";
+import { parseConceptual } from "../../src/language/conceptual/analyze";
+import { parseDatabase } from "../../src/language/database/analyze";
 
 let client: SqlClient;
 let volume: string;
@@ -107,6 +109,58 @@ it("submits a selective immutable snapshot without allowing direct SHARED edits"
   expect(stale.staleBase).toBe(false);
   expect(stale.baseSharedRevision).toBe(stale.currentSharedRevision);
   await expect(catalog.deletePrivateWorkContext(contextFor(owner), project.id, work.id)).rejects.toMatchObject({ code: "invalid" });
+});
+
+it("governs Conceptual source through independent MY WORK, review, and explicit promotion", async () => {
+  const owner = await user("conceptual-lifecycle-owner");
+  const reviewer = await user("conceptual-lifecycle-reviewer");
+  const base = 'concept customer "Customer"\n';
+  const proposed = 'concept customer "Account Holder"\n';
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Conceptual lifecycle", resources: [{ path: "customers.concept", type: "conceptual", content: base }] });
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const [shared] = await catalog.listResources(contextFor(owner), project.id);
+  if (!shared) throw new Error("Bootstrap did not create the Conceptual resource.");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "conceptual-edit" });
+  const privateResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: shared.path, type: "conceptual", content: proposed });
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ content: base });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [privateResource.id], title: "Rename concept" });
+  expect(proposal.baseSharedRevision).toContain(shared.id);
+  expect(proposal.resources[0]).toMatchObject({ baseResourceId: shared.id, baseRevision: shared.revision, content: proposed });
+  await catalog.updateResource(contextFor(owner), project.id, privateResource.id, { contextId: work.id, content: 'concept customer "Buyer"\n', expectedRevision: privateResource.revision });
+  expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.content).toBe(proposed);
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  expect((await service.reviews(contextFor(owner), project.id, proposal.id)).status).toBe("approved");
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ content: base, resource: { revision: shared.revision } });
+  await promotionService.execute(contextFor(owner), project.id, proposal.id, "conceptual-lifecycle-promotion");
+  const promoted = await catalog.readResource(contextFor(owner), project.id, shared.id);
+  expect(promoted.content).toBe(proposed);
+  expect(parseConceptual(promoted.content).model?.concepts).toEqual([{ id: "customer", name: "Account Holder" }]);
+});
+
+it("governs Database source through independent MY WORK, review, and explicit promotion", async () => {
+  const owner = await user("database-lifecycle-owner");
+  const reviewer = await user("database-lifecycle-reviewer");
+  const base = 'table ledger - "ledger"\ncolumn ledger ledger_id "id" {uuid} not-null\nprimary-key ledger_pk ledger (id)\n';
+  const proposed = 'table ledger - "ledger"\ncolumn ledger ledger_id "record_id" {uuid} not-null\nprimary-key ledger_pk ledger (record_id)\n';
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Database lifecycle", resources: [{ path: "ledger.dbschema", type: "database", content: base }] });
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const [shared] = await catalog.listResources(contextFor(owner), project.id);
+  if (!shared) throw new Error("Bootstrap did not create the Database resource.");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "database-edit" });
+  const privateResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: shared.path, type: "database", content: proposed });
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ content: base });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [privateResource.id], title: "Rename stable column" });
+  expect(proposal.baseSharedRevision).toContain(shared.id);
+  expect(proposal.resources[0]).toMatchObject({ baseResourceId: shared.id, baseRevision: shared.revision, content: proposed });
+  await catalog.updateResource(contextFor(owner), project.id, privateResource.id, { contextId: work.id, content: base, expectedRevision: privateResource.revision });
+  expect((await service.get(contextFor(owner), project.id, proposal.id)).resources[0]?.content).toBe(proposed);
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  expect((await service.reviews(contextFor(owner), project.id, proposal.id)).status).toBe("approved");
+  await expect(catalog.readResource(contextFor(owner), project.id, shared.id)).resolves.toMatchObject({ content: base, resource: { revision: shared.revision } });
+  await promotionService.execute(contextFor(owner), project.id, proposal.id, "database-lifecycle-promotion");
+  const promoted = await catalog.readResource(contextFor(owner), project.id, shared.id);
+  expect(promoted.content).toBe(proposed);
+  expect(parseDatabase(promoted.content).model?.tables[0].columns[0]).toMatchObject({ id: "ledger_id", name: "record_id" });
 });
 
 it("does not expose a private proposal to another project member", async () => {
