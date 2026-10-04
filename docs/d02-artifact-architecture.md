@@ -1,6 +1,6 @@
 # D02 — Conceptual and Database Artifact Architecture
 
-**Status:** discovery recommendation; not implemented
+**Status:** architecture approved by D02; semantic/source decisions resolved in [D02.1](d02-1-semantic-contract.md); no artifact support implemented
 **Scope:** semantic models, extension boundaries, graphical infrastructure, and lifecycle integration for future Conceptual and Database resources.
 
 This document is based on the repository at `1f879c050c50da1b0fee34dcc7a17fb2089381b3` (`origin/master` matched); the starting worktree was clean. No production artifact support is introduced here. The normative representation and evidence rules remain in [`documentation-model.md`](documentation-model.md); this document narrows the architecture needed to implement its future Conceptual and Database contracts.
@@ -157,7 +157,7 @@ Database Diagrams model persistence structure, not business-domain meaning and n
 | Primary key | MUST | Single/composite columns with named or anonymous constraint identity. |
 | Foreign key | MUST | Explicit source table/columns and target table/columns; composite mappings supported. |
 | Unique constraint | SHOULD | Common integrity and cardinality evidence; distinct from index. |
-| Index | LATER | Important, but expanding V1 adds vendor-specific method/include/partial semantics. Reserve compatible source-neutral extension; do not interpret omitted indexes as none. |
+| Index | SHOULD in V1 (resolved by D02.1) | Model as a typed schema fact distinct from unique constraints; defer vendor-specific method/include/partial options. Omission is not absence. |
 | Check constraint | LATER | Expression semantics and dialect differences; preserve unknown expression only when explicitly represented later. |
 | Generated column | LATER | Vendor and expression semantics; do not conflate with default. |
 | View | LATER | Useful but requires query/source dependencies and distinct update semantics. |
@@ -175,7 +175,7 @@ FK target uniqueness gives a safe **maximum** cardinality at the referenced side
 
 ### 5.4 Database identity
 
-Use stable authored local IDs for table, column, and foreign key, independent of display names. Table key remains stable across rename and schema movement; column identity remains stable through rename; FK identity persists while its source/target mapping is edited. Database and schema similarly use explicit stable IDs where declared. Name/path composite can be a display/lookup key and fallback for imported legacy input, not semantic identity. IDs enable rename/change diff; without identity evidence, use conservative add/remove. Future DDL import can retain discovered database object identities where the source supports them and otherwise report uncertain matching rather than claim continuity.
+Use stable authored local IDs for table and foreign key, independent of display names. Table key remains stable across rename and schema movement; FK identity persists while its source/target mapping is edited. Column ID is optional: use it to retain continuity across a column rename; absent one, `(tableId, exact column name)` is identity and rename is conservatively remove/add. Database and explicitly declared schema similarly use stable local IDs. Name/path composite is a display/lookup key, not cross-resource semantic identity. Future importers report uncertain matches rather than claiming continuity without identity evidence.
 
 ## 6. Analysis, index and cross-artifact relations
 
@@ -244,7 +244,7 @@ Use stable source order/identity as tie-breakers. Layout should minimize churn u
 
 ## 9. Source authoring and manual layout
 
-Do not finalize grammar in D02. Prefer a repository-consistent, structured line/block DSL with explicit stable IDs, simple references, source ranges, actionable diagnostics, and round-trip-safe local edits. Consider YAML only if ordered human/agent edits, references, and comments can be preserved without lossy rewrites; Mermaid-like syntax is familiar but often couples visual notation to semantics and offers weak identity/validation. Conceptual free labels and Database typed fields should be explicit. Database should not be SQL-only in V1; future DDL ingestion should map to the same semantic model with source provenance and unknown boundaries.
+The D02.1 spike recommends a dedicated declarative line/block DSL with explicit stable IDs, simple references, source ranges, actionable diagnostics, and local edits. Structured YAML was evaluated with equivalent realistic fixtures; its generic parse/stringify path risks comments/order round-trip and adds structural noise. See [the D02.1 decision and comparison](d02-1-semantic-contract.md). Mermaid-like syntax remains unsuitable as canonical source because it couples visual notation to semantics and offers weak identity/validation. Conceptual free labels and Database typed fields remain explicit. Database is not SQL-only; future DDL ingestion maps to the same semantic model with source provenance and unknown boundaries.
 
 AI/MCP authoring is a first-class criterion: schemas and capability metadata should explain required declarations, identity, allowed structures, validation and supported renderer. An agent should be able to update one entity without rewriting the whole resource and should receive line/column-specific diagnostics. Keep MCP and human authoring on one canonical syntax/model.
 
@@ -362,7 +362,7 @@ MCP agents should discover supported representation schema/capabilities, read/ed
 
 Recommended sequence is gated by usable vertical slices rather than a generic diagram foundation:
 
-1. **D02.1 — representation extension audit/contract.** Confirm resource-type and extension contract, persistence compatibility, analyzer/index output shapes, public projection and renderer capability dispatch. Add only registries/extension seams shown necessary by both implementation plans.
+1. **D02.1 — semantic contract and authoring spike.** Completed in `docs/d02-1-semantic-contract.md`; contracts, identity rules, source-format recommendation and extensions are resolved. No implementation or production registration was introduced.
 2. **D02.2 — Conceptual source/model/validation.** Dedicated grammar and semantic model, stable local identity, structured diagnostics, fixtures and MCP schema discovery. No layout dependency needed yet.
 3. **D02.3 — Conceptual analysis/index + basic deterministic projection/render.** Typed index entries, source-addressable SVG, accessible textual catalog, viewport and SHARED/MY WORK lifecycle integration. Keep cross-artifact bindings out.
 4. **D02.4 — Conceptual semantic diff and proposal review.** Entity-level changes and decorations; proposal base/snapshot unchanged.
@@ -377,12 +377,7 @@ Each phase should add parser/validation/domain and relevant host coverage in the
 
 ### Blocking before implementation
 
-1. Confirm Conceptual relationship structure: required direction field plus free authored label is recommended; is any controlled category required at launch?
-2. Confirm Concept identity is resource-local in V1 with no cross-resource identity editing; this is the conservative recommendation.
-3. Confirm Database V1 is authored schema subset (table/column/PK/FK, with unique constraint decision) rather than DDL import. Recommendation: yes.
-4. Select source syntax after a small authoring spike that tests stable IDs, comments, local edits, diagnostics, and lossless round-trip for both models.
-5. Decide whether initial Database version exposes schema/database containers or treats them as optional scope; recommended optional/implicit.
-6. Define resource extensions/API spellings alongside local/server storage compatibility; candidates `.concept` and `.dbschema` are not selected here.
+Resolved by D02.1: Conceptual directions are directed/undirected with open labels and resource-local IDs; cross-resource identity remains explicit-only; Database is schema-native with optional schema, stable table/FK IDs and optional stable column IDs; source direction is dedicated DSL; types are opaque; `.concept` and `.dbschema` are recommended extensions and `conceptual`/`database` resource types. Indexes are SHOULD in V1, while completeness metadata is deferred. Full decisions and validation rules are in [D02.1](d02-1-semantic-contract.md).
 
 ### Can defer
 
@@ -436,4 +431,4 @@ This recommendation does not define a UniversalDiagramAST, platform-wide semanti
 
 ## 19. Verification and repository outcome
 
-This is a documentation-only discovery deliverable. Verification required: `git diff --check`. No implementation, tests, migrations, persistence changes, APIs, MCP tools, parsers, renderers, or artifact types were added. The starting worktree was clean; `HEAD` and `origin/master` were both `1f879c050c50da1b0fee34dcc7a17fb2089381b3`. No commit or push is part of this discovery handoff; review the document and resolve blocking questions before implementation.
+The original D02 discovery was a documentation-only deliverable from clean baseline `1f879c050c50da1b0fee34dcc7a17fb2089381b3`, separately committed as `180893b208d3f35691d9b32e661945ecf3d867c9`. D02.1 decisions and verification outcome are recorded in [the focused contract](d02-1-semantic-contract.md). No production implementation is part of either architecture decision phase.
