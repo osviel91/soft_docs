@@ -776,19 +776,19 @@ export default function App() {
   const { diagrams: sharedDiagrams, notes: sharedNotes } = sharedWorkspace;
 
   const loadSharedDiagram = useCallback((diagram: DiagramFile): void => {
-    if (server.active?.contextId !== null && server.active) {
+    if (server.active?.contextId === null || !server.active) {
+      loadDiagram(diagram);
+    } else {
       void server.openProject(server.active.project).then(() => sharedWorkspace.loadDiagram(diagram));
-    } else {
-      sharedWorkspace.loadDiagram(diagram);
     }
-  }, [server.active, server.openProject, sharedWorkspace.loadDiagram]);
+  }, [loadDiagram, server.active, server.openProject, sharedWorkspace.loadDiagram]);
   const loadSharedNote = useCallback((note: NoteFile): void => {
-    if (server.active?.contextId !== null && server.active) {
-      void server.openProject(server.active.project).then(() => sharedWorkspace.loadNote(note));
+    if (server.active?.contextId === null || !server.active) {
+      loadNote(note);
     } else {
-      sharedWorkspace.loadNote(note);
+      void server.openProject(server.active.project).then(() => sharedWorkspace.loadNote(note));
     }
-  }, [server.active, server.openProject, sharedWorkspace.loadNote]);
+  }, [loadNote, server.active, server.openProject, sharedWorkspace.loadNote]);
 
   useEffect(() => {
     if (!proposalCodeTarget || (proposalCodeTarget.contextId !== null && server.active?.contextId !== proposalCodeTarget.contextId)) return;

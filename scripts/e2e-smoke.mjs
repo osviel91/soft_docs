@@ -2387,6 +2387,41 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     }
   });
 
+  await scenario("SHARED navigation selects the clicked artifact", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let projectId = null;
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaceId = (await apiRequest(page, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(page, "/api/projects/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          name: "Shared Navigation E2E",
+          resources: [
+            { path: "first.seq", type: "sequence-diagram", content: "title First artifact\nparticipant A\nparticipant B\nA->B: first" },
+            { path: "second.seq", type: "sequence-diagram", content: "title Second artifact\nparticipant A\nparticipant B\nA->B: second" },
+          ],
+        }),
+      });
+      projectId = created.json.project.id;
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await openServerProject(page, "Shared Navigation E2E");
+      const first = page.getByRole("button", { name: "Load diagram First artifact" });
+      const second = page.getByRole("button", { name: "Load diagram Second artifact" });
+      await first.click();
+      await second.click();
+      check("the clicked SHARED row becomes the selected artifact", (await second.locator("xpath=..").getAttribute("class"))?.includes("explorer__resource--selected") === true);
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await context.close();
+    }
+  });
+
   if (process.env.E2E_SCENARIO !== "governed-proposal") {
   await scenario(
     "Server scenario 1: a server project's diagram survives a reload",
