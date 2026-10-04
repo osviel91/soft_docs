@@ -3642,6 +3642,179 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
     },
   );
+
+  await scenario("Authenticated Conceptual authoring and promotion lifecycle", async () => {
+    const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const reviewerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const page = await ownerContext.newPage();
+    const reviewerPage = await reviewerContext.newPage();
+    const projectName = "Conceptual Authenticated E2E";
+    const proposalTitle = "Rename customer concept";
+    const base = 'title "Customer model"\nconcept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"\n';
+    const renamed = base.replace('concept customer "Customer"', 'concept customer "Account Holder"');
+    let projectId = null;
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaceId = (await apiRequest(page, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(page, "/api/projects/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, name: projectName, resources: [{ path: "customers.concept", type: "conceptual", content: base }] }),
+      });
+      if (created.status !== 201) throw new Error(`Conceptual bootstrap failed: ${created.status} ${created.text}`);
+      projectId = created.json.project.id;
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await openServerProject(page, projectName);
+
+      const sharedButton = page.getByRole("button", { name: "Load diagram Customer model" });
+      await sharedButton.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await sharedButton.click();
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const sharedSvg = page.getByTestId("conceptual-preview-svg");
+      await waitForText(sharedSvg, text => text.includes("Customer") && text.includes("Order") && text.includes("places"), "SHARED Conceptual preview");
+      check("authenticated SHARED selects and renders its Conceptual artifact", true);
+      check("SHARED directed relationship is visible", await sharedSvg.locator("marker").count() > 0);
+      check("authenticated workspace shell remains mounted", await page.getByTestId("app-shell").isVisible());
+      check("resource header identifies the selected Conceptual resource", (await page.getByTestId("resource-header").textContent()).includes("customers.concept"));
+      const sharedBefore = await currentServerResource(page, projectName);
+
+      // Resource creation is intentionally API/bootstrap-backed today; from this point
+      // selection, editing, submission, review and promotion use the production UI.
+      await page.getByTestId("explorer-my-work-create").click();
+      await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Draft name").fill("conceptual-authoring-work");
+      await page.getByRole("button", { name: "Create draft" }).click();
+      const contexts = await apiRequest(page, `/api/projects/${projectId}/private-work`);
+      const work = contexts.json.contexts.find(entry => entry.name === "conceptual-authoring-work");
+      if (!work) throw new Error("MY WORK context was not created");
+      const workResource = await apiRequest(page, `/api/projects/${projectId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ contextId: work.id, path: "customers.concept", type: "conceptual", content: base }),
+      });
+      if (workResource.status !== 201) throw new Error(`MY WORK Conceptual creation failed: ${workResource.status} ${workResource.text}`);
+      await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.locator('[data-testid="explorer-my-work-section"] [data-testid="select-diagram-button"]').click();
+      await showEditor(page);
+      const editor = page.getByTestId("dsl-textarea");
+      await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("MY WORK Conceptual resource is selected with editor and preview", true);
+
+      await editor.fill(renamed);
+      const editedSvg = page.getByTestId("conceptual-preview-svg");
+      await waitForText(editedSvg, text => text.includes("Account Holder") && text.includes("Order") && text.includes("places"), "renamed Conceptual preview");
+      check("stable customer ID rename updates canonical preview and preserves relationship", true);
+      const selectedConcept = editedSvg.locator('[data-node-id="customer"]');
+      await selectedConcept.dispatchEvent("click");
+      await page.waitForFunction(() => {
+        const editor = document.querySelector('[data-testid="dsl-textarea"]');
+        return editor instanceof HTMLTextAreaElement && editor.value.slice(editor.selectionStart, editor.selectionEnd).includes("concept customer");
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Conceptual preview selection reveals its source declaration", true);
+      check("editing MY WORK leaves SHARED source unchanged", (await currentServerResource(page, projectName)).content === sharedBefore.content);
+
+      await editor.fill(renamed.replace('relation places customer -> order "places"', 'relation places customer -> missing "places"'));
+      await page.locator('[data-testid="dsl-diagnostics"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("invalid Conceptual source reports semantic diagnostics without crashing", await page.getByTestId("conceptual-preview-invalid").isVisible() && await page.getByTestId("app-shell").isVisible());
+      await editor.fill(renamed);
+      await waitForText(page.getByTestId("conceptual-preview-svg"), text => text.includes("Account Holder") && text.includes("places"), "restored valid Conceptual preview");
+
+      const myWorkToggle = page.getByTestId("explorer-my-work-toggle");
+      if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
+      const workRow = page.getByTestId("explorer-private-context");
+      await workRow.getByRole("button", { name: /Actions for MY WORK/ }).click();
+      await page.getByRole("menuitem", { name: "Create proposal from this draft…" }).click();
+      const submitDialog = page.locator('section[aria-label="Submit architectural proposal"]');
+      await submitDialog.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Proposal title").fill(proposalTitle);
+      await page.getByLabel("Proposal description").fill("Stable-ID Conceptual rename.");
+      await submitDialog.locator('input[type="checkbox"]').check();
+      await page.getByRole("button", { name: "Submit proposal for review" }).click();
+      await page.locator('section[aria-label="Architectural Proposal"] h2').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const proposalList = (await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`)).json.proposals;
+      const proposal = proposalList.find(entry => entry.title === proposalTitle);
+      if (!proposal) throw new Error("submitted Conceptual proposal was not discoverable");
+      const snapshot = await apiRequest(page, `/api/architectural-proposals/${proposal.id}?projectId=${projectId}`);
+      check("proposal submission stores the Conceptual snapshot while SHARED stays unchanged", snapshot.status === 200 && snapshot.json.proposal.resources.some(resource => resource.content === renamed) && (await currentServerResource(page, projectName)).content === sharedBefore.content);
+      const proposalDiff = await apiRequest(page, `/api/architectural-proposals/${proposal.id}/diff?projectId=${projectId}`);
+      const diffResource = proposalDiff.json.diff.resources.find(resource => resource.path === "customers.concept");
+      check("proposal diff uses immutable SHARED base and submitted snapshot", diffResource.baseContent === base && diffResource.proposedContent === renamed);
+
+      const reviewer = { sub: "e2e-conceptual-reviewer", name: "Conceptual Reviewer B", email: "conceptual-reviewer@e2e.test" };
+      await reviewerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(reviewerPage);
+      await signIn(reviewerPage, idp, reviewer);
+      const reviewerId = (await apiRequest(reviewerPage, "/api/me")).json.user.id;
+      check("Reviewer B is an independent identity", reviewerId !== proposal.authorUserId);
+      const projectDetails = await apiRequest(page, `/api/projects/${projectId}`);
+      const workspaceMembership = await apiRequest(page, `/api/workspaces/${projectDetails.json.project.workspaceId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      check("owner establishes Reviewer B workspace authority", workspaceMembership.status === 200, `status ${workspaceMembership.status}`);
+      const projectMembership = await apiRequest(page, `/api/projects/${projectId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      check("owner establishes Reviewer B project authority", projectMembership.status === 204, `status ${projectMembership.status}`);
+      await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+      await openServerProject(reviewerPage, projectName);
+      const proposalToggle = reviewerPage.getByTestId("explorer-proposals-toggle");
+      if ((await proposalToggle.getAttribute("aria-expanded")) !== "true") await proposalToggle.click();
+      const proposalRow = reviewerPage.getByTestId("explorer-proposal").filter({ hasText: proposalTitle }).filter({ hasText: "OPEN" });
+      await proposalRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await proposalRow.getByTestId("explorer-proposal-open").click();
+      await reviewerPage.waitForFunction(id => new URL(location.href).searchParams.get("proposal") === id, proposal.id, { timeout: UI_TIMEOUT_MS });
+      const restoreDetails = reviewerPage.getByRole("button", { name: "Show proposal details" });
+      if (await restoreDetails.isVisible()) await restoreDetails.click();
+      const reviewerDetail = reviewerPage.locator('section[aria-label="Architectural Proposal"]');
+      await waitForText(reviewerDetail, text => text.includes(proposalTitle) || text.includes("could not be loaded"), "Reviewer B proposal detail hydration");
+      check("Reviewer B proposal detail loaded", (await reviewerDetail.textContent()).includes(proposalTitle), await reviewerDetail.textContent());
+      await reviewerDetail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Impact" }).evaluate(button => button.click());
+      await reviewerPage.locator('[data-testid="proposal-impact"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const impactText = await reviewerPage.locator('[data-testid="proposal-impact"]').textContent();
+      check("Reviewer B sees Conceptual semantic impact", impactText.includes("1 modified") && impactText.includes("semantic identities affected"), impactText);
+      await reviewerPage.locator('section[aria-label="Changes"] button').filter({ hasText: "customers.concept" }).click();
+      await reviewerDetail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Review" }).click({ force: true });
+      const inspector = reviewerPage.locator('section[aria-label^="Comparison for "]');
+      await inspector.getByRole("button", { name: "Compare", exact: true }).click();
+      await reviewerPage.getByTestId("conceptual-preview-svg").first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Reviewer B can inspect Conceptual visual comparison", (await inspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed")) === "true");
+      check("stable-ID rename remains visible in the Conceptual comparison", (await inspector.textContent()).includes("Account Holder") && (await inspector.textContent()).includes("Customer"));
+
+      const promotionPreview = await apiRequest(reviewerPage, `/api/architectural-proposals/${proposal.id}/promotion?projectId=${projectId}`);
+      check("approval action requires independent review capability", promotionPreview.status === 200);
+      await reviewerDetail.locator("textarea").fill("Reviewed Conceptual identity and relationship.", { force: true });
+      await reviewerPage.locator('section[aria-label="Proposal review"] button').filter({ hasText: "Approve proposal" }).click();
+      await waitForText(reviewerPage.locator('section[aria-label="Proposal review"]'), text => text.includes("1 approvals"), "Reviewer B approval evidence");
+      check("approval records Reviewer B and leaves SHARED source and render unchanged", (await currentServerResource(reviewerPage, projectName)).content === sharedBefore.content && (await page.getByTestId("conceptual-preview-svg").first().textContent()).includes("Customer"));
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await openServerProject(page, projectName);
+      const ownerProposalsToggle = page.getByTestId("explorer-proposals-toggle");
+      if ((await ownerProposalsToggle.getAttribute("aria-expanded")) !== "true") await ownerProposalsToggle.click();
+      await page.getByTestId("explorer-proposal").filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open").click();
+      const ownerRestoreDetails = page.getByRole("button", { name: "Show proposal details" });
+      if (await ownerRestoreDetails.isVisible()) await ownerRestoreDetails.click();
+
+      await page.getByRole("button", { name: "Preview promotion" }).click();
+      await waitForText(page.locator('section[aria-label="Proposal promotion"]'), text => text.includes("Ready to promote"), "promotion readiness");
+      await page.getByRole("button", { name: "Promote to SHARED" }).click();
+      await waitForText(page.locator('section[aria-label="Architectural Proposal"]'), text => text.includes("PROMOTED"), "proposal promotion");
+      const promoted = await currentServerResource(reviewerPage, projectName);
+      check("explicit promotion updates authoritative SHARED Conceptual source", promoted.content === renamed);
+      await page.getByRole("button", { name: "Base status", exact: true }).click();
+      await page.getByRole("button", { name: "Open resulting SHARED knowledge" }).click();
+      await page.locator('[data-testid="explorer-shared-section"] [data-testid="select-diagram-button"]').click();
+      await waitForText(page.getByTestId("conceptual-preview-svg"), text => text.includes("Account Holder") && text.includes("Order") && text.includes("places"), "promoted SHARED Conceptual rendering");
+      check("post-promotion SHARED render shows the new Conceptual state", true);
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await ownerContext.close();
+      await reviewerContext.close();
+    }
+  });
 }
 
 async function main() {
