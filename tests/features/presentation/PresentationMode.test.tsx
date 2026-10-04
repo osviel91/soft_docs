@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import PresentationMode, { orderedPresentationResources } from "../../../src/features/presentation/PresentationMode";
 
@@ -31,5 +31,14 @@ describe("PresentationMode", () => {
     const button = screen.getByRole("button", { name: "Exit presentation Esc" });
     fireEvent.keyDown(button, { key: "Escape" });
     expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("keeps navigator dismissal in a dedicated header control", () => {
+    render(<PresentationMode projectName="Checkout" resources={resources} initialId="readme" onExit={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Architecture" }));
+    const navigator = screen.getByRole("navigation", { name: "Presentation resources" });
+    const close = within(navigator).getByRole("button", { name: "Close navigator" });
+    expect(close.parentElement).toHaveClass("presentation__navigator-header");
+    expect(close).toHaveClass("presentation__navigator-close");
   });
 });

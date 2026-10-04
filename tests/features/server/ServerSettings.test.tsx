@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import ServerSettings from "../../../src/features/server/ServerSettings";
 
-function renderSettings(platformAdmin: boolean) {
+function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="agents-panel">Agent access settings</div>) {
   const actions = {
     onSetUserStatus: vi.fn(),
     onSelectWorkspace: vi.fn(),
@@ -23,6 +23,7 @@ function renderSettings(platformAdmin: boolean) {
           platformAdmin,
         },
       }}
+      agentsPanel={agentsPanel}
       adminUsers={[{
         id: "pending",
         displayName: "Grace",
@@ -111,5 +112,15 @@ describe("ServerSettings", () => {
     expect(within(governance).getByText("Managed by a platform administrator.")).toBeInTheDocument();
     expect(within(governance).getByText("Disabled")).toBeInTheDocument();
     expect(within(governance).queryByRole("checkbox")).toBeNull();
+  });
+
+  it("opens agent access inside its own settings tab", () => {
+    renderSettings(false);
+    expect(screen.queryByTestId("agents-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("settings-tab-agents"));
+    expect(screen.getByTestId("agents-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-tab-agents")).toHaveAttribute("aria-current", "page");
+    fireEvent.click(screen.getByTestId("settings-tab-workspaces"));
+    expect(screen.queryByTestId("agents-panel")).toBeNull();
   });
 });

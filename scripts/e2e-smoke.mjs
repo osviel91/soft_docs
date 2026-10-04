@@ -2316,8 +2316,14 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           resources: [
             { path: "overview.md", type: "markdown-document", content: "# Shared overview\n\n[Architecture](architecture.seq)" },
             { path: "architecture.concept", type: "conceptual", content: 'title "Customer model"\nconcept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"' },
-            { path: "architecture.seq", type: "sequence-diagram", content: "title Shared architecture\nparticipant Browser\nparticipant API\nBrowser->API: request" },
-            { path: "events.eventseq", type: "event-flow", content: "event OrderPlaced\ntopic orders\nproducer Shop\nconsumer Billing\nShop publishes OrderPlaced to orders\nBilling consumes OrderPlaced from orders" },
+            { path: "architecture.seq", type: "sequence-diagram", content: "title Shared architecture\nparticipant Browser\nparticipant API\nBrowser->API: request\nnote right of API : authenticated request" },
+            { path: "events.eventseq", type: "event-flow", content: [
+              'title "Programmed Recharge Lifecycle Causal Flow"',
+              "event RechargeRequested", "event BalanceLoaded", "event RechargeAuthorized", "event PaymentCaptured", "event RechargeCompleted", "event NotificationQueued", "event LedgerUpdated",
+              "handler LoadBalance", "handler AuthorizeRecharge", "handler CapturePayment", "handler CompleteRecharge", "handler NotifyCustomer",
+              "RechargeRequested handled by LoadBalance", "LoadBalance causes BalanceLoaded", "BalanceLoaded handled by AuthorizeRecharge", "AuthorizeRecharge causes RechargeAuthorized", "RechargeAuthorized handled by CapturePayment", "CapturePayment causes PaymentCaptured", "PaymentCaptured handled by CompleteRecharge", "CompleteRecharge causes RechargeCompleted", "RechargeCompleted handled by NotifyCustomer", "NotifyCustomer causes NotificationQueued", "CompleteRecharge causes LedgerUpdated", "LedgerUpdated handled by NotifyCustomer",
+              "effect persist-recharge on CompleteRecharge: persist recharge", "effect audit-recharge on CompleteRecharge: append audit record", "failure capture-failed on handler CapturePayment", "retry capture-again for capture-failed {", "  mechanism: handler", "  target: same-execution", "}",
+            ].join("\n") },
             { path: "internal.dbschema", type: "database", content: 'title "Internal schema"\ntable users - "users"' },
           ],
         }),
@@ -2359,24 +2365,39 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await anonymousPage.getByRole("button", { name: "Present", exact: true }).click();
        await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
        check("public presentation starts with Overview and carries refresh-safe selection", anonymousPage.url().includes("presentation=1") && anonymousPage.url().includes("resource="));
-       await anonymousPage.reload({ waitUntil: "domcontentloaded" });
-       await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
-       await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       check("public presentation renders Conceptual after refresh", true);
-       await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
-       await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
-      check("public presentation navigates canonical resources and survives refresh", anonymousPage.url().includes("resource="));
+        await anonymousPage.reload({ waitUntil: "domcontentloaded" });
+        await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+        await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        check("public presentation renders Conceptual after refresh", true);
+        await anonymousPage.getByRole("button", { name: "Architecture", exact: true }).click();
+        const presentationNavigator = anonymousPage.getByRole("navigation", { name: "Presentation resources" });
+        const closeNavigator = presentationNavigator.getByRole("button", { name: "Close navigator" });
+        const closeBox = await closeNavigator.boundingBox();
+        const navigatorBox = await presentationNavigator.boundingBox();
+        check("presentation navigator close control is compact and top-right", closeBox !== null && navigatorBox !== null && closeBox.width <= 40 && Math.abs(closeBox.x + closeBox.width - navigatorBox.x - navigatorBox.width) <= 20);
+        await closeNavigator.click();
+        await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
+        await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
+        const notesBox = await anonymousPage.getByTestId("preview-notes").boundingBox();
+        const sequenceGuidanceBox = await anonymousPage.getByRole("button", { name: "How to read Sequence" }).boundingBox();
+        check("Sequence guidance control does not overlap note controls in Presentation", notesBox !== null && sequenceGuidanceBox !== null && (sequenceGuidanceBox.x + sequenceGuidanceBox.width <= notesBox.x || notesBox.x + notesBox.width <= sequenceGuidanceBox.x || sequenceGuidanceBox.y + sequenceGuidanceBox.height <= notesBox.y || notesBox.y + notesBox.height <= sequenceGuidanceBox.y));
+        await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
+        await anonymousPage.getByTestId("event-flow-preview").waitFor({ state: "visible" });
+        await anonymousPage.getByRole("button", { name: "Causal" }).click();
+        const causalNode = anonymousPage.locator(".causal-flow .react-flow__node").first();
+        await causalNode.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const causalNodeBox = await causalNode.boundingBox();
+        check("public Presentation paints the explicit Programmed Recharge causal graph", await anonymousPage.locator(".causal-flow .react-flow__node").count() >= 2 && causalNodeBox !== null && causalNodeBox.width > 0 && causalNodeBox.height > 0);
+       check("public presentation navigates canonical resources and survives refresh", anonymousPage.url().includes("resource="));
       await anonymousPage.goBack();
       await anonymousPage.getByTestId("public-reader").waitFor({ state: "visible" });
       check("browser Back exits presentation to the public reader", !anonymousPage.url().includes("presentation=1"));
-      await anonymousPage.getByRole("button", { name: "Events" }).click().catch(async () => {
-        await anonymousPage.getByRole("button", { name: "events.eventseq" }).click();
-      });
+      await anonymousPage.getByRole("button", { name: "Programmed Recharge Lifecycle Causal Flow" }).click();
       await anonymousPage.getByTestId("event-flow-preview").waitFor({ state: "visible" });
       await anonymousPage.getByRole("button", { name: "Topology" }).click();
       await anonymousPage.getByTestId("event-topology").waitFor({ state: "visible" });
-      await anonymousPage.getByRole("button", { name: "Causal" }).click();
-      await anonymousPage.getByTestId("event-causal").waitFor({ state: "visible" });
+       await anonymousPage.getByTestId("event-flow-preview").getByRole("button", { name: "Causal" }).click();
+       await anonymousPage.locator(".causal-flow .react-flow__node").first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await anonymousPage.getByRole("button", { name: "Catalog" }).click();
       await anonymousPage.getByTestId("event-catalog").waitFor({ state: "visible" });
       check("public Event Flow exposes canonical Topology, Causal, and Catalog views", true);
@@ -2968,7 +2989,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         check("the browser opens a document the agent will read", true);
 
         // 1. The user creates an agent and a read-only credential.
-        await page.locator('[data-testid="open-agents"]').click();
+        await page.locator('[data-testid="workspace-settings"]').click();
+        await page.locator('[data-testid="settings-tab-agents"]').click();
         await page.locator('[data-testid="agent-name"]').fill("E2E Agent");
         await page.locator('[data-testid="agent-create"]').click();
         const card = page

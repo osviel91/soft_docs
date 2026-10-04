@@ -97,6 +97,13 @@ describe("App — auto-update", () => {
 });
 
 describe("App — status bar", () => {
+  it("places Docs and Commands in the lower-right status actions", () => {
+    render(<App />);
+    const statusbar = screen.getByRole("contentinfo");
+    expect(screen.getByTestId("open-docs").closest("footer")).toBe(statusbar);
+    expect(screen.getByTestId("command-palette-button").closest("footer")).toBe(statusbar);
+  });
+
   it("reports participant and message counts from the analysis", () => {
     render(<App />);
     // The seeded sample has three participants and four messages.

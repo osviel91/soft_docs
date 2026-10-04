@@ -231,7 +231,7 @@ type EditorView =
  * are separate pages because they are account administration rather than editing
  * tools.
  */
-type AppPage = "workspace" | "docs" | "tokens" | "settings";
+type AppPage = "workspace" | "docs" | "settings";
 
 /**
  * A destructive action waiting for confirmation. The dialog is opened when the
@@ -2403,9 +2403,6 @@ export default function App() {
   /** Open the documentation page. */
   const openDocs = useCallback((): void => setPage("docs"), []);
 
-  /** Open the agents/access-token page (only meaningful while signed in). */
-  const openTokens = useCallback((): void => setPage("tokens"), []);
-
   /** Open workspace and account settings. */
   const openSettings = useCallback((): void => setPage("settings"), []);
 
@@ -3126,28 +3123,6 @@ export default function App() {
               )}
             </div>
 
-            <button
-              type="button"
-              className="button app__docs-button"
-              data-testid="open-docs"
-              title="Open the documentation page"
-              onClick={openDocs}
-            >
-              <span aria-hidden="true">▤</span> Docs
-            </button>
-
-            {auth.status === "authenticated" ? (
-              <button
-                type="button"
-                className="button app__tokens-button"
-                data-testid="open-agents"
-                title="Manage agents and their access tokens for remote MCP clients"
-                onClick={openTokens}
-              >
-                <span aria-hidden="true">⚿</span> Agents
-              </button>
-            ) : null}
-
             <label className="switch" title="Re-render the diagram as you type">
               <input
                 type="checkbox"
@@ -3182,11 +3157,7 @@ export default function App() {
           </>
         ) : (
           <span className="app__page-title" data-testid="docs-page-title">
-            {page === "tokens"
-              ? "Agents & access tokens"
-              : page === "settings"
-                ? "Workspace settings"
-                : "Documentation"}
+            {page === "settings" ? "Workspace settings" : "Documentation"}
           </span>
         )}
 
@@ -3208,19 +3179,21 @@ export default function App() {
               </button>
             </div>
           ) : null}
-          <button
-            type="button"
-            className="button app__command-button"
-            data-testid="command-palette-button"
-            aria-label="Open command palette"
-            title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
-            onClick={open}
-          >
-            Commands…
-            <kbd className="app__command-shortcut" data-testid="palette-hint">
-              {bindingLabel(COMMAND_PALETTE_BINDING)}
-            </kbd>
-          </button>
+          {page !== "workspace" && (
+            <button
+              type="button"
+              className="button app__command-button"
+              data-testid="command-palette-button"
+              aria-label="Open command palette"
+              title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
+              onClick={open}
+            >
+              Commands…
+              <kbd className="app__command-shortcut" data-testid="palette-hint">
+                {bindingLabel(COMMAND_PALETTE_BINDING)}
+              </kbd>
+            </button>
+          )}
           {page === "workspace" ? (
             <button
               type="button"
@@ -3238,15 +3211,17 @@ export default function App() {
 
       {page === "docs" ? (
         <DocsPage onBack={() => setPage("workspace")} />
-      ) : page === "tokens" ? (
-        <AgentsAndTokens
-          client={apiClient}
-          auth={auth}
-          onBack={() => setPage("workspace")}
-        />
       ) : page === "settings" ? (
         <ServerSettings
           auth={auth}
+          agentsPanel={auth.status === "authenticated" ? (
+            <AgentsAndTokens
+              client={apiClient}
+              auth={auth}
+              embedded
+              onBack={() => setPage("workspace")}
+            />
+          ) : undefined}
           adminUsers={adminUsers}
           onSetUserStatus={setAdminUserStatus}
           workspaces={serverWorkspaces}
@@ -3918,6 +3893,28 @@ export default function App() {
               </span>
             )}
             <span className="app__status-spacer" />
+            <button
+              type="button"
+              className="button app__statusbar-button"
+              data-testid="open-docs"
+              title="Open the documentation page"
+              onClick={openDocs}
+            >
+              <span aria-hidden="true">▤</span> Docs
+            </button>
+            <button
+              type="button"
+              className="button app__statusbar-button"
+              data-testid="command-palette-button"
+              aria-label="Open command palette"
+              title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
+              onClick={open}
+            >
+              Commands…
+              <kbd className="app__command-shortcut" data-testid="palette-hint">
+                {bindingLabel(COMMAND_PALETTE_BINDING)}
+              </kbd>
+            </button>
             <span className="app__status-item app__status-item--muted">
               {noteMode ? "Note" : autoUpdate ? "Live" : "Paused"}
             </span>

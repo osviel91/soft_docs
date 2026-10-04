@@ -107,6 +107,7 @@ function projectAccess(
 export interface AgentsAndTokensProps {
   client: ServerApiClient;
   auth: AuthHook;
+  embedded?: boolean;
   /** Leave the page and return to the workspace. */
   onBack: () => void;
 }
@@ -114,8 +115,10 @@ export interface AgentsAndTokensProps {
 export default function AgentsAndTokens({
   client,
   auth,
+  embedded = false,
   onBack,
 }: AgentsAndTokensProps) {
+  const Root = embedded ? "section" : "main";
   const agents = useAgents(client, auth);
   const [agentName, setAgentName] = useState("Hermes Documentation");
   const [agentDescription, setAgentDescription] = useState("");
@@ -198,8 +201,8 @@ export default function AgentsAndTokens({
 
   if (auth.status !== "authenticated") {
     return (
-      <main className="tokens" data-testid="agents-page" aria-label="Agents">
-        <header className="tokens__header">
+      <Root className={`tokens${embedded ? " tokens--embedded" : ""}`} data-testid="agents-page" aria-label="Agents">
+        {!embedded && <header className="tokens__header">
           <div>
             <p className="tokens__eyebrow">Settings</p>
             <h1 className="tokens__title">Agents &amp; access tokens</h1>
@@ -212,7 +215,7 @@ export default function AgentsAndTokens({
           >
             ← Back to workspace
           </button>
-        </header>
+        </header>}
         <p className="tokens__lead" data-testid="agents-signin-required">
           Sign in to create or revoke agent credentials.
         </p>
@@ -224,13 +227,13 @@ export default function AgentsAndTokens({
         >
           Sign in
         </button>
-      </main>
+      </Root>
     );
   }
 
   return (
-    <main className="tokens" data-testid="agents-page" aria-label="Agents">
-      <header className="tokens__header">
+    <Root className={`tokens${embedded ? " tokens--embedded" : ""}`} data-testid="agents-page" aria-label="Agents">
+      {!embedded && <header className="tokens__header">
         <div>
           <p className="tokens__eyebrow">Settings</p>
           <h1 className="tokens__title">Agents &amp; access tokens</h1>
@@ -248,7 +251,7 @@ export default function AgentsAndTokens({
         >
           ← Back to workspace
         </button>
-      </header>
+      </header>}
 
       {created !== null ? (
         <section
@@ -707,7 +710,7 @@ export default function AgentsAndTokens({
       </section>
 
       <McpConnectionGuide />
-    </main>
+    </Root>
   );
 }
 

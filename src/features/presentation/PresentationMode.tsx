@@ -68,6 +68,6 @@ export default function PresentationMode({ projectName, resources, initialId, in
       <button type="button" aria-label="Next presentation item" onClick={() => move(index + 1)} disabled={index >= ordered.length - 1}>Next ›</button>
       <button type="button" aria-expanded={navigatorOpen} aria-controls="presentation-navigator" onClick={() => setNavigatorOpen((open) => !open)}>Architecture</button>
     </footer>
-    {navigatorOpen && <nav id="presentation-navigator" className="presentation__navigator" aria-label="Presentation resources"><button type="button" aria-label="Close navigator" onClick={() => setNavigatorOpen(false)}>×</button>{ordered.map((resource, itemIndex) => <button type="button" key={resource.id} aria-current={resource.id === selected.id ? "page" : undefined} onClick={() => { move(itemIndex); setNavigatorOpen(false); }}>{resource.title || resource.path}</button>)}</nav>}
+     {navigatorOpen && <nav id="presentation-navigator" className="presentation__navigator" aria-label="Presentation resources"><div className="presentation__navigator-header"><button type="button" className="presentation__navigator-close" aria-label="Close navigator" onClick={() => setNavigatorOpen(false)}>×</button></div>{ordered.map((resource, itemIndex) => <button type="button" key={resource.id} aria-current={resource.id === selected.id ? "page" : undefined} onClick={() => { move(itemIndex); setNavigatorOpen(false); }}>{resource.title || resource.path}</button>)}</nav>}
   </main>;
 }

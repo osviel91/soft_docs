@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { AuthState } from "./use-auth";
 import type {
   ServerAdminUser,
@@ -7,11 +8,12 @@ import type {
   ServerWorkspaceInvitation,
 } from "../../workspace/server/api-client";
 
-type SettingsArea = "workspaces" | "platform";
+type SettingsArea = "workspaces" | "platform" | "agents";
 type WorkspaceTopic = "overview" | "members" | "governance";
 
 export interface ServerSettingsProps {
   auth: AuthState;
+  agentsPanel?: ReactNode;
   adminUsers: ServerAdminUser[];
   onSetUserStatus: (userId: string, status: ServerAdminUser["status"]) => void;
   workspaces: ServerWorkspace[];
@@ -36,6 +38,7 @@ export interface ServerSettingsProps {
 
 export default function ServerSettings({
   auth,
+  agentsPanel,
   adminUsers,
   onSetUserStatus,
   workspaces,
@@ -56,7 +59,11 @@ export default function ServerSettings({
   const user = auth.user;
   const isPlatformAdmin = user?.platformAdmin === true;
   const [area, setArea] = useState<SettingsArea>("workspaces");
-  const activeArea = area === "platform" && isPlatformAdmin ? "platform" : "workspaces";
+  const activeArea = area === "platform" && isPlatformAdmin
+    ? "platform"
+    : area === "agents" && auth.status === "authenticated" && agentsPanel
+      ? "agents"
+      : "workspaces";
   const [topic, setTopic] = useState<WorkspaceTopic>("overview");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState("");
@@ -94,26 +101,40 @@ export default function ServerSettings({
         </button>
       </header>
 
-      {isPlatformAdmin && <nav className="settings-scope" aria-label="Settings scope">
-        <button
-          type="button"
-          aria-current={activeArea === "workspaces" ? "page" : undefined}
-          data-testid="settings-scope-workspaces"
-          onClick={() => setArea("workspaces")}
-        >
-          Workspaces
-        </button>
-        <button
-          type="button"
-          aria-current={activeArea === "platform" ? "page" : undefined}
-          data-testid="settings-scope-platform"
-          onClick={() => setArea("platform")}
-        >
-          Platform
-        </button>
-      </nav>}
+      {(isPlatformAdmin || (auth.status === "authenticated" && agentsPanel)) && (
+        <nav className="settings-scope" aria-label="Settings tabs">
+          <button
+            type="button"
+            aria-current={activeArea === "workspaces" ? "page" : undefined}
+            data-testid={isPlatformAdmin ? "settings-scope-workspaces" : "settings-tab-workspaces"}
+            onClick={() => setArea("workspaces")}
+          >
+            Workspaces
+          </button>
+          {isPlatformAdmin && (
+            <button
+              type="button"
+              aria-current={activeArea === "platform" ? "page" : undefined}
+              data-testid="settings-scope-platform"
+              onClick={() => setArea("platform")}
+            >
+              Platform
+            </button>
+          )}
+          <button
+            type="button"
+            aria-current={activeArea === "agents" ? "page" : undefined}
+            data-testid="settings-tab-agents"
+            onClick={() => setArea("agents")}
+          >
+            Agents &amp; access
+          </button>
+        </nav>
+      )}
 
-      {activeArea === "platform" ? (
+      {activeArea === "agents" ? (
+        agentsPanel
+      ) : activeArea === "platform" ? (
         <section className="settings-card settings-platform" aria-labelledby="settings-platform-title">
           <div className="settings-card__heading">
             <div>
