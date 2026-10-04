@@ -24,6 +24,19 @@ describe("project sharing UI", () => {
     expect(screen.queryByText(/workspace|sign in|proposal/i)).not.toBeInTheDocument();
   });
 
+  it("presents the loaded public projection and returns to the reader", async () => {
+    const client = api({ readPublicSharedProject: vi.fn().mockResolvedValue(project) });
+    vi.spyOn(ServerApiClient.prototype, "readPublicSharedProject").mockImplementation(client.readPublicSharedProject);
+    render(<PublicProjectReader token="secret" />);
+    await screen.findByRole("heading", { name: "Checkout" });
+    fireEvent.click(screen.getByRole("button", { name: "Present" }));
+    expect(await screen.findByTestId("presentation-mode")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    expect(screen.queryByText(/proposal|membership|workspace/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Exit presentation/ }));
+    expect(await screen.findByTestId("public-reader")).toBeInTheDocument();
+  });
+
   it("shows a safe unavailable state without exposing the token", async () => {
     const client = api({ readPublicSharedProject: vi.fn().mockRejectedValue(new Error("unavailable")) });
     vi.spyOn(ServerApiClient.prototype, "readPublicSharedProject").mockImplementation(client.readPublicSharedProject);

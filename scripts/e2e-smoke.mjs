@@ -2347,6 +2347,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await anonymousPage.getByRole("button", { name: "How to read Sequence" }).click();
       await anonymousPage.getByRole("heading", { name: "How to read Sequence" }).waitFor({ state: "visible" });
       check("public reader navigates Markdown and renders canonical Sequence with opt-in guidance", true);
+      await anonymousPage.getByRole("button", { name: "Present", exact: true }).click();
+      await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+      check("public presentation starts with Overview and carries refresh-safe selection", anonymousPage.url().includes("presentation=1") && anonymousPage.url().includes("resource="));
+      await anonymousPage.reload({ waitUntil: "domcontentloaded" });
+      await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+      await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
+      await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
+      check("public presentation navigates canonical resources and survives refresh", anonymousPage.url().includes("resource="));
+      await anonymousPage.goBack();
+      await anonymousPage.getByTestId("public-reader").waitFor({ state: "visible" });
+      check("browser Back exits presentation to the public reader", !anonymousPage.url().includes("presentation=1"));
       await anonymousPage.getByRole("button", { name: "Events" }).click().catch(async () => {
         await anonymousPage.getByRole("button", { name: "events.eventseq" }).click();
       });
@@ -2416,6 +2427,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await first.click();
       await second.click();
       check("the clicked SHARED row becomes the selected artifact", (await second.locator("xpath=..").getAttribute("class"))?.includes("explorer__resource--selected") === true);
+      await page.getByRole("button", { name: "Show editor" }).click();
+      await page.locator('[data-testid="resource-header"] button').filter({ hasText: "Present" }).click();
+      await page.getByTestId("presentation-mode").waitFor({ state: "visible" });
+      check("authenticated presentation opens only from the authoritative SHARED selection", (await page.locator(".presentation__stage").getAttribute("aria-label"))?.startsWith("Second artifact") === true);
+      await page.keyboard.press("Escape");
+      await page.getByTestId("app-shell").waitFor({ state: "visible" });
+      check("authenticated Escape exits without changing the selected SHARED artifact", (await second.locator("xpath=..").getAttribute("class"))?.includes("explorer__resource--selected") === true);
     } finally {
       if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
       await context.close();

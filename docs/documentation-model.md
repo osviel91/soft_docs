@@ -387,6 +387,22 @@ not added or removed history. Comparison of resources is not architectural chang
 history. Analysis results navigate to their indexed source evidence;
 the diagrams remain independently zoomed, panned, inspected, and rendered.
 
+## Presentation Mode
+
+Presentation Mode is a focused, read-only communication state over an already
+authorized architectural projection. It is not an authority, share mechanism,
+snapshot, or persisted deck. Authenticated presentation is limited to the
+currently authoritative SHARED project context; public presentation consumes
+only the live C.4 projection authorized by its existing ShareGrant. It creates
+no membership or credential and does not expose MY WORK or proposals.
+
+Items follow the available resource order with Overview/README preferred;
+representations remain views of the same resource. Markdown and diagrams use
+their canonical renderers and preserve their authored semantics. Presentation
+is separate from Proposal review. Speaker notes, custom saved decks, and export
+are future product decisions, and this does not imply Conceptual or Database
+diagram support.
+
 The Proposal Decision Workspace separates Explorer/navigation, decision context,
 and Change Inspector. Its canonical comparison operands are the immutable SHARED
 base captured by the proposal and the immutable submitted snapshot. Current SHARED

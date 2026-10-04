@@ -143,6 +143,7 @@ import type { QuickOpenItem } from "./features/quickopen/quick-open-model";
 import { useProjectIndex } from "./features/project/use-project-index";
 import ProjectOverview from "./features/project/ProjectOverview";
 import ProjectShareDialog from "./features/project/ProjectShareDialog";
+import PresentationMode from "./features/presentation/PresentationMode";
 import {
   eventFlowOutline,
   markdownOutline,
@@ -489,6 +490,7 @@ export default function App() {
   const [editorWidth, setEditorWidth] = useState<number | null>(null);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [previewMaximized, setPreviewMaximized] = useState(false);
+  const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonEditorHidden, setComparisonEditorHidden] = useState(true);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
@@ -2981,6 +2983,9 @@ export default function App() {
     )?.displayName;
   }, [architecturalProposalId, server.active, server.architecturalProposals, workspaceMembersByWorkspaceId]);
 
+  const presentationResources = useMemo(() => [...sharedNotes.map((note) => ({ id: note.id, path: note.name, title: noteDisplayName(note.name, note.markdown), type: "markdown-document", content: note.markdown })), ...sharedDiagrams.map((diagram) => ({ id: diagram.id, path: diagram.name, title: diagramDisplayName(diagram.name, diagram.source), type: resourceTypeOfName(diagram.name), content: diagram.source }))], [sharedDiagrams, sharedNotes]);
+  const canPresentShared = workspaceMode === "server" && server.active != null && server.active.contextId == null && Boolean(selectedDiagram || selectedNote) && !architecturalProposalId && !revisionProposalId && !proposalReviewOpen;
+  useEffect(() => { if (!canPresentShared) setPresentationActive(false); }, [canPresentShared]);
   const handleProposalDiffLoaded = useCallback((diff: ServerArchitecturalProposalDiff): void => {
     setProposalInspector((current) => ({
       ...current,
@@ -3001,6 +3006,7 @@ export default function App() {
   }, []);
 
   if (!hasAppAccess) return <LoginScreen auth={auth} />;
+  if (presentationActive && canPresentShared && server.active) return <PresentationMode projectName={server.active.project.name} resources={presentationResources} initialId={selectedDiagram?.id ?? selectedNote?.id ?? ""} initialView={eventFlowView} onRepresentationChange={changeEventFlowView} onExit={() => setPresentationActive(false)} />;
 
   return (
     <div className="app" data-testid="app-shell">
@@ -3527,6 +3533,7 @@ export default function App() {
                         {selectedNote.name}
                       </span>
                       {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                      {canPresentShared ? <button type="button" className="button button--ghost button--small" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                     <ResourceMetadataEditor
                       metadata={selectedNote.metadata}
@@ -3587,6 +3594,7 @@ export default function App() {
                       </span>
                       <span className="resource-header__name">{selectedDiagram?.name}</span>
                       {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
+                      {canPresentShared ? <button type="button" className="button button--ghost button--small" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                     <ResourceMetadataEditor
                       metadata={selectedDiagram?.metadata}

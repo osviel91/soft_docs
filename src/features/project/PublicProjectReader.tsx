@@ -5,6 +5,7 @@ import Preview from "../preview/Preview";
 import EventFlowPreview, { type EventFlowView } from "../preview/EventFlowPreview";
 import { noteDisplayName } from "../../language/markdown/note-title";
 import { diagramDisplayName } from "../../language/diagram-title";
+import PresentationMode from "../presentation/PresentationMode";
 
 const preferred = (resource: PublicSharedProject["resources"][number]) => /(^|\/)(overview|readme)(\.|$)/i.test(resource.path) || /^(overview|readme)$/i.test(resource.title);
 
@@ -15,14 +16,21 @@ export default function PublicProjectReader({ token }: { token: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [eventView, setEventView] = useState<EventFlowView>("flow");
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [presenting, setPresenting] = useState(new URLSearchParams(window.location.search).get("presentation") === "1");
 
   const load = async () => {
     setState("loading");
-    try { const result = await client.readPublicSharedProject(token); setProject(result); setSelectedId((current) => result.resources.some((resource) => resource.id === current) ? current : [...result.resources].sort((a, b) => Number(preferred(b)) - Number(preferred(a)) || a.path.localeCompare(b.path))[0]?.id ?? null); setState("ready"); }
+    try { const result = await client.readPublicSharedProject(token); setProject(result); setSelectedId((current) => { const requested = new URLSearchParams(window.location.search).get("resource"); return result.resources.some((resource) => resource.id === requested) ? requested : result.resources.some((resource) => resource.id === current) ? current : [...result.resources].sort((a, b) => Number(preferred(b)) - Number(preferred(a)) || a.path.localeCompare(b.path))[0]?.id ?? null; }); setState("ready"); }
     catch (error) { setProject(null); setState(error instanceof Error && error.message === "unavailable" ? "unavailable" : "error"); }
   };
   useEffect(() => { void load(); }, [client, token]);
+  useEffect(() => {
+    const onPopState = () => setPresenting(new URLSearchParams(window.location.search).get("presentation") === "1");
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   const selected = project?.resources.find((resource) => resource.id === selectedId) ?? null;
+  const changePresentationView = (view: EventFlowView) => { setEventView(view); const url = new URL(window.location.href); url.searchParams.set("view", view); window.history.replaceState(null, "", url); };
   const openResource = (target: string) => {
     if (!project || !selected) return;
     const path = target.startsWith("/") ? target.slice(1) : new URL(target, `https://public.invalid/${selected.path}`).pathname.slice(1);
@@ -42,8 +50,10 @@ export default function PublicProjectReader({ token }: { token: string }) {
   if (state === "error") return <main className="public-reader-state"><h1>Shared documentation could not be loaded.</h1><p>Check your connection and try again.</p><button type="button" onClick={() => void load()}>Retry</button></main>;
   if (!project) return null;
 
+  if (presenting) { const requestedView = new URLSearchParams(window.location.search).get("view"); const initialView = requestedView === "catalog" || requestedView === "topology" || requestedView === "causal" ? requestedView : eventView; return <PresentationMode projectName={project.project.name} resources={project.resources} initialId={selectedId ?? project.resources[0]?.id ?? ""} initialView={initialView} onRepresentationChange={changePresentationView} onSelect={(id) => { setSelectedId(id); const url = new URL(window.location.href); url.searchParams.set("resource", id); window.history.replaceState(null, "", url); }} onExit={() => { const url = new URL(window.location.href); url.searchParams.delete("presentation"); window.history.replaceState(null, "", url); setPresenting(false); }} />; }
+
   return <main className="public-reader" data-testid="public-reader">
-    <header className="public-reader__header"><strong>Software Docs</strong><h1>{project.project.name}</h1><span>Read only</span><button type="button" className="public-reader__menu-toggle" aria-expanded={navigationOpen} aria-controls="public-reader-navigation" onClick={() => setNavigationOpen((open) => !open)}>Documentation</button></header>
+    <header className="public-reader__header"><strong>Software Docs</strong><h1>{project.project.name}</h1><span>Read only</span><button type="button" onClick={() => { const url = new URL(window.location.href); url.searchParams.set("presentation", "1"); if (selectedId) url.searchParams.set("resource", selectedId); window.history.pushState(null, "", url); setPresenting(true); }}>Present</button><button type="button" className="public-reader__menu-toggle" aria-expanded={navigationOpen} aria-controls="public-reader-navigation" onClick={() => setNavigationOpen((open) => !open)}>Documentation</button></header>
     <div className="public-reader__body">
       <nav id="public-reader-navigation" className={`public-reader__nav${navigationOpen ? " public-reader__nav--open" : ""}`} aria-label="Shared documentation">
         <h2>Architecture</h2>
