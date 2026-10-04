@@ -101,6 +101,28 @@ async function violations(
 }
 
 describe("dependency rule (ADR-039)", () => {
+  it("keeps D02.3 projections artifact-specific and the geometry adapter semantic-free", async () => {
+    const conceptual = "src/domain/conceptual/visual-projection.ts";
+    const database = "src/domain/database/visual-projection.ts";
+    const geometry = ["src/layout/geometry-input.ts", "src/layout/elk-geometry-adapter.ts"];
+    const imports = new Map<string, string[]>();
+    for (const relative of [conceptual, database, ...geometry]) {
+      imports.set(relative, importsOf(await readFile(path.join(ROOT, relative), "utf8")));
+    }
+    expect(imports.get(conceptual)).toContain("./model");
+    expect(imports.get(conceptual)?.some(specifier => /domain\/database/.test(specifier))).toBe(false);
+    expect(imports.get(database)).toContain("./model");
+    expect(imports.get(database)?.some(specifier => /domain\/conceptual/.test(specifier))).toBe(false);
+    for (const relative of geometry) {
+      expect(imports.get(relative)?.some(specifier => /domain\/(conceptual|database)/.test(specifier))).toBe(false);
+      expect(imports.get(relative)?.some(specifier => /^(react|react-dom)(\/|$)|document|window|features/.test(specifier))).toBe(false);
+    }
+    expect(imports.get("src/layout/elk-geometry-adapter.ts")?.filter(specifier => specifier.startsWith("elkjs/"))).toEqual(["elkjs/lib/elk.bundled.js", "elkjs/lib/elk-api"]);
+    expect(imports.get("src/layout/geometry-input.ts")?.some(specifier => specifier.startsWith("elkjs/"))).toBe(false);
+    const geometrySource = await readFile(path.join(ROOT, "src/layout/geometry-input.ts"), "utf8");
+    expect(geometrySource).not.toMatch(/UniversalDiagramAST|ConceptualModel|DatabaseModel|\b(ForeignKey|Concept|DatabaseTable)\b/);
+  });
+
   it("keeps artifact syntax, builders, models, and parsing free of host/rendering dependencies", async () => {
     const modules = [
       "src/domain/conceptual/model.ts",
@@ -144,6 +166,29 @@ describe("dependency rule (ADR-039)", () => {
     expect(conceptual).not.toMatch(visualTerms);
     expect(database).not.toMatch(/conceptual|eventflow|diagram|renderer|layout/i);
     expect(database).not.toMatch(visualTerms);
+  });
+
+  it("keeps D02.3 projections artifact-specific and geometry semantic-free", async () => {
+    const projections = [
+      "src/domain/conceptual/visual-projection.ts",
+      "src/domain/database/visual-projection.ts",
+    ];
+    const geometry = ["src/layout/geometry-input.ts", "src/layout/elk-geometry-adapter.ts"];
+    const imports = async (file: string) => importsOf(await readFile(path.join(ROOT, file), "utf8"));
+    const conceptualProjection = await imports(projections[0]);
+    const databaseProjection = await imports(projections[1]);
+    expect(conceptualProjection.some((specifier) => /domain\/database/.test(specifier))).toBe(false);
+    expect(databaseProjection.some((specifier) => /domain\/conceptual/.test(specifier))).toBe(false);
+    for (const file of geometry) {
+      const specifiers = await imports(file);
+      expect(specifiers.some((specifier) => /domain\/(conceptual|database)/.test(specifier))).toBe(false);
+      expect(specifiers.some((specifier) => /^(react|react-dom)(\/|$)|dom|features/.test(specifier))).toBe(false);
+      expect(specifiers.includes("elkjs/lib/elk.bundled.js")).toBe(file === "src/layout/elk-geometry-adapter.ts");
+    }
+    for (const file of [...projections, ...geometry]) {
+      const source = await readFile(path.join(ROOT, file), "utf8");
+      expect(source).not.toContain("UniversalDiagramAST");
+    }
   });
 
   it("keeps the domain and application layers free of React and features", async () => {
