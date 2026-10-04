@@ -32,6 +32,8 @@ function comparableInDiagram(
   if (representation === "sequence")
     return change.entity === "interaction" || change.entity === "participant";
   if (representation === "event-flow") return EVENT_ENTITIES.has(change.entity);
+  if (representation === "conceptual")
+    return change.entity === "concept" || change.entity === "relationship";
   return false;
 }
 
@@ -51,6 +53,8 @@ export function reviewTargetId(change: SemanticChange): string {
     return `interaction:${change.identity}`;
   }
   if (change.entity === "participant") return `participant:${change.identity}`;
+  if (change.entity === "concept" || change.entity === "relationship")
+    return `${change.entity}:${change.identity}`;
   const event = eventOf(change);
   if (
     event !== null &&

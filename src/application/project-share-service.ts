@@ -69,7 +69,8 @@ export function createProjectShareService(options: {
       const project = await options.projects.findById(grant.projectId);
       if (!project) return null;
       const records = (await options.projects.listResources(project.id, null)).filter(
-        (resource) => resource.lifecycle === "ACTIVE" && resource.contextId === undefined,
+        (resource) => resource.lifecycle === "ACTIVE" && resource.contextId === undefined &&
+          ["sequence-diagram", "event-flow", "markdown-document", "conceptual"].includes(resource.type),
       );
       const storage = options.storage(project.id);
       const manifest = await storage.read("project.json");

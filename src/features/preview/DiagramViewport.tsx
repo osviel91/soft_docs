@@ -474,6 +474,12 @@ export default function DiagramViewport({
       onCausalNodeSelect?.(causalNode);
       return;
     }
+    const nodeId = nodeIdFromTarget(event.target);
+    if (nodeId && onNodeSelect) {
+      event.preventDefault();
+      onNodeSelect(nodeId);
+      return;
+    }
     if (!onNoteToggle) return;
     const index = noteIndexFromTarget(event.target);
     if (index === null) return;

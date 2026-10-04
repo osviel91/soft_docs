@@ -13,6 +13,22 @@ const state = (
 });
 
 describe("resource diff", () => {
+  it("compares Conceptual facts by stable IDs while Database stays source-only", () => {
+    const before = 'concept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"\n';
+    const after = 'concept customer "Account Holder"\nconcept invoice "Invoice"\nrelation places customer -- invoice "owns"\n';
+    const conceptual = diffResources(state(before, "conceptual"), state(after, "conceptual"));
+    expect(conceptual.content.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "modified", entity: "concept", identity: "customer" }),
+      expect.objectContaining({ kind: "removed", entity: "concept", identity: "order" }),
+      expect.objectContaining({ kind: "added", entity: "concept", identity: "invoice" }),
+      expect.objectContaining({ kind: "modified", entity: "relationship", identity: "places" }),
+    ]));
+    const invalid = diffResources(state("concept nope", "conceptual"), state(after, "conceptual"));
+    expect(invalid.content.available).toBe(false);
+    expect(invalid.content.changes).toEqual([]);
+    expect(diffResources(state('table t - "T"', "database"), state('table t - "Table"', "database")).content.changes[0]).toMatchObject({ entity: "source" });
+  });
+
   it("compares normalized resource metadata", () => {
     expect(
       diffResources(

@@ -7,6 +7,7 @@ import {
 import type { ResourceState } from "./resource-state";
 import { analyze } from "../../language/analyze";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
+import { parseConceptual } from "../../language/conceptual/analyze";
 import {
   channelsOf,
   eventsOf,
@@ -651,7 +652,26 @@ const strategies: Record<ResourceRepresentation, Strategy> = {
       invalid,
     );
   },
-  conceptual: (before, after) => sourceOnlyDiff("conceptual", before, after),
+  conceptual: (before, after) => {
+    const oldResult = parseConceptual(before), newResult = parseConceptual(after);
+    const diagnostics = [...oldResult.diagnostics, ...newResult.diagnostics];
+    const invalid = diagnostics.some(item => item.severity === "error");
+    const changes: SemanticChange[] = [];
+    if (!invalid && oldResult.model && newResult.model) {
+      const compare = <T extends { id: string }>(entity: string, oldItems: T[], newItems: T[]) => {
+        const oldById = new Map(oldItems.map(item => [item.id, item])), newById = new Map(newItems.map(item => [item.id, item]));
+        for (const [id, oldItem] of oldById) {
+          const next = newById.get(id);
+          if (!next) changes.push({ kind: "removed", entity, identity: id, details: { before: oldItem } });
+          else if (JSON.stringify(oldItem) !== JSON.stringify(next)) changes.push({ kind: "modified", entity, identity: id, details: { before: oldItem, after: next } });
+        }
+        for (const [id, item] of newById) if (!oldById.has(id)) changes.push({ kind: "added", entity, identity: id, details: { after: item } });
+      };
+      compare("concept", oldResult.model.concepts, newResult.model.concepts);
+      compare("relationship", oldResult.model.relationships, newResult.model.relationships);
+    }
+    return representationResult("conceptual", changes, diagnostics, invalid);
+  },
   database: (before, after) => sourceOnlyDiff("database", before, after),
   markdown: (before, after) => {
     const source = sourceDiff(before, after);

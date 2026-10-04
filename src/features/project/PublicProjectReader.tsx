@@ -3,6 +3,7 @@ import { ServerApiClient, type PublicSharedProject } from "../../workspace/serve
 import MarkdownView from "../notes/MarkdownView";
 import Preview from "../preview/Preview";
 import EventFlowPreview, { type EventFlowView } from "../preview/EventFlowPreview";
+import ConceptualPreview from "../preview/ConceptualPreview";
 import { noteDisplayName } from "../../language/markdown/note-title";
 import { diagramDisplayName } from "../../language/diagram-title";
 import PresentationMode from "../presentation/PresentationMode";
@@ -62,7 +63,7 @@ export default function PublicProjectReader({ token }: { token: string }) {
       <section className="public-reader__content" aria-label={selected ? `Reading ${label}` : "Shared project content"}>
         {selected ? <>
           <div className="public-reader__resource-heading"><div><p>{selected.path}</p><h2>{label}</h2></div></div>
-          {isMarkdown ? <MarkdownView markdown={selected.content} resolveWikiLink={(target) => project.resources.some((resource) => resource.title === target || noteDisplayName(resource.path, resource.content) === target || diagramDisplayName(resource.path, resource.content) === target) ? "#shared-resource" : null} resolveResourceLink={(href) => { try { const target = new URL(href, `https://public.invalid/${selected.path}`).pathname.slice(1); return project.resources.some((resource) => resource.path === target) ? "#shared-resource" : null; } catch { return null; } }} onOpenDiagramLink={openWikiLink} onOpenResourceLink={openResource} /> : isEventFlow ? <EventFlowPreview source={selected.content} view={eventView} onViewChange={setEventView} /> : <Preview source={selected.content} />}
+           {isMarkdown ? <MarkdownView markdown={selected.content} resolveWikiLink={(target) => project.resources.some((resource) => resource.title === target || noteDisplayName(resource.path, resource.content) === target || diagramDisplayName(resource.path, resource.content) === target) ? "#shared-resource" : null} resolveResourceLink={(href) => { try { const target = new URL(href, `https://public.invalid/${selected.path}`).pathname.slice(1); return project.resources.some((resource) => resource.path === target) ? "#shared-resource" : null; } catch { return null; } }} onOpenDiagramLink={openWikiLink} onOpenResourceLink={openResource} /> : isEventFlow ? <EventFlowPreview source={selected.content} view={eventView} onViewChange={setEventView} /> : selected.type === "conceptual" ? <ConceptualPreview source={selected.content} /> : <Preview source={selected.content} />}
         </> : <div className="public-reader__empty"><h2>No shared documentation is available yet.</h2><p>This project does not currently have active shared resources.</p></div>}
       </section>
     </div>

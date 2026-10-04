@@ -7,6 +7,7 @@ export interface ConceptualVisualItem {
   semanticConceptId: string;
   name: string;
   nameLines: string[];
+  descriptionLines: string[];
   description?: string;
   requiredWidth: number;
   requiredHeight: number;
@@ -44,6 +45,7 @@ export function projectConceptual(model: ConceptualModel): ConceptualVisualProje
       semanticConceptId: concept.id,
       name: concept.name,
       nameLines,
+      descriptionLines,
       ...(concept.description === undefined ? {} : { description: concept.description }),
       requiredWidth,
       requiredHeight: 30 + nameLines.length * 19 + descriptionLines.length * 18,

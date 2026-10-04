@@ -11,6 +11,8 @@ describe("project share authority", () => {
     let currentTime = new Date("2026-01-01T00:00:00Z");
     const project = { id: "project", name: "Architecture" } as never;
     const shared = { id: "shared-id", projectId: "project", path: "flow.seq", type: "sequence-diagram", revision: 1, lifecycle: "ACTIVE", createdAt: new Date(), updatedAt: new Date() };
+    const conceptual = { ...shared, id: "conceptual-id", path: "model.concept", type: "conceptual" };
+    const database = { ...shared, id: "database-id", path: "schema.dbschema", type: "database" };
     const privateResource = { ...shared, id: "private-id", contextId: "private-context", path: "secret.seq" };
     const service = createProjectShareService({
       shares: {
@@ -22,7 +24,7 @@ describe("project share authority", () => {
       },
       projects: {
         async findById() { return project; }, async roleOf() { return "OWNER"; },
-         async listResources(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return [shared, privateResource]; },
+          async listResources(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return [shared, conceptual, database, privateResource]; },
          async listResourceRelationships(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return []; },
       } as never,
       storage: () => ({ async read(path: string) { return { ok: true, value: { path, type: "sequence-diagram", content: path } }; } }) as never,
@@ -34,7 +36,7 @@ describe("project share authority", () => {
     expect(JSON.stringify(await service.list(context, "project"))).not.toContain(created.token);
     expect(JSON.stringify(rows.values().next().value)).not.toContain(created.token);
     const projection = await service.read(created.token);
-    expect(projection?.resources.map(resource => resource.id)).toEqual(["shared-id"]);
+    expect(projection?.resources.map(resource => resource.id)).toEqual(["shared-id", "conceptual-id"]);
     expect(await service.read("sdshare_123e4567-e89b-12d3-a456-426614174000.invalid")).toBeNull();
     await service.revoke(context, "project", created.grant.id);
     expect(await service.read(created.token)).toBeNull();

@@ -2315,8 +2315,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           name: "Governed Share E2E",
           resources: [
             { path: "overview.md", type: "markdown-document", content: "# Shared overview\n\n[Architecture](architecture.seq)" },
+            { path: "architecture.concept", type: "conceptual", content: 'title "Customer model"\nconcept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"' },
             { path: "architecture.seq", type: "sequence-diagram", content: "title Shared architecture\nparticipant Browser\nparticipant API\nBrowser->API: request" },
             { path: "events.eventseq", type: "event-flow", content: "event OrderPlaced\ntopic orders\nproducer Shop\nconsumer Billing\nShop publishes OrderPlaced to orders\nBilling consumes OrderPlaced from orders" },
+            { path: "internal.dbschema", type: "database", content: 'title "Internal schema"\ntable users - "users"' },
           ],
         }),
       });
@@ -2342,18 +2344,27 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await anonymousPage.goto(shareUrl, { waitUntil: "domcontentloaded" });
       await anonymousPage.getByTestId("public-reader").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("anonymous public shell exposes no private controls", await anonymousPage.locator('[data-testid="app-shell"], [data-testid*="my-work"], [data-testid*="proposal"]').count() === 0 && await anonymousPage.getByRole("button", { name: /edit|governance|workspace/i }).count() === 0);
-      await anonymousPage.getByRole("link", { name: "Architecture" }).click();
-      await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await anonymousPage.getByRole("button", { name: "How to read Sequence" }).click();
-      await anonymousPage.getByRole("heading", { name: "How to read Sequence" }).waitFor({ state: "visible" });
-      check("public reader navigates Markdown and renders canonical Sequence with opt-in guidance", true);
-      await anonymousPage.getByRole("button", { name: "Present", exact: true }).click();
-      await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
-      check("public presentation starts with Overview and carries refresh-safe selection", anonymousPage.url().includes("presentation=1") && anonymousPage.url().includes("resource="));
-      await anonymousPage.reload({ waitUntil: "domcontentloaded" });
-      await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
-      await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
-      await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
+       await anonymousPage.getByRole("link", { name: "Architecture" }).click();
+       await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await anonymousPage.getByRole("button", { name: "How to read Sequence" }).click();
+       await anonymousPage.getByRole("heading", { name: "How to read Sequence" }).waitFor({ state: "visible" });
+       check("public reader navigates Markdown and renders canonical Sequence with opt-in guidance", true);
+       const conceptualNavigation = anonymousPage.getByRole("button", { name: "Customer model" });
+       check("public navigation exposes Conceptual but excludes Database", await conceptualNavigation.count() === 1 && await anonymousPage.getByRole("button", { name: "Internal schema" }).count() === 0);
+       await conceptualNavigation.click();
+       await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await anonymousPage.getByRole("button", { name: "How to read Conceptual" }).click();
+       await anonymousPage.getByRole("heading", { name: "How to read Conceptual" }).waitFor({ state: "visible" });
+       check("public reader renders Conceptual through its canonical visual preview", true);
+       await anonymousPage.getByRole("button", { name: "Present", exact: true }).click();
+       await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+       check("public presentation starts with Overview and carries refresh-safe selection", anonymousPage.url().includes("presentation=1") && anonymousPage.url().includes("resource="));
+       await anonymousPage.reload({ waitUntil: "domcontentloaded" });
+       await anonymousPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+       await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("public presentation renders Conceptual after refresh", true);
+       await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
+       await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
       check("public presentation navigates canonical resources and survives refresh", anonymousPage.url().includes("resource="));
       await anonymousPage.goBack();
       await anonymousPage.getByTestId("public-reader").waitFor({ state: "visible" });

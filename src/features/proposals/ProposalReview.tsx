@@ -4,6 +4,7 @@ import EventFlowPreview, {
   type EventFlowView,
 } from "../preview/EventFlowPreview";
 import MarkdownView from "../notes/MarkdownView";
+import ConceptualPreview from "../preview/ConceptualPreview";
 import type {
   ServerApiClient,
   ServerChangeProposal,
@@ -480,6 +481,17 @@ export default function ProposalReview({
           />
         ) : representation === "sequence" ? (
           <Preview
+            source={content}
+            reviewChanges={semanticChanges}
+            reviewMode
+            reviewSide={side === "proposed" ? "proposed" : "base"}
+            linkedTransform={linkedTransform}
+            onTransformChange={onTransformChange}
+            activeReviewChange={currentTarget?.id}
+            focusReviewChange={currentTarget?.id}
+          />
+        ) : representation === "conceptual" ? (
+          <ConceptualPreview
             source={content}
             reviewChanges={semanticChanges}
             reviewMode

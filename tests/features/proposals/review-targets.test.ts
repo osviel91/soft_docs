@@ -25,6 +25,17 @@ describe("review change targets", () => {
     expect(targets.map((target) => target.id)).toEqual(["event:OrderCreated"]);
   });
 
+  it("keeps Conceptual concepts and relationships independently navigable", () => {
+    const targets = reviewChangeTargets([], [
+      { kind: "modified", entity: "concept", identity: "customer" },
+      { kind: "modified", entity: "relationship", identity: "places" },
+    ]);
+    expect(targets.map((target) => target.id)).toEqual([
+      "concept:customer",
+      "relationship:places",
+    ]);
+  });
+
   it("keeps first, middle, and last targets in deterministic order", () => {
     const targets = reviewChangeTargets(
       [{ kind: "added", field: "description", identity: "description", newValue: "x" }],

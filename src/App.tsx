@@ -124,6 +124,10 @@ import OutlinePanel from "./features/outline/OutlinePanel";
 import EventFlowPreview, {
   type EventFlowView,
 } from "./features/preview/EventFlowPreview";
+import ConceptualPreview from "./features/preview/ConceptualPreview";
+import { parseConceptual } from "./language/conceptual/analyze";
+import { parseConceptualSyntax } from "./language/conceptual/parser";
+import { parseDatabase } from "./language/database/analyze";
 import ComparisonView from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
@@ -1251,7 +1255,17 @@ export default function App() {
     workspaceMode === "server",
   );
 
-  const { ast, diagnostics } = useDiagram(source);
+  const activeRepresentation = selectedDiagram
+    ? resourceRepresentationOfName(selectedDiagram.name)
+    : selectedNote
+      ? "markdown"
+      : "sequence";
+  const isConceptual = activeRepresentation === "conceptual";
+  const isDatabase = activeRepresentation === "database";
+  const isSequence = activeRepresentation === "sequence";
+  const { ast, diagnostics } = useDiagram(isSequence ? source : "");
+  const conceptualAnalysis = useMemo(() => isConceptual ? parseConceptual(source) : null, [isConceptual, source]);
+  const databaseAnalysis = useMemo(() => isDatabase ? parseDatabase(source) : null, [isDatabase, source]);
   const noteMode = selectedNote !== null;
 
   // Keep the displayed source in step with the editor while auto-update is on.
@@ -1264,12 +1278,13 @@ export default function App() {
 
   // Counts for the status bar, derived from the same analysis the panes use.
   const counts = useMemo(() => {
+    if (!isSequence) return { participants: 0, messages: 0 };
     if (!ast) return { participants: 0, messages: 0 };
     return {
       participants: ast.participants.length,
       messages: ast.statements.filter((s) => s.type === "message").length,
     };
-  }, [ast]);
+  }, [ast, isSequence]);
 
   // Resolve `[[Diagram]]` links in a note against the workspace's diagrams.
   const resolveWikiLink = useCallback(
@@ -1645,11 +1660,6 @@ export default function App() {
 
   // Which language the active document is written in. A project holds three, and
   // the extension is what says so — the same rule a folder project uses.
-  const activeRepresentation = selectedDiagram
-    ? resourceRepresentationOfName(selectedDiagram.name)
-    : selectedNote
-      ? "markdown"
-      : "sequence";
   const isEventFlow = activeRepresentation === "event-flow";
 
   // An event flow is parsed once per edit and its diagnostics and AST are derived
@@ -1660,7 +1670,7 @@ export default function App() {
   );
   const eventFlow = eventFlowAnalysis?.flow ?? null;
   const canExportActiveDiagram =
-    !noteMode && (isEventFlow ? eventFlow !== null : ast !== null && isValid(ast));
+    !noteMode && (isEventFlow ? eventFlow !== null : isConceptual ? !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? false : ast !== null && isValid(ast));
 
   // Causal is the investigation default only when entering a new causal flow;
   // a later view click remains the user's choice while that document is open.
@@ -1687,10 +1697,10 @@ export default function App() {
   // the gutter claims no numbers either; an event flow numbers nothing this way.
   const lineBadges = useMemo(
     () =>
-      isEventFlow || ast === null || !isValid(ast)
+      !isSequence || isEventFlow || ast === null || !isValid(ast)
         ? new Map<number, number>()
         : messageStepNumbers(ast),
-    [isEventFlow, ast],
+    [isSequence, isEventFlow, ast],
   );
 
   // Every name the editor can bold and rename live, from whichever language is
@@ -1698,13 +1708,16 @@ export default function App() {
   // in an event flow. The editor never sees the AST; it receives these spans.
   const mentions = useMemo<SourceMention[]>(() => {
     if (noteMode) return [];
-    if (isEventFlow) {
+    if (isConceptual || isDatabase) return [];
+      if (isEventFlow) {
       return eventFlow ? collectEventFlowMentions(eventFlow, source) : [];
     }
     return ast ? collectParticipantMentions(ast, source) : [];
-  }, [noteMode, isEventFlow, eventFlow, ast, source]);
+  }, [noteMode, isEventFlow, isConceptual, isDatabase, eventFlow, ast, source]);
 
   const editorDiagnostics = useMemo(() => {
+    if (isConceptual) return (conceptualAnalysis?.diagnostics ?? []).map(d => ({ severity: d.severity, message: d.message, code: String(d.code), range: d.range }));
+    if (isDatabase) return (databaseAnalysis?.diagnostics ?? []).map(d => ({ severity: d.severity, message: d.message, code: String(d.code), range: d.range }));
     if (!isEventFlow) {
       return diagnostics.map((diagnostic) => ({
         severity: diagnostic.severity,
@@ -1719,7 +1732,7 @@ export default function App() {
       code: String(diagnostic.code),
       range: diagnostic.range,
     }));
-  }, [isEventFlow, diagnostics, eventFlowAnalysis]);
+  }, [isConceptual, conceptualAnalysis, isDatabase, databaseAnalysis, isEventFlow, diagnostics, eventFlowAnalysis]);
 
   /**
    * The active document's own problems. A markdown note has no DSL to diagnose,
@@ -1740,13 +1753,15 @@ export default function App() {
   const outlineNodes = useMemo<OutlineNode[]>(() => {
     if (noteMode) return markdownOutline(source);
     if (isEventFlow) return eventFlowOutline(eventFlow);
+    if (!isSequence) return [];
     return sequenceOutline(ast);
-  }, [noteMode, isEventFlow, eventFlow, source, ast]);
+  }, [noteMode, isEventFlow, isSequence, eventFlow, source, ast]);
 
   // Semantic completion and hover, both answered from the index. Handing these
   // to the editor as functions keeps the editor free of project knowledge.
   const complete = useCallback(
     (request: { source: string; offset: number }) => {
+      if (isConceptual || isDatabase) return [];
       if (!isEventFlow) {
         return completeAt({
           source: request.source,
@@ -1780,7 +1795,7 @@ export default function App() {
         projectNames,
       });
     },
-    [isEventFlow, eventFlow, ast, index],
+    [isConceptual, isDatabase, isEventFlow, eventFlow, ast, index],
   );
 
   const describe = useCallback(
@@ -1804,6 +1819,7 @@ export default function App() {
           ],
         };
       }
+      if (!isSequence) return null;
       return hoverAt({
         source,
         offset,
@@ -1814,6 +1830,7 @@ export default function App() {
     },
     [
       isEventFlow,
+      isSequence,
       eventFlow,
       source,
       ast,
@@ -1842,9 +1859,13 @@ export default function App() {
         );
         return;
       }
+      if (!isSequence) {
+        setActiveNodeId(null);
+        return;
+      }
       setActiveNodeId(ast ? nodeIdAtOffset(source, ast, offset) : null);
     },
-    [noteMode, isEventFlow, eventFlow, source, ast],
+    [noteMode, isEventFlow, isSequence, eventFlow, source, ast],
   );
 
   // Preview → editor: clicking a rendered element selects its source range. The
@@ -1855,9 +1876,13 @@ export default function App() {
         ? eventFlow
           ? eventFlowNodeById(eventFlow, nodeId)?.range
           : undefined
-        : ast
-          ? nodeRangeById(ast, nodeId)
-          : null;
+        : activeRepresentation === "conceptual"
+          ? parseConceptualSyntax(source).ast.declarations.find(
+              (declaration) => declaration.kind === "concept" && declaration.id === nodeId,
+            )?.range
+          : isSequence && ast
+            ? nodeRangeById(ast, nodeId)
+            : null;
       if (!range) return;
       setActiveSemanticMessageId(null);
       const offsets = rangeToOffsets(source, range);
@@ -1874,7 +1899,7 @@ export default function App() {
       // node now, and the canvas should say so.
       setActiveNodeId(nodeId);
     },
-    [isEventFlow, eventFlow, ast, source],
+    [isEventFlow, activeRepresentation, isSequence, eventFlow, ast, source],
   );
 
   const onSemanticMessageSelect = useCallback(
@@ -3745,6 +3770,10 @@ export default function App() {
                       onOpenDiagramLink={openDiagramLink}
                       onOpenResourceLink={openResourceLink}
                     />
+                  ) : isConceptual ? (
+                    <ConceptualPreview source={renderedSource || source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
+                  ) : isDatabase ? (
+                    <div className="preview__empty" role="status">Database source is editable and validated; its visual rendering is not available yet.</div>
                   ) : isEventFlow ? (
                     <>
                       <EventFlowPreview

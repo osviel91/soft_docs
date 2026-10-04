@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog";
+export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog" | "conceptual";
 
 type Guide = { title: string; read: string; notation: string[]; interaction: string[] };
 
@@ -36,6 +36,12 @@ export const DIAGRAM_GUIDES: Record<GuidanceView, Guide> = {
     notation: ["Published by and Consumed by list authored publication and subscription occurrences.", "Failure and retry details appear only when documented; missing mechanisms or exhaustion are labeled unknown."],
     interaction: ["Select a message, service, channel, failure, or retry to reveal its source."],
   },
+  conceptual: {
+    title: "Conceptual",
+    read: "Each box is an authored concept. Connections show only relationships documented in this resource; missing connections do not mean a relationship is absent.",
+    notation: ["Directed arrows preserve the authored direction; undirected lines remain undirected.", "Connection labels are open authored text and do not imply topology, execution, or causality."],
+    interaction: ["Select a concept to reveal its source declaration. Pan and zoom with the canvas controls."],
+  },
 };
 
 export default function DiagramGuidance({ view, comparison = false, diffDecorations = false }: { view: GuidanceView; comparison?: boolean; diffDecorations?: boolean }) {
@@ -65,6 +71,7 @@ export default function DiagramGuidance({ view, comparison = false, diffDecorati
         {view === "event-flow" && <><span className="diagram-guidance__box">service</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">event</span></>}
         {view === "topology" && <><span className="diagram-guidance__box">producer</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">consumer</span></>}
         {view === "causal" && <><span className="diagram-guidance__box">message</span><span className="diagram-guidance__message diagram-guidance__message--dashed" /><span className="diagram-guidance__box">effect</span></>}
+        {view === "conceptual" && <><span className="diagram-guidance__box">concept</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">concept</span></>}
       </div>}
       <details className="diagram-guidance__more"><summary>Learn more</summary>
         {comparison && <p>Each viewer is a separate resource and context. A shared semantic selection highlights occurrences, not resource changes.</p>}

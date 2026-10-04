@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import MarkdownView from "../notes/MarkdownView";
 import Preview from "../preview/Preview";
 import EventFlowPreview, { type EventFlowView } from "../preview/EventFlowPreview";
+import ConceptualPreview from "../preview/ConceptualPreview";
 import { noteDisplayName } from "../../language/markdown/note-title";
 import { diagramDisplayName } from "../../language/diagram-title";
 
@@ -53,11 +54,13 @@ export default function PresentationMode({ projectName, resources, initialId, in
   if (!selected) return <main className="presentation"><header><strong>{projectName}</strong><button onClick={onExit}>Exit presentation</button></header><p>No presentable architecture is available.</p></main>;
   const markdown = selected.type === "markdown-document" || selected.path.endsWith(".md");
   const eventFlow = selected.type === "event-flow" || /\.(flow|eventflow)$/i.test(selected.path);
+  const conceptual = selected.type === "conceptual";
+  const database = selected.type === "database";
   const title = markdown ? noteDisplayName(selected.path, selected.content) : diagramDisplayName(selected.path, selected.content);
   return <main className="presentation" aria-label="Architecture presentation" data-testid="presentation-mode">
     <header className="presentation__header"><div><strong>{projectName}</strong><span>{title}</span></div><button type="button" onClick={onExit}>Exit presentation <kbd>Esc</kbd></button></header>
     <section className={`presentation__stage${markdown ? " presentation__stage--markdown" : ""}`} aria-label={`${title}, item ${index + 1} of ${ordered.length}`}>
-      {markdown ? <MarkdownView markdown={selected.content} /> : eventFlow ? <EventFlowPreview source={selected.content} view={eventView} onViewChange={(view) => { setEventView(view); onRepresentationChange?.(view); }} /> : <Preview source={selected.content} />}
+       {markdown ? <MarkdownView markdown={selected.content} /> : eventFlow ? <EventFlowPreview source={selected.content} view={eventView} onViewChange={(view) => { setEventView(view); onRepresentationChange?.(view); }} /> : conceptual ? <ConceptualPreview source={selected.content} /> : database ? <p role="status">Database source is not renderable in Presentation yet.</p> : <Preview source={selected.content} />}
     </section>
     <footer className="presentation__controls">
       <button type="button" aria-label="Previous presentation item" onClick={() => move(index - 1)} disabled={index <= 0}>‹ Previous</button>
