@@ -1,0 +1,69 @@
+import { useEffect, useState } from "react";
+import type { ProjectShareRecord, ServerApiClient } from "../../workspace/server/api-client";
+
+const date = (value: string) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+export default function ProjectShareDialog({ projectId, client, onClose }: { projectId: string; client: ServerApiClient; onClose: () => void }) {
+  const [grants, setGrants] = useState<ProjectShareRecord[]>([]);
+  const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  const [createdExpiry, setCreatedExpiry] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pendingRevoke, setPendingRevoke] = useState<ProjectShareRecord | null>(null);
+
+  const refresh = async () => setGrants(await client.listProjectShares(projectId));
+  useEffect(() => { void refresh().catch(() => setError("Could not load shared links. Try again.")); }, [projectId]);
+
+  const create = async () => {
+    setBusy(true); setError(""); setCopied(false);
+    try {
+      const result = await client.createProjectShare(projectId);
+      setCreatedUrl(new URL(`/share/${encodeURIComponent(result.token)}`, window.location.origin).href);
+      setCreatedExpiry(result.grant.expiresAt);
+      await refresh();
+    } catch { setError("Could not create a link. Try again."); }
+    finally { setBusy(false); }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(createdUrl!); setCopied(true); setError(""); }
+    catch { setCopied(false); setError("Copy failed. Select and copy the link above."); }
+  };
+
+  const revoke = async () => {
+    if (!pendingRevoke) return;
+    setBusy(true);
+    try { await client.revokeProjectShare(projectId, pendingRevoke.id); setPendingRevoke(null); await refresh(); }
+    catch { setError("Could not revoke this link. Try again."); }
+    finally { setBusy(false); }
+  };
+
+  return <div className="share-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <button type="button" className="share-dialog__close" aria-label="Close share management" onClick={onClose}>×</button>
+      <p className="login-card__eyebrow">Project sharing</p><h2 id="share-title">Share project</h2>
+      <p>Anyone with this link can view the project's shared documentation. The link does not grant editing or workspace membership.</p>
+      {createdUrl ? <section aria-label="New link">
+        <h3>Link created</h3><label htmlFor="created-share-url">Read-only link</label>
+        <input id="created-share-url" readOnly value={createdUrl} onFocus={(event) => event.currentTarget.select()} />
+        <button type="button" className="button button--primary" onClick={() => void copy()}>{copied ? "Copied" : "Copy link"}</button>
+        <p>Expires {createdExpiry ? date(createdExpiry) : "as shown in Existing links"}</p>
+        <small>Keep this link safe. Anyone with it can view this project's shared documentation.</small>
+      </section> : <button type="button" className="button button--primary" disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create read-only link"}</button>}
+      <h3>Existing links</h3>
+      {grants.length === 0 ? <p>No links yet.</p> : <ul className="share-link-list">{grants.map((grant) => <li key={grant.id}>
+        <strong>{grant.state === "ACTIVE" ? "Active" : grant.state === "EXPIRED" ? "Expired" : "Revoked"}</strong>
+        <span>Created {date(grant.createdAt)} · Expires {date(grant.expiresAt)}</span>
+        {grant.revokedAt ? <span>Revoked {date(grant.revokedAt)}</span> : null}
+        {grant.state === "ACTIVE" ? <button type="button" disabled={busy} onClick={() => setPendingRevoke(grant)}>Revoke</button> : null}
+      </li>)}</ul>}
+      <p className="share-dialog__footnote">Revoking a link prevents future access through it; it does not erase information already obtained.</p>
+      {error ? <p role="alert">{error}</p> : null}
+      {pendingRevoke ? <div className="share-confirm" role="alertdialog" aria-modal="true" aria-labelledby="revoke-title">
+        <h3 id="revoke-title">Revoke this link?</h3><p>This link will stop working immediately. Other active links are not affected.</p>
+        <button type="button" onClick={() => setPendingRevoke(null)}>Cancel</button><button type="button" className="button button--danger" disabled={busy} onClick={() => void revoke()}>Revoke link</button>
+      </div> : null}
+    </section>
+  </div>;
+}

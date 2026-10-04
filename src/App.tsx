@@ -142,6 +142,7 @@ import QuickOpen from "./features/quickopen/QuickOpen";
 import type { QuickOpenItem } from "./features/quickopen/quick-open-model";
 import { useProjectIndex } from "./features/project/use-project-index";
 import ProjectOverview from "./features/project/ProjectOverview";
+import ProjectShareDialog from "./features/project/ProjectShareDialog";
 import {
   eventFlowOutline,
   markdownOutline,
@@ -534,6 +535,7 @@ export default function App() {
   const [referenceTitle, setReferenceTitle] = useState("");
   // The diagram export dialog, opened from the palette or the toolbar.
   const [exportDiagramOpen, setExportDiagramOpen] = useState(false);
+  const [shareProjectId, setShareProjectId] = useState<string | null>(null);
   // A restore that has to open another diagram's tab first; applied once that
   // document is the one on screen.
   const [pendingRestore, setPendingRestore] = useState<{
@@ -2657,6 +2659,9 @@ export default function App() {
     if (menu.kind === "project") {
       const { project } = menu;
       return [
+        ...(server.active?.project.id === project.id && server.active.project.role === "OWNER"
+          ? [{ id: "share-project", label: "Share project…", onSelect: () => setShareProjectId(project.id) }]
+          : []),
         ...(workspaceMode === "local" && auth.status === "authenticated"
           ? [
               {
@@ -2890,6 +2895,7 @@ export default function App() {
       revisionReturnContext,
       server.active?.contextId,
       server.active?.project.id,
+      server.active?.project.role,
       server.privateWorkContexts,
       server.openPrivateWork,
       server.openProject,
@@ -3990,6 +3996,8 @@ export default function App() {
           onCancel={tabsHook.dismissSaveError}
         />
       )}
+
+      {shareProjectId ? <ProjectShareDialog projectId={shareProjectId} client={apiClient} onClose={() => setShareProjectId(null)} /> : null}
 
       {pendingDelete && (
         <ConfirmDialog

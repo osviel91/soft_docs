@@ -121,6 +121,24 @@ export interface ServerProjectAccess {
   permissions: readonly string[];
 }
 
+export interface ProjectShareRecord {
+  id: string;
+  projectId: string;
+  createdByUserId: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  revokedByUserId: string | null;
+  state: "ACTIVE" | "REVOKED" | "EXPIRED";
+}
+
+export interface PublicSharedProject {
+  project: { name: string };
+  folders: string[];
+  resources: Array<{ id: string; path: string; type: ServerResourceType; revision: number; title: string; description?: string; tags?: string[]; content: string }>;
+  catalog: Record<string, unknown>;
+}
+
 export interface ServerPrivateWorkContext {
   id: string;
   projectId: string;
@@ -607,6 +625,27 @@ export class ServerApiClient {
       `/api/projects/${encodeURIComponent(projectId)}/capabilities`,
     );
     return body.capabilities;
+  }
+
+  async createProjectShare(projectId: string): Promise<{ token: string; grant: ProjectShareRecord }> {
+    return this.request("POST", `/api/projects/${encodeURIComponent(projectId)}/shares`, {});
+  }
+
+  async listProjectShares(projectId: string): Promise<ProjectShareRecord[]> {
+    const body = await this.request<{ grants: ProjectShareRecord[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/shares`);
+    return body.grants ?? [];
+  }
+
+  async revokeProjectShare(projectId: string, grantId: string): Promise<void> {
+    await this.request("DELETE", `/api/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(grantId)}`);
+  }
+
+  async readPublicSharedProject(token: string): Promise<PublicSharedProject> {
+    // Deliberately omit ambient session credentials: the bearer link alone defines this view.
+    const response = await fetch(`/api/public/projects/shared/${encodeURIComponent(token)}`, { credentials: "omit", cache: "no-store", headers: { Accept: "application/json" } });
+    if (response.status === 404) throw new Error("unavailable");
+    if (!response.ok) throw new Error("network");
+    return response.json() as Promise<PublicSharedProject>;
   }
 
   /** Every resource a project records. */
