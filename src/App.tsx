@@ -3306,6 +3306,8 @@ export default function App() {
                       serverProjectsError={server.projectsError}
                       activeServerProjectId={server.active?.project.id ?? null}
                       activeServerProjectName={server.active?.project.name ?? null}
+                      canShareProject={server.active?.project.role === "OWNER"}
+                      onShareProject={() => { if (server.active?.project.role === "OWNER") setShareProjectId(server.active.project.id); }}
                       serverOpenError={server.openError}
                       onOpenLocal={openLocalWorkspace}
                       onOpenFolder={openFolder}

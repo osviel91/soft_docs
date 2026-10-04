@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProjectShareRecord, ServerApiClient } from "../../workspace/server/api-client";
 
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -11,9 +11,27 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState<ProjectShareRecord | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
 
   const refresh = async () => setGrants(await client.listProjectShares(projectId));
-  useEffect(() => { void refresh().catch(() => setError("Could not load shared links. Try again.")); }, [projectId]);
+  useEffect(() => { void refresh().catch(() => { setLoadFailed(true); setError("Could not load shared links. Try again."); }); }, [projectId]);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = dialogRef.current;
+    const focusables = () => [...(pendingRevoke ? panel?.querySelector('[role="alertdialog"]') : panel)?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') ?? []];
+    (focusables()[0] ?? panel)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); if (pendingRevoke) setPendingRevoke(null); else onClose(); return; }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (!items.length) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1)?.focus(); }
+      else if (!event.shiftKey && document.activeElement === items.at(-1)) { event.preventDefault(); items[0].focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.removeEventListener("keydown", onKeyDown); previous?.focus(); };
+  }, [pendingRevoke]);
 
   const create = async () => {
     setBusy(true); setError(""); setCopied(false);
@@ -40,7 +58,7 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
   };
 
   return <div className="share-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title">
+    <section ref={dialogRef} className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title" tabIndex={-1}>
       <button type="button" className="share-dialog__close" aria-label="Close share management" onClick={onClose}>×</button>
       <p className="login-card__eyebrow">Project sharing</p><h2 id="share-title">Share project</h2>
       <p>Anyone with this link can view the project's shared documentation. The link does not grant editing or workspace membership.</p>
@@ -60,7 +78,8 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
       </li>)}</ul>}
       <p className="share-dialog__footnote">Revoking a link prevents future access through it; it does not erase information already obtained.</p>
       {error ? <p role="alert">{error}</p> : null}
-      {pendingRevoke ? <div className="share-confirm" role="alertdialog" aria-modal="true" aria-labelledby="revoke-title">
+      {loadFailed ? <button type="button" onClick={() => { setLoadFailed(false); void refresh().catch(() => { setLoadFailed(true); setError("Could not load shared links. Try again."); }); }}>Retry loading links</button> : null}
+      {pendingRevoke ? <div className="share-confirm" role="alertdialog" aria-modal="true" aria-labelledby="revoke-title" tabIndex={-1}>
         <h3 id="revoke-title">Revoke this link?</h3><p>This link will stop working immediately. Other active links are not affected.</p>
         <button type="button" onClick={() => setPendingRevoke(null)}>Cancel</button><button type="button" className="button button--danger" disabled={busy} onClick={() => void revoke()}>Revoke link</button>
       </div> : null}

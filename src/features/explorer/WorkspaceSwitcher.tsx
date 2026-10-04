@@ -22,6 +22,8 @@ export interface WorkspaceSwitcherProps {
   onCreateServerProject: (name: string) => void;
   onSelectServerWorkspace?: (workspaceId: string) => void;
   onReloadServerProjects?: () => void;
+  canShareProject?: boolean;
+  onShareProject?: () => void;
 }
 
 export default function WorkspaceSwitcher({
@@ -42,6 +44,8 @@ export default function WorkspaceSwitcher({
   onCreateServerProject,
   onSelectServerWorkspace,
   onReloadServerProjects,
+  canShareProject = false,
+  onShareProject,
 }: WorkspaceSwitcherProps) {
   const [projectFilter, setProjectFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -66,6 +70,7 @@ export default function WorkspaceSwitcher({
           <button type="button" className="workspaces__back" data-testid="workspace-back-to-projects" aria-expanded={projectPickerOpen} onClick={() => setProjectPickerOpen((open) => !open)}>
             {projectPickerOpen ? "Hide projects" : "Switch project"}
           </button>
+          {canShareProject && onShareProject ? <button type="button" className="workspaces__back" data-testid="workspace-share-project" onClick={onShareProject}>Share project…</button> : null}
           {onReloadServerProjects ? <button type="button" className="workspaces__reload" data-testid="workspace-server-refresh" onClick={onReloadServerProjects} title="Refresh project data" aria-label="Refresh project data">↻</button> : null}
         </div>
         {projectPickerOpen ? <div className="workspaces__project-picker">

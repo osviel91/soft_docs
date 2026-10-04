@@ -42,6 +42,9 @@ describe("project sharing UI", () => {
     expect(link.value).toContain("/share/bearer");
     expect(client.createProjectShare).toHaveBeenCalledWith("p1");
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
     fireEvent.click(screen.getByRole("button", { name: "Revoke link" }));
     await waitFor(() => expect(client.revokeProjectShare).toHaveBeenCalledWith("p1", "g1"));
   });

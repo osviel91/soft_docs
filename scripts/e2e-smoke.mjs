@@ -547,7 +547,7 @@ async function openMyWorkContext(page, contextId) {
 }
 
 /** Seed authoritative SHARED content for a read-only consumer scenario. */
-async function bootstrapSharedProject(page, name, content) {
+async function bootstrapSharedProject(page, name, content, resources = null) {
   const workspaces = await apiRequest(page, "/api/workspaces");
   const workspace = workspaces.json?.workspaces?.[0];
   if (!workspace) throw new Error("no server workspace is available");
@@ -556,7 +556,7 @@ async function bootstrapSharedProject(page, name, content) {
     body: JSON.stringify({
       workspaceId: workspace.id,
       name,
-      resources: [
+      resources: resources ?? [
         {
           path: "Untitled.seq",
           type: "sequence-diagram",
@@ -783,6 +783,7 @@ async function createDocument(page, projectName, menuTestId) {
 
 /** Run one labelled scenario, recording its completion as a single check. */
 async function scenario(name, body) {
+  if (process.env.E2E_SCENARIO && process.env.E2E_SCENARIO !== name) return;
   console.log(`\n${name}`);
   try {
     await body();
@@ -2291,6 +2292,101 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     }
   });
 
+  await scenario("Project shares provide a governed anonymous read-only reader", async () => {
+    const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1100 }, permissions: ["clipboard-read", "clipboard-write"] });
+    const anonymousContext = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const authenticatedContext = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const ownerPage = await ownerContext.newPage();
+    const anonymousPage = await anonymousContext.newPage();
+    const authenticatedPage = await authenticatedContext.newPage();
+    let projectId = null;
+    let workspaceId = null;
+    let shareUrl = null;
+    let secondShareUrl = null;
+    try {
+      await ownerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(ownerPage);
+      await signIn(ownerPage, idp, owner);
+      workspaceId = (await apiRequest(ownerPage, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(ownerPage, "/api/projects/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          name: "Governed Share E2E",
+          resources: [
+            { path: "overview.md", type: "markdown-document", content: "# Shared overview\n\n[Architecture](architecture.seq)" },
+            { path: "architecture.seq", type: "sequence-diagram", content: "title Shared architecture\nparticipant Browser\nparticipant API\nBrowser->API: request" },
+            { path: "events.eventseq", type: "event-flow", content: "event OrderPlaced\ntopic orders\nproducer Shop\nconsumer Billing\nShop publishes OrderPlaced to orders\nBilling consumes OrderPlaced from orders" },
+          ],
+        }),
+      });
+      check("C.4 bootstrap creates the real shared project fixture", created.status === 201, `${created.status}`);
+      projectId = created.json.project.id;
+      await ownerPage.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(ownerPage);
+      await openServerProject(ownerPage, "Governed Share E2E");
+      await ownerPage.getByTestId("workspace-share-project").click();
+      await ownerPage.getByRole("dialog", { name: "Share project" }).waitFor({ state: "visible" });
+      await ownerPage.getByRole("button", { name: "Create read-only link" }).click();
+      const linkInput = ownerPage.getByLabel("Read-only link");
+      await linkInput.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      shareUrl = await linkInput.inputValue();
+      await ownerPage.getByRole("button", { name: "Copy link" }).click();
+      check("owner creates, copies, and sees an active C.4 share", await ownerPage.evaluate(() => navigator.clipboard.readText()) === shareUrl && await ownerPage.getByText("Active", { exact: true }).count() === 1);
+      await ownerPage.getByRole("button", { name: "Close share management" }).click();
+      await ownerPage.getByTestId("workspace-share-project").click();
+      await ownerPage.getByRole("button", { name: "Create read-only link" }).click();
+      secondShareUrl = await ownerPage.getByLabel("Read-only link").inputValue();
+      check("a project can hold multiple independently active share grants", secondShareUrl !== shareUrl && await ownerPage.getByText("Active", { exact: true }).count() === 2);
+
+      await anonymousPage.goto(shareUrl, { waitUntil: "domcontentloaded" });
+      await anonymousPage.getByTestId("public-reader").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("anonymous public shell exposes no private controls", await anonymousPage.locator('[data-testid="app-shell"], [data-testid*="my-work"], [data-testid*="proposal"]').count() === 0 && await anonymousPage.getByRole("button", { name: /edit|governance|workspace/i }).count() === 0);
+      await anonymousPage.getByRole("link", { name: "Architecture" }).click();
+      await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await anonymousPage.getByRole("button", { name: "How to read Sequence" }).click();
+      await anonymousPage.getByRole("heading", { name: "How to read Sequence" }).waitFor({ state: "visible" });
+      check("public reader navigates Markdown and renders canonical Sequence with opt-in guidance", true);
+      await anonymousPage.getByRole("button", { name: "Events" }).click().catch(async () => {
+        await anonymousPage.getByRole("button", { name: "events.eventseq" }).click();
+      });
+      await anonymousPage.getByTestId("event-flow-preview").waitFor({ state: "visible" });
+      await anonymousPage.getByRole("button", { name: "Topology" }).click();
+      await anonymousPage.getByTestId("event-topology").waitFor({ state: "visible" });
+      await anonymousPage.getByRole("button", { name: "Causal" }).click();
+      await anonymousPage.getByTestId("event-causal").waitFor({ state: "visible" });
+      await anonymousPage.getByRole("button", { name: "Catalog" }).click();
+      await anonymousPage.getByTestId("event-catalog").waitFor({ state: "visible" });
+      check("public Event Flow exposes canonical Topology, Causal, and Catalog views", true);
+
+      const beforeUsers = (await apiRequest(e2ePlatformAdminPage, "/api/admin/users")).json.users.length;
+      const beforeMembers = (await apiRequest(ownerPage, `/api/workspaces/${workspaceId}/members`)).json.members.length;
+      await authenticatedPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(authenticatedPage);
+      await signIn(authenticatedPage, idp, owner);
+      await authenticatedPage.goto(shareUrl, { waitUntil: "domcontentloaded" });
+      await authenticatedPage.getByTestId("public-reader").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("authenticated recipient still gets only public reader", await authenticatedPage.locator('[data-testid="app-shell"]').count() === 0 && await authenticatedPage.getByRole("heading", { name: "Governed Share E2E" }).count() === 1);
+      check("anonymous retrieval creates no user or workspace membership", (await apiRequest(e2ePlatformAdminPage, "/api/admin/users")).json.users.length === beforeUsers && (await apiRequest(ownerPage, `/api/workspaces/${workspaceId}/members`)).json.members.length === beforeMembers);
+
+      await ownerPage.getByRole("button", { name: "Close share management" }).click();
+      await ownerPage.getByTestId("workspace-share-project").click();
+      await ownerPage.getByRole("button", { name: "Revoke" }).first().click();
+      await ownerPage.getByRole("button", { name: "Revoke link" }).click();
+      await ownerPage.getByText("Revoked", { exact: true }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await anonymousPage.goto(secondShareUrl, { waitUntil: "domcontentloaded" });
+      await anonymousPage.getByText("This shared project is no longer available.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await authenticatedPage.goto(shareUrl, { waitUntil: "domcontentloaded" });
+      await authenticatedPage.getByTestId("public-reader").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("revoking one link updates management, blocks next retrieval, and preserves the other grant", true);
+    } finally {
+      if (projectId) await apiRequest(ownerPage, `/api/projects/${projectId}`, { method: "DELETE" });
+      await ownerContext.close();
+      await anonymousContext.close();
+      await authenticatedContext.close();
+    }
+  });
+
   if (process.env.E2E_SCENARIO !== "governed-proposal") {
   await scenario(
     "Server scenario 1: a server project's diagram survives a reload",
@@ -3543,11 +3639,13 @@ async function main() {
       viewport: { width: 1440, height: 1600 },
     });
     const checksPage = await checksContext.newPage();
-    if (process.env.E2E_SCENARIO !== "governed-proposal") {
+    if (!process.env.E2E_SCENARIO || process.env.E2E_SCENARIO === "browser-smoke") {
       await runChecks(checksPage, idp);
     }
     await checksContext.close();
-    await runServerChecks(browser, idp, `http://127.0.0.1:${apiPort}`, mcp.mcpBase);
+    if (!process.env.E2E_SCENARIO || process.env.E2E_SCENARIO !== "browser-smoke") {
+      await runServerChecks(browser, idp, `http://127.0.0.1:${apiPort}`, mcp.mcpBase);
+    }
   } finally {
     await browser?.close().catch(() => {});
     e2ePlatformAdminPage = null;
