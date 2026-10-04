@@ -3696,6 +3696,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         body: JSON.stringify({ contextId: work.id, path: "customers.concept", type: "conceptual", content: base }),
       });
       if (workResource.status !== 201) throw new Error(`MY WORK Conceptual creation failed: ${workResource.status} ${workResource.text}`);
+      // The resource is added outside the UI, so reopen the project to refresh its resource tree.
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.locator('[data-testid="explorer-my-work-section"] [data-testid="select-diagram-button"]').click();
