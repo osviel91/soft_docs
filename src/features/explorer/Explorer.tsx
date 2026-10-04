@@ -75,8 +75,10 @@ export interface ExplorerProps {
   onAddMenu?: (project: Project, position: MenuPosition) => void;
   /** Called when the user selects a diagram to load it into the editor. */
   onLoadDiagram: (diagram: DiagramFile) => void;
+  onLoadSharedDiagram?: (diagram: DiagramFile) => void;
   /** Called when the user selects a note to load it into the editor. */
   onLoadNote?: (note: NoteFile) => void;
+  onLoadSharedNote?: (note: NoteFile) => void;
   /** Open the actions menu for a diagram at the reported position. */
   onDiagramMenu?: (diagram: DiagramFile, position: MenuPosition) => void;
   /** Open the actions menu for a note at the reported position. */
@@ -219,7 +221,9 @@ function ServerWorkspaceExplorer({
   selectedNoteId = null,
   openProposalCounts = {},
   onLoadDiagram,
+  onLoadSharedDiagram,
   onLoadNote,
+  onLoadSharedNote,
   onDiagramMenu,
   onNoteMenu,
   switcher,
@@ -262,7 +266,7 @@ function ServerWorkspaceExplorer({
       <div className="explorer__provenance-tree" data-testid="explorer-provenance-tree">
          <section className="explorer__provenance-section" data-testid="explorer-shared-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-shared-toggle" aria-expanded={sharedExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, shared: true })); setSharedExpanded((expanded) => !expanded); }}>SHARED <span className="explorer__section-meta">authoritative</span><span aria-hidden="true">{sharedExpanded ? "▾" : "▸"}</span></button></h2>
-          {sharedExpanded ? <ServerResourceTree diagrams={sharedDiagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery))} notes={sharedNotes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery))} selectedDiagramId={activeContextId === null ? selectedDiagramId : null} selectedNoteId={activeContextId === null ? selectedNoteId : null} openProposalCounts={openProposalCounts} onLoadDiagram={activeContextId === null ? onLoadDiagram : () => undefined} onLoadNote={activeContextId === null ? onLoadNote : undefined} onDiagramMenu={activeContextId === null ? onDiagramMenu : undefined} onNoteMenu={activeContextId === null ? onNoteMenu : undefined} /> : null}
+          {sharedExpanded ? <ServerResourceTree diagrams={sharedDiagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery))} notes={sharedNotes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery))} selectedDiagramId={activeContextId === null ? selectedDiagramId : null} selectedNoteId={activeContextId === null ? selectedNoteId : null} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadSharedDiagram ?? onLoadDiagram} onLoadNote={onLoadSharedNote ?? onLoadNote} onDiagramMenu={activeContextId === null ? onDiagramMenu : undefined} onNoteMenu={activeContextId === null ? onNoteMenu : undefined} /> : null}
         </section>
            <section className="explorer__provenance-section" data-testid="explorer-my-work-section">
             <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, myWork: true })); setMyWorkExpanded((expanded) => !expanded); }}>MY WORK <span className="explorer__section-meta">private · editable</span><span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{activeContextId !== null && activeProject && onAddMenu ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={(event) => onAddMenu(activeProject, positionBelow(event.currentTarget))}>+</button> : onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create MY WORK draft" title="Create MY WORK draft" onClick={() => onCreateMyWork()}>+</button> : null}{activeContextId !== null && onMyWorkMenu ? <button type="button" className="explorer__section-add explorer__section-add--menu" data-testid="explorer-my-work-actions" aria-label="MY WORK actions" title="MY WORK actions" onClick={(event) => { const work = privateWorkContexts.find((entry) => entry.id === activeContextId); if (work) onMyWorkMenu(work, positionBelow(event.currentTarget)); }}>⋯</button> : null}</h2>

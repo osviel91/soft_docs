@@ -905,10 +905,14 @@ body {
   gap: 16px;
   height: var(--toolbar-height);
   padding: 0 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
+
+.app__toolbar > * { flex-shrink: 0; }
 
 .app__brand {
   display: flex;

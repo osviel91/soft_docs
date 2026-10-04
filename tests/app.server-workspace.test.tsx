@@ -401,6 +401,19 @@ describe("App — authenticated browser", () => {
     );
   });
 
+  it("returns from MY WORK to a selected SHARED artifact", async () => {
+    await openServerProject("title Checkout", true);
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("explorer-shared-section")).getByTestId("select-diagram-button"));
+    });
+
+    await waitFor(() => {
+      expect(state.calls.filter((call) => call.path === "/api/projects/p1/access").length).toBeGreaterThan(1);
+      expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Checkout");
+    });
+  });
+
   it("keeps the project selected from the explorer instead of navigating back to the previous one", async () => {
     state.multipleProjects = true;
     await openServerProject("title Checkout", false);

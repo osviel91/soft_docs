@@ -773,6 +773,21 @@ export default function App() {
   } = workspace;
   const { diagrams: sharedDiagrams, notes: sharedNotes } = sharedWorkspace;
 
+  const loadSharedDiagram = useCallback((diagram: DiagramFile): void => {
+    if (server.active?.contextId !== null && server.active) {
+      void server.openProject(server.active.project).then(() => sharedWorkspace.loadDiagram(diagram));
+    } else {
+      sharedWorkspace.loadDiagram(diagram);
+    }
+  }, [server.active, server.openProject, sharedWorkspace.loadDiagram]);
+  const loadSharedNote = useCallback((note: NoteFile): void => {
+    if (server.active?.contextId !== null && server.active) {
+      void server.openProject(server.active.project).then(() => sharedWorkspace.loadNote(note));
+    } else {
+      sharedWorkspace.loadNote(note);
+    }
+  }, [server.active, server.openProject, sharedWorkspace.loadNote]);
+
   useEffect(() => {
     if (!proposalCodeTarget || (proposalCodeTarget.contextId !== null && server.active?.contextId !== proposalCodeTarget.contextId)) return;
     const resources = proposalCodeTarget.contextId === null ? [...sharedDiagrams, ...sharedNotes] : [...diagrams, ...notes];
@@ -3301,8 +3316,10 @@ export default function App() {
                   onAddMenu={(project, position) =>
                     setMenu({ kind: "project-add", project, ...position })
                   }
-                  onLoadDiagram={loadDiagram}
-                  onLoadNote={loadNote}
+                   onLoadDiagram={loadDiagram}
+                   onLoadSharedDiagram={loadSharedDiagram}
+                   onLoadNote={loadNote}
+                   onLoadSharedNote={loadSharedNote}
                   onDiagramMenu={(diagram, position) =>
                     setMenu({ kind: "diagram", diagram, ...position })
                   }
