@@ -433,7 +433,7 @@ export function createFileSystemWorkspaceRepository(
   async function saveResourceMetadata(
     projectId: string,
     path: string,
-    type: "sequence-diagram" | "event-flow" | "markdown-document",
+    type: import("../../domain/workspace/resource-id").ResourceType,
     metadata: DiagramFile["metadata"],
   ): Promise<Result<void, Error>> {
     const current = await readProjectMetadata(projectId);
@@ -450,6 +450,10 @@ export function createFileSystemWorkspaceRepository(
             ? "markdown-document"
             : /\.eventseq$/i.test(name)
               ? "event-flow"
+              : /\.concept$/i.test(name)
+                ? "conceptual"
+                : /\.dbschema$/i.test(name)
+                  ? "database"
               : "sequence-diagram",
         });
       }

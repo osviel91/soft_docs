@@ -41,6 +41,7 @@ import { up as proposalLifecycle } from "./migrations/0025-proposal-lifecycle";
 import { up as workspaceSelfReview } from "./migrations/0026-workspace-self-review";
 import { up as workspaceInvitations } from "./migrations/0027-workspace-invitations";
 import { up as projectShareGrants } from "./migrations/0028-project-share-grants";
+import { up as conceptualDatabaseTypes } from "./migrations/0029-conceptual-database-resource-types";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -82,6 +83,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 26, name: "workspace-self-review", sql: workspaceSelfReview },
   { version: 27, name: "workspace-invitations", sql: workspaceInvitations },
   { version: 28, name: "project-share-grants", sql: projectShareGrants },
+  { version: 29, name: "conceptual-database-resource-types", sql: conceptualDatabaseTypes },
 ];
 
 /**

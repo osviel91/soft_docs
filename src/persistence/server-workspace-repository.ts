@@ -640,6 +640,10 @@ export class ServerWorkspaceRepository implements RevisionedWorkspaceRepository 
         ? ".md"
         : kind === "event-flow"
           ? ".eventseq"
+          : kind === "conceptual"
+            ? ".concept"
+            : kind === "database"
+              ? ".dbschema"
           : ".seq";
     const stem = wanted.replace(/\.[^./\\]+$/, "");
     for (let index = 0; index < 1000; index += 1) {

@@ -134,7 +134,9 @@ export function toResourceType(value: unknown): ResourceType {
   if (
     value === "sequence-diagram" ||
     value === "event-flow" ||
-    value === "markdown-document"
+    value === "markdown-document" ||
+    value === "conceptual" ||
+    value === "database"
   ) {
     return value;
   }

@@ -850,7 +850,7 @@ export function createMcpTools(): McpTool[] {
         limit: limit(100, 500),
         cursor: cursor(),
         type: z
-          .enum(["sequence-diagram", "event-flow", "markdown-document"])
+          .enum(["sequence-diagram", "event-flow", "markdown-document", "conceptual", "database"])
           .optional()
           .describe("Only list resources of this kind."),
       },
@@ -1487,7 +1487,7 @@ export function createMcpTools(): McpTool[] {
             'The project-relative path, for example "checkout.seq" or "notes/overview.md". No absolute paths and no "..".',
           ),
         type: z
-          .enum(["sequence-diagram", "event-flow", "markdown-document"])
+          .enum(["sequence-diagram", "event-flow", "markdown-document", "conceptual", "database"])
           .describe("What is being created."),
         content: z.string().describe("The full text of the new resource."),
         idempotencyKey: idempotencyKey(),

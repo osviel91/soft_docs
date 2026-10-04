@@ -101,6 +101,15 @@ async function violations(
 }
 
 describe("dependency rule (ADR-039)", () => {
+  it("keeps the new semantic cores separate from each other and visualization", async () => {
+    const conceptual = await readFile(path.join(ROOT, "src/domain/conceptual/model.ts"), "utf8");
+    const database = await readFile(path.join(ROOT, "src/domain/database/model.ts"), "utf8");
+    const visualTerms = /(?:^|\n)\s*(?:x|y|width|height|ports|svg|color|coordinates|layoutRank|camera|zoom)\??\s*:/i;
+    expect(conceptual).not.toMatch(visualTerms);
+    expect(database).not.toMatch(/conceptual|eventflow|diagram|renderer|layout/i);
+    expect(database).not.toMatch(visualTerms);
+  });
+
   it("keeps the domain and application layers free of React and features", async () => {
     const files = [
       ...(await filesUnder(path.join(ROOT, "src/domain"))),

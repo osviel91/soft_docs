@@ -101,7 +101,7 @@ export interface ServerWorkspaceInvitation extends WorkspaceInvitationPreview {
 
 /** The type a server resource can carry. */
 export type ServerResourceType =
-  "sequence-diagram" | "event-flow" | "markdown-document";
+  "sequence-diagram" | "event-flow" | "markdown-document" | "conceptual" | "database";
 
 /** A resource's identity and concurrency state, as the API renders it. */
 export interface ServerResource {
@@ -354,7 +354,7 @@ export interface ServerChangeProposalDiff extends ResourceDiff {
   baseRevision: number;
   currentRevision: number;
   stale: boolean;
-  type: "sequence-diagram" | "event-flow" | "markdown-document";
+  type: "sequence-diagram" | "event-flow" | "markdown-document" | "conceptual" | "database";
   baseContent: string;
   proposedContent: string;
   baseMetadata?: ResourceMetadata;

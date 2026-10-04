@@ -19,7 +19,7 @@ function metadata(value: unknown): ResourceMetadata | undefined {
 }
 
 function isResourceType(value: unknown): value is ResourceType {
-  return value === "sequence-diagram" || value === "event-flow" || value === "markdown-document";
+  return value === "sequence-diagram" || value === "event-flow" || value === "markdown-document" || value === "conceptual" || value === "database";
 }
 
 function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSnapshot[], messages: ProposalSemanticMessageSnapshot[], relationships: ProposalRelationshipSnapshot[]): ArchitecturalProposal {

@@ -602,8 +602,8 @@ export function createRouter(dependencies: AppDependencies): Router {
         if (typeof value !== "object" || value === null) throw invalid("Each bootstrap resource must be an object.");
         const item = value as Record<string, unknown>;
         if (typeof item.path !== "string" || typeof item.content !== "string" || typeof item.type !== "string") throw invalid("Each bootstrap resource requires path, type and content.");
-        if (item.type !== "sequence-diagram" && item.type !== "event-flow" && item.type !== "markdown-document") throw invalid("Invalid bootstrap resource type.");
-        return { path: item.path, content: item.content, type: item.type as "sequence-diagram" | "event-flow" | "markdown-document" };
+        if (item.type !== "sequence-diagram" && item.type !== "event-flow" && item.type !== "markdown-document" && item.type !== "conceptual" && item.type !== "database") throw invalid("Invalid bootstrap resource type.");
+        return { path: item.path, content: item.content, type: item.type as "sequence-diagram" | "event-flow" | "markdown-document" | "conceptual" | "database" };
       });
       const project = await dependencies.bootstrap.bootstrap(context, { workspaceId: requireBodyString(body, "workspaceId"), name: requireBodyString(body, "name"), resources });
       return json(201, { project: projectView({ project, role: "OWNER", resourceCount: resources.length }) });
@@ -912,11 +912,13 @@ export function createRouter(dependencies: AppDependencies): Router {
         type !== "sequence-diagram" &&
         type !== "event-flow" &&
         type !== "markdown-document"
+        && type !== "conceptual"
+        && type !== "database"
       ) {
         return errorResponse(
           422,
           "invalid",
-          "The type must be sequence-diagram, event-flow or markdown-document.",
+          "The type must be sequence-diagram, event-flow, markdown-document, conceptual or database.",
         );
       }
       const resource = await catalog.createResource(context, params.projectId, {

@@ -1,5 +1,7 @@
 import { analyze } from "../../language/analyze";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
+import { parseConceptual } from "../../language/conceptual/parser";
+import { parseDatabase } from "../../language/database/parser";
 import { eventsOf, type EventFlow } from "../eventflow/ast";
 import { resourceRepresentationOfType } from "../workspace/resource-id";
 import {
@@ -325,9 +327,11 @@ function invalidDiagnostics(
   content: string,
 ): unknown[] {
   if (type === "markdown-document") return [];
-  const result =
-    type === "event-flow" ? analyzeEventFlow(content) : analyze(content);
-  return result.diagnostics.filter(
+  const diagnostics = type === "event-flow" ? analyzeEventFlow(content).diagnostics
+    : type === "conceptual" ? parseConceptual(content).diagnostics
+    : type === "database" ? parseDatabase(content).diagnostics
+    : analyze(content).diagnostics;
+  return diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error",
   );
 }

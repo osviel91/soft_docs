@@ -51,6 +51,8 @@ import {
 import { noteTitle } from "../../language/markdown/note-title";
 import { semanticMessagesOf } from "../diagram/semantic-messages";
 import { projectEventFlowToCausalView } from "../eventflow/causal-projection";
+import { parseConceptual } from "../../language/conceptual/parser";
+import { parseDatabase } from "../../language/database/parser";
 
 /** A salt so a change to the analysis rules invalidates cached fingerprints. */
 const ANALYSIS_VERSION = "1";
@@ -443,6 +445,24 @@ export function analyzeResource(
         consumers: consumers.size,
         channels: channelsOf(flow).length,
       },
+    };
+  }
+
+  if (classification.representation === "conceptual" || classification.representation === "database") {
+    const result = classification.representation === "conceptual" ? parseConceptual(content) : parseDatabase(content);
+    const declaredTitle = result.model?.title;
+    return {
+      ...base,
+      descriptor: { ...descriptor, title: declaredTitle ?? descriptor.path },
+      declaredTitle,
+      diagnostics: result.diagnostics.map(diagnostic => ({
+        severity: diagnostic.severity,
+        message: diagnostic.message,
+        resourceId: descriptor.id,
+        code: diagnostic.code,
+        sourceRange: diagnostic.range,
+      })),
+      metrics: { participants: 0, messages: 0, words: 0, events: 0, producers: 0, consumers: 0, channels: 0 },
     };
   }
 

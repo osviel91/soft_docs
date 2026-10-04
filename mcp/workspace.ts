@@ -289,7 +289,7 @@ function diagnosticView(
 }
 
 /** The language type a requested resource kind maps onto. */
-export type ResourceKindInput = "diagram" | "note" | "event-flow";
+export type ResourceKindInput = "diagram" | "note" | "event-flow" | "conceptual" | "database";
 
 /** The resource type a tool's `kind` argument names. */
 export function resourceTypeOfInput(kind: ResourceKindInput): ResourceType {
@@ -298,6 +298,10 @@ export function resourceTypeOfInput(kind: ResourceKindInput): ResourceType {
       return "markdown-document";
     case "event-flow":
       return "event-flow";
+    case "conceptual":
+      return "conceptual";
+    case "database":
+      return "database";
     default:
       return "sequence-diagram";
   }
@@ -680,6 +684,9 @@ export class DocumentationWorkspace {
       const { flow } = analyzeEventFlow(content);
       return { resource, outline: eventFlowOutline(flow) };
     }
+    if (resource.type === "conceptual" || resource.type === "database") {
+      throw new Error(`Outline is not available for source-only ${resource.type} resources yet.`);
+    }
     return { resource, outline: markdownOutline(content) };
   }
 
@@ -976,6 +983,8 @@ export class DocumentationWorkspace {
       svg = document.svg;
       width = document.width;
       height = document.height;
+    } else if (resource.type === "conceptual" || resource.type === "database") {
+      throw new Error(`Rendering is not available for source-only ${resource.type} resources yet.`);
     } else {
       throw new Error(
         `"${resource.path}" is a markdown document, which does not render to a diagram. Use read_resource to read it.`,
@@ -1323,6 +1332,8 @@ export class DocumentationWorkspace {
     if (type === "event-flow") {
       return /\.eventseq$/i.test(name) ? name : `${name}.eventseq`;
     }
+    if (type === "conceptual") return /\.concept$/i.test(name) ? name : `${name}.concept`;
+    if (type === "database") return /\.dbschema$/i.test(name) ? name : `${name}.dbschema`;
     if (/\.eventseq$/i.test(name)) {
       throw new Error(
         `"${name}" ends with .eventseq, which makes it an event flow. Use kind "event-flow" for it.`,

@@ -158,6 +158,8 @@ function defaultResourceLimits(): ResourceSizeLimits {
     "event-flow": 1024 * 1024,
     // Markdown documents legitimately grow; still far below "multi-gigabyte".
     "markdown-document": 4 * 1024 * 1024,
+    conceptual: 1024 * 1024,
+    database: 1024 * 1024,
   };
 }
 
@@ -248,6 +250,8 @@ export function loadMcpConfig(
       "MCP_MAX_MARKDOWN_BYTES",
       defaults["markdown-document"],
     ),
+    conceptual: positiveInteger(env, "SDM_MAX_CONCEPTUAL_BYTES", defaults.conceptual),
+    database: positiveInteger(env, "SDM_MAX_DATABASE_BYTES", defaults.database),
   };
 
   const base = defaultRateLimits();

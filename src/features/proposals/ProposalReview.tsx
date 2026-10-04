@@ -478,7 +478,7 @@ export default function ProposalReview({
             activeReviewChange={currentTarget?.id}
             focusReviewChange={currentTarget?.id}
           />
-        ) : (
+        ) : representation === "sequence" ? (
           <Preview
             source={content}
             reviewChanges={semanticChanges}
@@ -489,6 +489,11 @@ export default function ProposalReview({
             activeReviewChange={currentTarget?.id}
             focusReviewChange={currentTarget?.id}
           />
+        ) : (
+          <div>
+            <p>Visual preview is not available for this source artifact yet.</p>
+            <pre>{content}</pre>
+          </div>
         )}
       </section>
     );
@@ -628,13 +633,15 @@ export default function ProposalReview({
                 ? "Markdown"
                 : representation === "event-flow"
                   ? "Event Flow"
-                  : "Sequence"}
+                  : representation === "sequence"
+                    ? "Sequence"
+                    : "Source artifact"}
             </h2>
             {diff.content.available ? (
               <ChangeList targets={semanticTargets} />
             ) : (
               <>
-                <p>Semantic comparison unavailable.</p>
+                <p>{representation === "conceptual" || representation === "database" ? "Semantic comparison is not available for this source artifact yet." : "Semantic comparison unavailable."}</p>
                 <ul>
                   {diff.content.diagnostics.map((diagnostic, index) => (
                     <li key={index}>{String(diagnostic)}</li>

@@ -126,7 +126,9 @@ function isResourceType(value: unknown): value is ResourceType {
   return (
     value === "sequence-diagram" ||
     value === "event-flow" ||
-    value === "markdown-document"
+    value === "markdown-document" ||
+    value === "conceptual" ||
+    value === "database"
   );
 }
 

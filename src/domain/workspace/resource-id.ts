@@ -18,13 +18,15 @@ import type { ResourceKind } from "./resource";
 export type ResourceId = string;
 
 /** How a resource's content is interpreted. */
-export type ResourceRepresentation = "sequence" | "event-flow" | "markdown";
+export type ResourceRepresentation = "sequence" | "event-flow" | "markdown" | "conceptual" | "database";
 
 /** Persisted/API spelling retained for compatibility. */
 export type ResourceType =
   | "sequence-diagram"
   | "event-flow"
-  | "markdown-document";
+  | "markdown-document"
+  | "conceptual"
+  | "database";
 
 /** The two independent facts derived from a resource type. */
 export interface ResourceClassification {
@@ -41,6 +43,10 @@ export function resourceRepresentationOfType(
       return "event-flow";
     case "markdown-document":
       return "markdown";
+    case "conceptual":
+      return "conceptual";
+    case "database":
+      return "database";
     default:
       return "sequence";
   }
@@ -55,6 +61,10 @@ export function resourceTypeOfRepresentation(
       return "event-flow";
     case "markdown":
       return "markdown-document";
+    case "conceptual":
+      return "conceptual";
+    case "database":
+      return "database";
     default:
       return "sequence-diagram";
   }
@@ -100,6 +110,8 @@ export function resourceRepresentationOfName(
 ): ResourceRepresentation {
   if (/\.md$/i.test(name)) return "markdown";
   if (/\.eventseq$/i.test(name)) return "event-flow";
+  if (/\.concept$/i.test(name)) return "conceptual";
+  if (/\.dbschema$/i.test(name)) return "database";
   return "sequence";
 }
 
@@ -127,6 +139,10 @@ export function resourceIdPrefix(type: ResourceType): string {
       return "doc";
     case "event-flow":
       return "flow";
+    case "conceptual":
+      return "conceptual";
+    case "database":
+      return "database";
     default:
       return "diagram";
   }

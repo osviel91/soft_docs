@@ -651,6 +651,8 @@ const strategies: Record<ResourceRepresentation, Strategy> = {
       invalid,
     );
   },
+  conceptual: (before, after) => sourceOnlyDiff("conceptual", before, after),
+  database: (before, after) => sourceOnlyDiff("database", before, after),
   markdown: (before, after) => {
     const source = sourceDiff(before, after);
     const changes = source.hunks.map((hunk) => ({
@@ -662,6 +664,14 @@ const strategies: Record<ResourceRepresentation, Strategy> = {
     return representationResult("markdown", changes, [], false);
   },
 };
+
+function sourceOnlyDiff(representation: ResourceRepresentation, before: string, after: string): RepresentationDiff {
+  const source = sourceDiff(before, after);
+  return representationResult(representation, source.hunks.map(hunk => ({
+    kind: "modified" as const, entity: "source", identity: `lines:${hunk.newStart}`,
+    details: { oldLines: hunk.oldLines, newLines: hunk.newLines },
+  })), [], false);
+}
 
 function representationResult(
   representation: ResourceRepresentation,

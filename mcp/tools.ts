@@ -408,7 +408,7 @@ export function createTools(): Tool[] {
         name: "list_resources",
         title: "List resources",
         description:
-          "List the resources of one project: each with its stable id, file path, type (`sequence-diagram`, `event-flow`, or `markdown-document`), display title, whether it declares a title, and shape metrics (participants/messages, events/producers/consumers/channels, or words). Use it to find a resource's id before reading or updating it. Returns `{ project, resources }`.",
+          "List a project's resources: stable id, path, type (`sequence-diagram`, `event-flow`, `markdown-document`, `conceptual`, or `database`), display title, title declaration state, and applicable metrics. Conceptual/Database resources are source-only: create/read/update/validate are supported; rendering is not. Use this to find a resource id before editing. Returns `{ project, resources }`.",
         inputSchema: objectSchema({
           project: stringProp(
             "Project id or name. Optional when the workspace has exactly one project.",
@@ -599,8 +599,8 @@ export function createTools(): Tool[] {
               "Project id or name. Optional when the workspace has exactly one project.",
             ),
             kind: enumProp(
-              ["diagram", "event-flow", "note"],
-              "What to create: a sequence diagram (`.seq`), an event flow (`.eventseq`), or a markdown document (`.md`).",
+              ["diagram", "event-flow", "note", "conceptual", "database"],
+              "What to create: a sequence diagram (`.seq`), event flow (`.eventseq`), markdown (`.md`), Conceptual (`.concept`), or Database (`.dbschema`) source resource.",
             ),
             name: stringProp(
               'The file name, without or with extension (for example "checkout-flow" or "checkout-flow.seq"). No path separators.',
@@ -622,9 +622,9 @@ export function createTools(): Tool[] {
           optionalString(args, "project"),
         );
         const kind = requiredString(args, "kind");
-        if (kind !== "diagram" && kind !== "event-flow" && kind !== "note") {
+        if (kind !== "diagram" && kind !== "event-flow" && kind !== "note" && kind !== "conceptual" && kind !== "database") {
           throw new Error(
-            'The "kind" argument must be "diagram", "event-flow", or "note".',
+            'The "kind" argument must be "diagram", "event-flow", "note", "conceptual", or "database".',
           );
         }
         const result = await context.workspace.createResource(project, {
@@ -795,7 +795,7 @@ export function createTools(): Tool[] {
           {
             content: stringProp("The text to validate."),
             kind: enumProp(
-              ["diagram", "event-flow", "note"],
+              ["diagram", "event-flow", "note", "conceptual", "database"],
               "Which language to validate the text as.",
             ),
           },
@@ -805,9 +805,9 @@ export function createTools(): Tool[] {
       },
       async run(args, context) {
         const kind = requiredString(args, "kind");
-        if (kind !== "diagram" && kind !== "event-flow" && kind !== "note") {
+        if (kind !== "diagram" && kind !== "event-flow" && kind !== "note" && kind !== "conceptual" && kind !== "database") {
           throw new Error(
-            'The "kind" argument must be "diagram", "event-flow", or "note".',
+            'The "kind" argument must be "diagram", "event-flow", "note", "conceptual", or "database".',
           );
         }
         const diagnostics = context.workspace.validateSource(
