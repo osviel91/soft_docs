@@ -3793,6 +3793,16 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       await page.reload({ waitUntil: "domcontentloaded" });
       await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-server-workspace-select"]')
+        .selectOption(projectDetails.json.project.workspaceId);
+      const ownerProjectsReload = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return response.request().method() === "GET"
+          && url.pathname === "/api/projects"
+          && url.searchParams.get("workspaceId") === projectDetails.json.project.workspaceId;
+      });
+      await page.getByTestId("workspace-server-refresh").click();
+      await ownerProjectsReload;
       await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
       await openServerProject(page, projectName);
       const ownerProposalsToggle = page.getByTestId("explorer-proposals-toggle");
