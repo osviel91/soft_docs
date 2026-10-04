@@ -8,6 +8,7 @@ const context: ApplicationContext = { principal: { subjectUserId: "owner", actor
 describe("project share authority", () => {
   it("returns the secret only once and exposes only active shared resources", async () => {
     const rows = new Map<string, ProjectShareGrant>();
+    let currentTime = new Date("2026-01-01T00:00:00Z");
     const project = { id: "project", name: "Architecture" } as never;
     const shared = { id: "shared-id", projectId: "project", path: "flow.seq", type: "sequence-diagram", revision: 1, lifecycle: "ACTIVE", createdAt: new Date(), updatedAt: new Date() };
     const privateResource = { ...shared, id: "private-id", contextId: "private-context", path: "secret.seq" };
@@ -16,16 +17,17 @@ describe("project share authority", () => {
         async create(grant) { rows.set(grant.id, grant); return grant; },
         async list(id) { return [...rows.values()].filter(row => row.projectId === id); },
         async find(id) { return rows.get(id) ?? null; },
-        async findByToken(id, hash) { const row = rows.get(id); return row?.tokenHash === hash ? row : null; },
-        async revoke(id, actor) { const row = rows.get(id)!; rows.set(id, { ...row, revokedAt: new Date(), revokedByUserId: actor }); },
+         async findByToken(id, hash) { const row = rows.get(id); return row?.tokenHash === hash ? row : null; },
+         async revoke(id, actor) { const row = rows.get(id)!; rows.set(id, { ...row, revokedAt: currentTime, revokedByUserId: actor }); },
       },
       projects: {
         async findById() { return project; }, async roleOf() { return "OWNER"; },
-        async listResources() { return [shared, privateResource]; },
+         async listResources(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return [shared, privateResource]; },
+         async listResourceRelationships(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return []; },
       } as never,
       storage: () => ({ async read(path: string) { return { ok: true, value: { path, type: "sequence-diagram", content: path } }; } }) as never,
       newId: () => "123e4567-e89b-12d3-a456-426614174000",
-      now: () => new Date("2026-01-01T00:00:00Z"),
+      now: () => currentTime,
     });
     const created = await service.create(context, "project");
     expect(created.token).toMatch(/^sdshare_.*\.[A-Za-z0-9_-]{43}$/);
@@ -37,6 +39,10 @@ describe("project share authority", () => {
     await service.revoke(context, "project", created.grant.id);
     expect(await service.read(created.token)).toBeNull();
     expect((await service.list(context, "project"))[0].state).toBe("REVOKED");
+    const expiring = await service.create(context, "project");
+    currentTime = new Date("2026-02-01T00:00:00Z");
+    expect(await service.read(expiring.token)).toBeNull();
+    expect((await service.list(context, "project")).find(grant => grant.id === expiring.grant.id)?.state).toBe("EXPIRED");
   });
 
   it("requires explicit project OWNER authority", async () => {

@@ -136,10 +136,16 @@ not cached; revocation prevents future platform retrieval but cannot erase copie
 already obtained by recipients. Presentation Mode is a separate future
 presentation over an already-authorized projection; the sharing reader UX is not
 implemented by this authority foundation. The current public projection contains
-the project name and active SHARED resource identifiers, paths, types,
-descriptions, and source contents; it does not return history, derived renders,
-semantic catalogs, relationship catalogs, or other project metadata. Those facts
-remain discoverable only through the authenticated architectural knowledge APIs.
+the project name, active SHARED resource identifiers, paths, types, revisions,
+descriptions, tags, source contents, derived folders, and the canonical project
+index built from those same sources. It includes only manifest semantic identities
+referenced by current SHARED sources and typed relationships whose two endpoints
+are both current SHARED resources. Unknown semantic references remain unbound;
+they are not guessed or exposed as identities. The index derives Markdown,
+Sequence, Event Flow, Flow, Topology, and explicit Causal views through the shared
+analysis pipeline. It does not return revision history, proposals or review
+evidence, private work, diagnostics, arbitrary manifest fields, Conceptual or
+Database diagrams, or data from any authenticated project context.
 Bearer tokens are accepted only by the public read route, returned only at grant
 creation, stored as SHA-256 verifiers, and excluded from management output and
 audit details. Public responses carry `no-store` and `no-referrer`; the bundled

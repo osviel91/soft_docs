@@ -6,6 +6,7 @@ import type { ProjectRepository } from "./ports/project-repository";
 import type { ProjectShareRepository } from "./ports/project-share-repository";
 import type { ProjectStorage } from "./project-storage";
 import { shareGrantState, type ProjectShareGrant } from "../domain/project/share-grant";
+import { buildPublicProjectProjection } from "./public-project-projection";
 
 const lifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -14,7 +15,9 @@ const managed = (grant: ProjectShareGrant) => ({ id: grant.id, projectId: grant.
 
 export interface PublicSharedProject {
   project: { name: string };
-  resources: Array<{ id: string; path: string; type: string; title?: string; description?: string; content: string }>;
+  folders: string[];
+  resources: Array<{ id: string; path: string; type: string; revision: number; title: string; description?: string; tags?: string[]; content: string }>;
+  catalog: ReturnType<typeof buildPublicProjectProjection>["catalog"];
 }
 
 export function createProjectShareService(options: {
@@ -65,15 +68,38 @@ export function createProjectShareService(options: {
       if (!grant || shareGrantState(grant, now()) !== "ACTIVE") return null;
       const project = await options.projects.findById(grant.projectId);
       if (!project) return null;
-      const records = await options.projects.listResources(project.id, null);
+      const records = (await options.projects.listResources(project.id, null)).filter(
+        (resource) => resource.lifecycle === "ACTIVE" && resource.contextId === undefined,
+      );
       const storage = options.storage(project.id);
-      const resources = await Promise.all(records.filter(resource => resource.lifecycle === "ACTIVE" && resource.contextId === undefined).map(async resource => {
-        const stored = await storage.read(resource.path);
-        if (!stored.ok || !stored.value) return null;
-        const metadata = resource.metadata;
-        return { id: resource.id, path: resource.path, type: resource.type, ...(metadata?.description ? { description: metadata.description } : {}), content: stored.value.content };
-      }));
-      return { project: { name: project.name }, resources: resources.filter((item): item is NonNullable<typeof item> => item !== null) };
+      const manifest = await storage.read("project.json");
+      if (!manifest.ok) return null;
+      const sources = await Promise.all(
+        records.map(async (resource) => {
+          const stored = await storage.read(resource.path);
+          if (!stored.ok || !stored.value) return null;
+          return {
+            id: resource.id,
+            path: resource.path,
+            type: resource.type,
+            revision: resource.revision,
+            metadata: resource.metadata,
+            content: stored.value.content,
+          };
+        }),
+      );
+      if (sources.some((source) => source === null)) return null;
+      const available = sources.filter(
+        (source): source is NonNullable<typeof source> => source !== null,
+      );
+      const relationships = await options.projects.listResourceRelationships(project.id, null);
+      const projection = buildPublicProjectProjection(
+        project.id,
+        available,
+        manifest.value?.content ?? null,
+        relationships,
+      );
+      return { project: { name: project.name }, ...projection };
     },
   };
 }

@@ -512,8 +512,11 @@ describe("read-only project shares", () => {
   it("projects only current SHARED resources and revocation is immediate", async () => {
     const owner = await aProject("Public share");
     const sharedContent = "participant Buyer\n";
-    await dependencies.projects.createResource(owner.projectId, { path: "architecture/checkout.seq", type: "sequence-diagram" });
+    const diagram = await dependencies.projects.createResource(owner.projectId, { path: "architecture/checkout.seq", type: "sequence-diagram" });
+    const flow = await dependencies.projects.createResource(owner.projectId, { path: "architecture/checkout.eventseq", type: "event-flow" });
+    await dependencies.projects.createResourceRelationship(owner.projectId, { kind: "complementary-view", sourceId: diagram.id, targetId: flow.id });
     const sharedWrite = await dependencies.storageFor(owner.projectId).write("architecture/checkout.seq", sharedContent);
+    await dependencies.storageFor(owner.projectId).write("architecture/checkout.eventseq", "event Checkout\nproducer Store\nStore publishes Checkout\n");
     const privateResource = await call("POST", `/api/projects/${owner.projectId}/resources`, {
       cookie: owner.cookie,
       body: { path: "private/notes.md", type: "markdown-document", content: "confidential", contextId: owner.contextId },
@@ -530,15 +533,18 @@ describe("read-only project shares", () => {
     expect(await dependencies.users.list()).toHaveLength(usersBeforePublicRead.length);
     expect(publicRead.status).toBe(200);
     expect(publicRead.body.project.name).toBe("Public share");
-    expect(publicRead.body.resources).toHaveLength(1);
-    expect(publicRead.body.resources[0].path).toBe("architecture/checkout.seq");
-    expect(publicRead.body.resources[0].content).toContain("participant Buyer");
+    expect(publicRead.body.resources).toHaveLength(2);
+    expect(publicRead.body.resources.find((resource: { path: string }) => resource.path === "architecture/checkout.seq")?.content).toContain("participant Buyer");
+    expect(publicRead.body.catalog.relationships).toEqual([{ kind: "complementary-view", sourceId: diagram.id, targetId: flow.id }]);
+    expect(publicRead.body.catalog.eventFlows).toHaveLength(1);
+    expect(publicRead.body.folders).toEqual(["architecture"]);
     expect(JSON.stringify(publicRead.body)).not.toContain("confidential");
     const publicResponse = await router.handle(request("GET", `/api/public/projects/shared/${created.body.token}`));
     expect(publicResponse.headers).toContainEqual({ name: "cache-control", value: "no-store" });
     expect(publicResponse.headers).toContainEqual({ name: "referrer-policy", value: "no-referrer" });
     await dependencies.storageFor(owner.projectId).write("architecture/checkout.seq", "participant Seller\n");
-    expect((await call("GET", `/api/public/projects/shared/${created.body.token}`)).body.resources[0].content).toContain("participant Seller");
+    const updatedPublicRead = await call("GET", `/api/public/projects/shared/${created.body.token}`);
+    expect(updatedPublicRead.body.resources.find((resource: { path: string }) => resource.path === "architecture/checkout.seq")?.content).toContain("participant Seller");
 
     expect((await call("GET", `/api/projects/${owner.projectId}`)).status).toBe(401);
     expect((await call("GET", `/api/projects/${owner.projectId}/resources`)).status).toBe(401);
