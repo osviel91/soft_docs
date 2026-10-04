@@ -43,6 +43,8 @@ export const AUDIT_ACTIONS = [
   "workspace.invitation.created",
   "workspace.invitation.revoked",
   "workspace.invitation.accepted",
+  "project.share.created",
+  "project.share.revoked",
   "workspace.member.added",
   "resource.created",
   "resource.updated",

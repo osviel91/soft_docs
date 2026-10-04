@@ -121,6 +121,33 @@ explicitly accepts; it does not load project data first. OIDC returns to the sam
 route through the existing short-lived signed login-state cookie. Local registration
 continues to require the platform's ordinary account approval before sign-in.
 
+Project share links are separate, reusable bearer read capabilities for one
+project. An active link reads the current authoritative SHARED projection and
+requires no account, session, membership, VIEWER role, PAT, or MCP credential.
+It never reads MY WORK, proposals/reviews, workspace or project administration,
+credentials, or other projects, and it grants no mutation authority. Owners can
+create, list, and revoke grants; grants expire after a finite period and retain
+revoked lifecycle evidence. Only a one-way token verifier is stored, and the raw
+secret is returned once at creation. Multiple recipients may use one active
+grant. Promoted changes to SHARED are visible through that same link; private or
+submitted changes remain unavailable until promotion. Project deletion cascades
+its grants, so a grant cannot restore a deleted project. Public responses are
+not cached; revocation prevents future platform retrieval but cannot erase copies
+already obtained by recipients. Presentation Mode is a separate future
+presentation over an already-authorized projection; the sharing reader UX is not
+implemented by this authority foundation. The current public projection contains
+the project name and active SHARED resource identifiers, paths, types,
+descriptions, and source contents; it does not return history, derived renders,
+semantic catalogs, relationship catalogs, or other project metadata. Those facts
+remain discoverable only through the authenticated architectural knowledge APIs.
+Bearer tokens are accepted only by the public read route, returned only at grant
+creation, stored as SHA-256 verifiers, and excluded from management output and
+audit details. Public responses carry `no-store` and `no-referrer`; the bundled
+reverse proxy disables access logging for the secret-bearing route. Deployment
+operators must apply equivalent URL-log redaction and a suitable request rate
+limit at any additional ingress. The bundled proxy limits this route per client
+address to 60 requests per minute with a burst of 20.
+
 SHARED semantic identities are currently authoritative in the project manifest
 (`project.json`). Resource source carries stable `messageRef` values; the parser,
 ProjectIndex, validation, and traces resolve those references against the manifest.

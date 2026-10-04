@@ -50,7 +50,7 @@ describe("migrate", () => {
     const client = await createPgliteClient();
     try {
       const report = await migrate(client);
-      expect(report.applied).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+      expect(report.applied).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
       expect(report.present).toEqual([]);
       const tables = await client.query(
         `SELECT table_name FROM information_schema.tables
@@ -70,6 +70,7 @@ describe("migrate", () => {
         "users",
         "workspaces",
         "workspace_members",
+        "project_share_grants",
         "local_credentials",
         "workspace_operations",
         "resource_relationship_history",
@@ -252,7 +253,7 @@ describe("migrate", () => {
       await migrate(client);
       const second = await migrate(client);
       expect(second.applied).toEqual([]);
-        expect(second.present).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+        expect(second.present).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
     } finally {
       await client.close();
     }
@@ -305,7 +306,7 @@ describe("migrate", () => {
         "ALTER TABLE change_proposals ADD CONSTRAINT change_proposals_status_known CHECK (status IN ('draft', 'open', 'closed'))",
       );
       const report = await migrate(client);
-       expect(report.applied).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+       expect(report.applied).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
       const constraint = await client.query(
         "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conname = 'change_proposals_status_known'",
       );
@@ -343,6 +344,22 @@ describe("migrate", () => {
 });
 
 describe("schema constraints", () => {
+  it("stores only a share verifier and cascades grants when a project is deleted", async () => {
+    const client = await openTestDatabase();
+    try {
+      const owner = testUuid(610);
+      const project = testUuid(611);
+      const grant = testUuid(612);
+      await insertTestUser(client, { id: owner, subject: "share-owner" });
+      await client.query("INSERT INTO projects (id, owner_id, workspace_id, name, slug) VALUES ($1,$2,$2,'Share','share')", [project, owner]);
+      await client.query("INSERT INTO project_share_grants (id, project_id, token_hash, created_by_user_id, expires_at) VALUES ($1,$2,$3,$4,now() + interval '1 day')", [grant, project, "verifier-only", owner]);
+      const columns = await client.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'project_share_grants'");
+      expect(columns.rows.map(row => row.column_name)).not.toContain("token");
+      await client.query("DELETE FROM projects WHERE id = $1", [project]);
+      expect((await client.query("SELECT id FROM project_share_grants WHERE id = $1", [grant])).rows).toHaveLength(0);
+    } finally { await closeTestDatabase(client); }
+  });
+
   it("refuses a duplicate identity", async () => {
     const client = await openTestDatabase();
     try {

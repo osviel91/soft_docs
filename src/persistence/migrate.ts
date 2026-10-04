@@ -40,6 +40,7 @@ import { up as proposalResourcePaths } from "./migrations/0024-proposal-resource
 import { up as proposalLifecycle } from "./migrations/0025-proposal-lifecycle";
 import { up as workspaceSelfReview } from "./migrations/0026-workspace-self-review";
 import { up as workspaceInvitations } from "./migrations/0027-workspace-invitations";
+import { up as projectShareGrants } from "./migrations/0028-project-share-grants";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -80,6 +81,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 25, name: "proposal-lifecycle", sql: proposalLifecycle },
   { version: 26, name: "workspace-self-review", sql: workspaceSelfReview },
   { version: 27, name: "workspace-invitations", sql: workspaceInvitations },
+  { version: 28, name: "project-share-grants", sql: projectShareGrants },
 ];
 
 /**

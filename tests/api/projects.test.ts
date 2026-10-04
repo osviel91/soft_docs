@@ -508,6 +508,57 @@ describe("resource routes", () => {
   });
 });
 
+describe("read-only project shares", () => {
+  it("projects only current SHARED resources and revocation is immediate", async () => {
+    const owner = await aProject("Public share");
+    const sharedContent = "participant Buyer\n";
+    await dependencies.projects.createResource(owner.projectId, { path: "architecture/checkout.seq", type: "sequence-diagram" });
+    const sharedWrite = await dependencies.storageFor(owner.projectId).write("architecture/checkout.seq", sharedContent);
+    const privateResource = await call("POST", `/api/projects/${owner.projectId}/resources`, {
+      cookie: owner.cookie,
+      body: { path: "private/notes.md", type: "markdown-document", content: "confidential", contextId: owner.contextId },
+    });
+    expect(sharedWrite.ok).toBe(true);
+    expect(privateResource.status).toBe(201);
+
+    const created = await call("POST", `/api/projects/${owner.projectId}/shares`, { cookie: owner.cookie, body: {} });
+    expect(created.status).toBe(201);
+    expect(created.body.token).toMatch(/^sdshare_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/);
+    expect(JSON.stringify(created.body.grant)).not.toContain("tokenHash");
+    const usersBeforePublicRead = await dependencies.users.list();
+    const publicRead = await call("GET", `/api/public/projects/shared/${created.body.token}`);
+    expect(await dependencies.users.list()).toHaveLength(usersBeforePublicRead.length);
+    expect(publicRead.status).toBe(200);
+    expect(publicRead.body.project.name).toBe("Public share");
+    expect(publicRead.body.resources).toHaveLength(1);
+    expect(publicRead.body.resources[0].path).toBe("architecture/checkout.seq");
+    expect(publicRead.body.resources[0].content).toContain("participant Buyer");
+    expect(JSON.stringify(publicRead.body)).not.toContain("confidential");
+    const publicResponse = await router.handle(request("GET", `/api/public/projects/shared/${created.body.token}`));
+    expect(publicResponse.headers).toContainEqual({ name: "cache-control", value: "no-store" });
+    expect(publicResponse.headers).toContainEqual({ name: "referrer-policy", value: "no-referrer" });
+    await dependencies.storageFor(owner.projectId).write("architecture/checkout.seq", "participant Seller\n");
+    expect((await call("GET", `/api/public/projects/shared/${created.body.token}`)).body.resources[0].content).toContain("participant Seller");
+
+    expect((await call("GET", `/api/projects/${owner.projectId}`)).status).toBe(401);
+    expect((await call("GET", `/api/projects/${owner.projectId}/resources`)).status).toBe(401);
+    const grants = await call("GET", `/api/projects/${owner.projectId}/shares`, { cookie: owner.cookie });
+    expect(grants.status).toBe(200);
+    expect(grants.body.grants[0]).not.toHaveProperty("token");
+    expect(grants.body.grants[0]).not.toHaveProperty("tokenHash");
+
+    const revoked = await call("DELETE", `/api/projects/${owner.projectId}/shares/${created.body.grant.id}`, { cookie: owner.cookie });
+    expect(revoked.status).toBe(200);
+    const unavailable = await call("GET", `/api/public/projects/shared/${created.body.token}`);
+    expect(unavailable.status).toBe(404);
+    expect(unavailable.body).toEqual({ error: { code: "not_found", message: "Shared project is unavailable." } });
+    const audit = await dependencies.audit.listForProject(owner.projectId, 50);
+    expect(audit.map((entry) => entry.action)).toContain("project.share.created");
+    expect(audit.map((entry) => entry.action)).toContain("project.share.revoked");
+    expect(JSON.stringify(audit)).not.toContain(created.body.token);
+  });
+});
+
 describe("the access endpoint", () => {
   it("reports the caller's role and capabilities", async () => {
     const owner = await aProject("Capabilities");

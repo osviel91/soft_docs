@@ -339,6 +339,37 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.post("/api/projects/:projectId/shares", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      const expiresAt = body.expiresAt === undefined ? undefined : new Date(String(body.expiresAt));
+      if (expiresAt && Number.isNaN(expiresAt.getTime())) throw invalid("Share expiration is invalid.");
+      const created = await dependencies.projectShares.create(context, params.projectId, expiresAt);
+      return json(201, { token: created.token, grant: shareGrantView(created.grant) });
+    }),
+  );
+  router.get("/api/projects/:projectId/shares", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const grants = await dependencies.projectShares.list(await contextOf(request), params.projectId);
+      return json(200, { grants: grants.map(shareGrantView) });
+    }),
+  );
+  router.delete("/api/projects/:projectId/shares/:grantId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      await dependencies.projectShares.revoke(await contextOf(request), params.projectId, params.grantId);
+      return json(200, { revoked: true });
+    }),
+  );
+  router.get("/api/public/projects/shared/:token", async (_request, params) =>
+    guarded(correlationId(_request), async () => {
+      const projection = await dependencies.projectShares.read(params.token);
+      return projection
+        ? json(200, projection, [{ name: "cache-control", value: "no-store" }, { name: "referrer-policy", value: "no-referrer" }])
+        : errorResponse(404, "not_found", "Shared project is unavailable.", undefined, [{ name: "cache-control", value: "no-store" }, { name: "referrer-policy", value: "no-referrer" }]);
+    }),
+  );
+
   router.post("/api/invitations/inspect", async (request) =>
     guarded(correlationId(request), async () => {
       const token = parseJsonBody(request.body).token;
@@ -1068,6 +1099,19 @@ function invitationView(invitation: import("../../src/domain/workspace/invitatio
     createdAt: invitation.createdAt.toISOString(), expiresAt: invitation.expiresAt.toISOString(),
     acceptedAt: invitation.acceptedAt?.toISOString() ?? null, acceptedBy: invitation.acceptedBy,
     revokedAt: invitation.revokedAt?.toISOString() ?? null, revokedBy: invitation.revokedBy,
+  };
+}
+
+function shareGrantView(grant: Omit<import("../../src/domain/project/share-grant").ProjectShareGrant, "tokenHash"> & { state?: string }): Record<string, unknown> {
+  return {
+    id: grant.id,
+    projectId: grant.projectId,
+    state: grant.state ?? "ACTIVE",
+    createdByUserId: grant.createdByUserId,
+    createdAt: grant.createdAt.toISOString(),
+    expiresAt: grant.expiresAt.toISOString(),
+    revokedAt: grant.revokedAt?.toISOString() ?? null,
+    revokedByUserId: grant.revokedByUserId,
   };
 }
 

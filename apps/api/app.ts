@@ -22,6 +22,7 @@ import {
 import { createProjectCatalog } from "../../src/application/project-catalog";
 import { createWorkspaceService } from "../../src/application/workspace-service";
 import { createWorkspaceInvitationService } from "../../src/application/workspace-invitation-service";
+import { createProjectShareService } from "../../src/application/project-share-service";
 import { createAgentService } from "../../src/application/agent-service";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
@@ -62,6 +63,7 @@ export interface AppDependencies {
   catalog: ReturnType<typeof createProjectCatalog>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
   invitationService: ReturnType<typeof createWorkspaceInvitationService>;
+  projectShares: ReturnType<typeof createProjectShareService>;
   proposals: ReturnType<typeof createChangeProposalService>;
   architecturalProposals: ReturnType<typeof createArchitecturalProposalService>;
   promotion: ReturnType<typeof createPromotionService>;
@@ -210,6 +212,7 @@ export async function createApp(
     catalog,
     workspaceService: createWorkspaceService(runtime.workspaces),
     invitationService: createWorkspaceInvitationService({ invitations: runtime.invitations, workspaces: runtime.workspaces }),
+    projectShares: createProjectShareService({ shares: runtime.shares, projects: runtime.projects, storage: runtime.storageFor }),
     proposals: createChangeProposalService({
       proposals: runtime.proposals,
       projects: runtime.projects,
