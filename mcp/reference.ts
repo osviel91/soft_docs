@@ -16,6 +16,10 @@ import {
   SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
   type DslConstruct,
 } from "../src/language/dsl-reference";
+import {
+  ARTIFACT_GUIDANCE,
+  ARTIFACT_GUIDANCE_URI,
+} from "../src/language/artifact-guidance";
 import type {
   ResourceDefinition,
   ResourceTemplateDefinition,
@@ -35,6 +39,7 @@ export const WORKFLOW_GUIDE_URI = "sequencediagrams://guide/tool-workflow";
 /** URI of the canonical documentation guidance derived from D01. */
 export const DOCUMENTATION_MODEL_URI =
   "sequencediagrams://guide/documentation-model";
+export { ARTIFACT_GUIDANCE_URI };
 
 /** The URI template for reading a project resource directly. */
 export const PROJECT_RESOURCE_TEMPLATE =
@@ -49,14 +54,14 @@ export const PROJECT_RESOURCE_TEMPLATE =
  * trust) rather than describing the transport.
  */
 export const SERVER_INSTRUCTIONS = [
-  "This server turns an application's behaviour into durable documentation: sequence diagrams for interactions, event flows for event-driven architectures, and markdown for the prose that ties them together. The canonical documentation model is available at sequencediagrams://guide/documentation-model and is authoritative for representation choice; docs/documentation-model.md is its source.",
+    `This server turns an application's behaviour into durable documentation. Discover the artifact selection, semantic contracts, valid authoring examples, editing boundaries, and current capabilities at ${ARTIFACT_GUIDANCE_URI}. The canonical documentation model is also available at sequencediagrams://guide/documentation-model.`,
   "",
   "Work like this:",
   "1. Discover first: call list_projects, get_project_overview, list_resources, list_resource_relationships, search_documentation, and read_resource/get_outline before writing anything.",
-   "2. Classify each need: Sequence is one business/application flow and Event Flow represents asynchronous/event-driven causal behavior, but these are orthogonal projections, not mutually exclusive classifications. A Sequence may preserve ordered collaboration that includes asynchronous messages; add an Event Flow when the same evidence also exposes a meaningful causal chain with provenance, handlers, caused messages, and effects. Do not mechanically duplicate every Sequence. When both substantially describe the same behavior, use create_resource_relationship with kind complementary-view and roles execution/causal; this semantic relationship is not a generic Markdown link. Do not create it for merely related topics. Markdown is a Note for cross-cutting rules and context. HTTP requests, synchronous calls, reverse-proxy routing, cron invocation, logs/telemetry, and infrastructure topology do not establish an Event Flow by themselves. A project may legitimately have no Event Flow documentation; do not force synchronous or structural behavior into it. Conceptual (structure) and Database (persistence) are future, unsupported representations; report those gaps instead of misusing another type.",
+    `2. Choose among Markdown, Sequence, Event Flow, Conceptual, and Database by semantic intent using ${ARTIFACT_GUIDANCE_URI}. Sequence and Event Flow remain orthogonal projections; do not mechanically duplicate every Sequence.`,
     "3. Compare existing semantic subjects, titles, paths, content, metadata, and list_resource_relationships where exposed. Update or propose against substantial overlap; create only genuinely missing supported resources.",
     "4. Plan before mutation. Prefer Change Proposals for substantial updates to existing resources, and do not treat analysis as permission to mutate canonical documentation.",
-    "5. Read a resource's DSL reference before authoring (`sequencediagrams://reference/sequence-dsl`, `sequencediagrams://reference/event-flow-dsl`, or `sequencediagrams://reference/markdown`), use create_resource or update_resource only after the plan, validate proposed content with validate_source or validate_resource, inspect its diff/merge analysis where applicable, and use audit_documentation before review.",
+    `5. Read ${ARTIFACT_GUIDANCE_URI} before authoring Conceptual or Database; read ${SEQUENCE_DSL_URI} before Sequence and ${EVENT_FLOW_DSL_URI} before Event Flow; use generic create_resource/update_resource, validate with validate_source or validate_resource, inspect diff/merge analysis where applicable, and use audit_documentation before review. Markdown is for genuinely useful cross-cutting Notes, not a conversion target for supported artifacts.`,
    "6. When multiple resources are complementary projections of substantially the same behavior, inspect typed relationships and create the appropriate complementary-view relationship if absent. Prose such as `complements X` in a description is not a replacement; do not relate resources merely because they share a domain or terminology. A Sequence occurrence that publishes an event and a separate Event Flow entered by that event are message-mediated traceability candidates, not automatically complementary views. Equal names are not identity; preserve unresolved candidates for future stable message binding.",
   "",
   "Conventions that make the output good:",
@@ -89,12 +94,12 @@ export function documentationModelText(): string {
     "| One recognizable business/application execution | Sequence | supported (`kind: diagram`, `.seq`) |",
     "| Connected asynchronous causality/reaction | Event Flow | supported (`kind: event-flow`, `.eventseq`) |",
     "| Cross-cutting rules, decisions, or context | Note | supported (`kind: note`, `.md`) |",
-    "| Structural/domain/architecture relationships | Conceptual | future; unsupported today |",
-    "| Data/persistence relationships | Database | future; unsupported today |",
+    "| Structural/domain/architecture relationships | Conceptual | supported `.concept` source, validation, semantic diff, rendering, Share and Presentation |",
+    "| Data/persistence structure | Database | supported `.dbschema` source, validation and governance; product rendering, Share rendering and Presentation are not available |",
     "",
     "Sequence and Event Flow are orthogonal projections. Sequence preserves execution order and component collaboration; Event Flow preserves asynchronous causality, message provenance, handler responsibility, caused messages, and effects. The UpOne fan-out from `UpOneTransactionRaisedEvent` through handlers, commands, and persistence effects is a valid example for both views when the causal chain is meaningful. Do not mechanically duplicate every Sequence as an Event Flow.",
     "",
-    "If Conceptual or Database is the correct representation, report an unsupported documentation gap. Do not force structural knowledge into Event Flow or persistence knowledge into Sequence. Capture a genuinely cross-cutting textual concern as a Note only when that is useful and honest.",
+    "Use Conceptual or Database when their semantics fit, regardless of visual maturity. Read the artifact-authoring guidance for their source examples, semantic boundaries and current capabilities. Do not force structural knowledge into Event Flow or persistence knowledge into Sequence. Capture a genuinely cross-cutting textual concern as a Note only when useful and honest.",
     "",
     "## Sequence",
     "",
@@ -410,6 +415,14 @@ export function staticResources(): ResourceDefinition[] {
         "Agent-sized guidance derived from docs/documentation-model.md: representation choice, granularity, evidence, discovery, overlap, and proposal workflow.",
       mimeType: "text/markdown",
     },
+    {
+      uri: ARTIFACT_GUIDANCE_URI,
+      name: "artifact-authoring-guidance",
+      title: "Artifact selection and authoring guidance",
+      description:
+        "Purpose, semantics, canonical source examples, inference boundaries, editing rules, and current product capabilities for all five artifact types.",
+      mimeType: "text/markdown",
+    },
   ];
 }
 
@@ -442,6 +455,8 @@ export function staticResourceText(uri: string): string | null {
       return workflowGuideText();
     case DOCUMENTATION_MODEL_URI:
       return documentationModelText();
+    case ARTIFACT_GUIDANCE_URI:
+      return ARTIFACT_GUIDANCE;
     default:
       return null;
   }

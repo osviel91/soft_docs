@@ -3,6 +3,7 @@ import { META_SERVER_INFO, type JsonRpcResponse } from "../protocol";
 import {
   DOCUMENTING_GUIDE_URI,
   DOCUMENTATION_MODEL_URI,
+  ARTIFACT_GUIDANCE_URI,
   EVENT_FLOW_DSL_URI,
   MARKDOWN_URI,
   SEQUENCE_DSL_URI,
@@ -368,6 +369,7 @@ describe("McpServer", () => {
       DOCUMENTING_GUIDE_URI,
       WORKFLOW_GUIDE_URI,
       DOCUMENTATION_MODEL_URI,
+      ARTIFACT_GUIDANCE_URI,
     ]);
 
     const read = await request("resources/read", { uri: SEQUENCE_DSL_URI });
@@ -388,6 +390,14 @@ describe("McpServer", () => {
       (eventFlow.result as { contents: Array<{ text: string }> }).contents[0]
         .text,
     ).toContain("### Publication");
+
+    const artifact = await request("resources/read", { uri: ARTIFACT_GUIDANCE_URI });
+    const artifactText = (artifact.result as { contents: Array<{ text: string }> }).contents[0].text;
+    expect(artifactText).toContain("Conceptual Diagram (`.concept`)");
+    expect(artifactText).toContain("Database Diagram (`.dbschema`)");
+    expect(artifactText).toContain("current product capabilities");
+    expect(artifactText).toContain('relation places customer -> order "places orders"');
+    expect(artifactText).toContain('foreign-key orders_customer orders (customer_id) -> customers (id)');
   });
 
   it("reads a project resource through its URI template", async () => {

@@ -22,7 +22,8 @@ managed by their owners.
 resources and has its own project-level roles and permissions.
 
 **Resource**: A project document with a name, content, identity, and type. The
-current resource types are sequence diagram, event flow, and documentation.
+resource types are Sequence (`.seq`), Event Flow (`.eventseq`), Markdown
+(`.md`), Conceptual (`.concept`), and Database (`.dbschema`).
 The domain distinguishes a resource's identity and content from stored semantic
 metadata (`description` and `tags`) and from derived presentation information
 such as its effective title. Visualization is not resource metadata.
@@ -55,9 +56,10 @@ system and can link to other project resources.
 
 **Canonical documentation model**: The normative authoring rules in
 [`docs/documentation-model.md`](./docs/documentation-model.md). It distinguishes
-Sequence (execution/time), Event Flow (causality/reaction), future Conceptual
-(structure/relationships), future Database (data/persistence), and Notes
-(context/rules/decisions). The model does not add resource types or runtime
+Sequence (execution/time), Event Flow (topology plus explicit causality),
+Conceptual (authored structure/relationships), Database (persistent structure),
+and Notes (context/rules/decisions). Semantic purpose is independent of renderer
+maturity; see the canonical model and MCP artifact-authoring reference for current
 capabilities.
 
 **MCP**: Model Context Protocol. In this product it is the agent-facing surface

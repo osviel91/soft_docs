@@ -5,6 +5,11 @@ import {
   EVENT_FLOW_CONSTRUCTS,
   SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
 } from "../../../src/language/dsl-reference";
+import {
+  ARTIFACT_GUIDANCE,
+  ARTIFACT_GUIDANCE_URI,
+} from "../../../src/language/artifact-guidance";
+export { ARTIFACT_GUIDANCE_URI };
 
 export const SEQUENCE_DSL_URI = "seqdocs://reference/sequence-dsl";
 export const EVENT_FLOW_DSL_URI = "seqdocs://reference/event-flow-dsl";
@@ -94,6 +99,19 @@ export function registerMcpReferences(server: {
     }>,
   ) => unknown;
 }): void {
+  server.registerResource(
+    "artifact-authoring-guidance",
+    ARTIFACT_GUIDANCE_URI,
+    {
+      title: "Artifact selection and authoring guidance",
+      description:
+        "Purpose, semantics, canonical source examples, inference boundaries, editing rules, and current product capabilities for all five artifact types.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: ARTIFACT_GUIDANCE }],
+    }),
+  );
   server.registerResource(
     "mcp-governance",
     GOVERNANCE_GUIDE_URI,

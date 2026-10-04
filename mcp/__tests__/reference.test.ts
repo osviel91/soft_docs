@@ -3,6 +3,7 @@ import {
   DSL_CONSTRUCTS,
   EVENT_FLOW_CONSTRUCTS,
 } from "../../src/language/dsl-reference";
+import { ARTIFACT_GUIDANCE, ARTIFACT_GUIDANCE_URI } from "../../src/language/artifact-guidance";
 import {
   DOCUMENTING_GUIDE_URI,
   DOCUMENTATION_MODEL_URI,
@@ -33,6 +34,7 @@ describe("MCP reference resources", () => {
       DOCUMENTING_GUIDE_URI,
       WORKFLOW_GUIDE_URI,
       DOCUMENTATION_MODEL_URI,
+      ARTIFACT_GUIDANCE_URI,
     ]);
     const uris = new Set(resources.map((entry) => entry.uri));
     expect(uris.size).toBe(resources.length);
@@ -86,6 +88,7 @@ describe("MCP reference resources", () => {
     expect(staticResourceText(DOCUMENTATION_MODEL_URI)).toBe(
       documentationModelText(),
     );
+    expect(staticResourceText(ARTIFACT_GUIDANCE_URI)).toBe(ARTIFACT_GUIDANCE);
     expect(staticResourceText("sequencediagrams://nope")).toBe(null);
   });
 
@@ -121,6 +124,7 @@ describe("MCP reference resources", () => {
     }
     expect(SERVER_INSTRUCTIONS).toContain(SEQUENCE_DSL_URI);
     expect(SERVER_INSTRUCTIONS).toContain(DOCUMENTATION_MODEL_URI);
+    expect(SERVER_INSTRUCTIONS).toContain(ARTIFACT_GUIDANCE_URI);
     expect(SERVER_INSTRUCTIONS).toContain("semantic event|command");
     expect(SERVER_INSTRUCTIONS).toContain("Equal names are not identity");
   });
@@ -144,7 +148,7 @@ describe("MCP reference resources", () => {
       "Note",
       "Conceptual",
       "Database",
-      "future; unsupported today",
+      "regardless of visual maturity",
       "Discover before authoring",
       "Change Proposals",
       "observed, inferred, or unknown",
@@ -179,5 +183,25 @@ describe("MCP reference resources", () => {
     const templates = resourceTemplates();
     expect(templates).toHaveLength(1);
     expect(templates[0].uriTemplate).toBe(PROJECT_RESOURCE_TEMPLATE);
+  });
+
+  it("publishes the artifact contract, capabilities, editing and selection guidance", () => {
+    for (const phrase of [
+      "Conceptual Diagram (`.concept`)",
+      "Database Diagram (`.dbschema`)",
+      "Preserve an ID when the same concept is renamed",
+      "Changing a relationship's label, direction, endpoint, or description",
+      "identity remains exact-name based",
+      "An FK does not by itself prove service ownership/dependency",
+      "Same labels never establish cross-artifact identity",
+      "unsupported capability",
+      "Artifact | Use when",
+      "MY WORK",
+      "independent review",
+      "Sequence remains ordered execution",
+      "Event Flow topology remains distinct from explicit causal facts",
+    ]) expect(ARTIFACT_GUIDANCE).toContain(phrase);
+    expect(ARTIFACT_GUIDANCE).toContain("does not automatically imply runtime/code/service dependency");
+    expect(ARTIFACT_GUIDANCE).toContain("An FK does not by itself prove service ownership/dependency");
   });
 });

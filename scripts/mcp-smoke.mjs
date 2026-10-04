@@ -168,8 +168,12 @@ async function main() {
 
     const resources = await client.request("resources/list");
     check(
-      "resources/list advertises the DSL references and guides",
-      (resources.result?.resources ?? []).length === 6,
+      "resources/list advertises the artifact, DSL, and workflow guides",
+      (resources.result?.resources ?? []).length === 7 &&
+        (resources.result?.resources ?? []).some(
+          (resource) =>
+            resource.uri === "sequencediagrams://reference/artifact-authoring",
+        ),
     );
 
     const sequenceRef = await client.request("resources/read", {
@@ -179,6 +183,16 @@ async function main() {
       "the sequence DSL reference is readable",
       sequenceRef.result?.contents?.[0]?.text?.includes("### Participant") ===
         true,
+    );
+
+    const artifactGuide = await client.request("resources/read", {
+      uri: "sequencediagrams://reference/artifact-authoring",
+    });
+    check(
+      "artifact authoring guidance is discoverable",
+      artifactGuide.result?.contents?.[0]?.text?.includes(
+        "A Database Diagram documents persistent data structure",
+      ) === true,
     );
 
     const prompt = await client.request("prompts/get", {

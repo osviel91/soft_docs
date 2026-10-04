@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MCP_INSTRUCTIONS } from "../../apps/mcp/mcp/server";
-import { GOVERNANCE_GUIDE_URI } from "../../apps/mcp/mcp/reference";
+import { ARTIFACT_GUIDANCE_URI, GOVERNANCE_GUIDE_URI } from "../../apps/mcp/mcp/reference";
 import { createMcpTools } from "../../apps/mcp/mcp/tools";
 import { startHarness, type McpHarness } from "./harness";
 
@@ -136,6 +136,27 @@ describe("the remote MCP service over Streamable HTTP", () => {
     await client.close();
   });
 
+  it("lets an external agent discover artifact purpose, examples, editing rules, and capabilities", async () => {
+    const client = await connect(token);
+    expect(client.getInstructions()).toContain(ARTIFACT_GUIDANCE_URI);
+    const listed = await client.listResources();
+    const reference = listed.resources.find((entry) => entry.uri === ARTIFACT_GUIDANCE_URI);
+    expect(reference).toMatchObject({ uri: ARTIFACT_GUIDANCE_URI, mimeType: "text/markdown" });
+    const read = await client.readResource({ uri: ARTIFACT_GUIDANCE_URI });
+    const content = (read.contents[0] as { text: string }).text;
+    for (const phrase of [
+      "A Conceptual Diagram documents important concepts",
+      'relation associated customer -- account "associated with"',
+      "Preserve an ID when the same concept is renamed",
+      "A Database Diagram documents persistent data structure",
+      "foreign-key orders_customer orders (customer_id) -> customers (id)",
+      "identity remains exact-name based",
+      "Product visual rendering",
+      "Presentation rendering",
+    ]) expect(content).toContain(phrase);
+    await client.close();
+  });
+
   it("returns a not-found protocol error for an unknown remote resource", async () => {
     const client = await connect(token);
     let error: unknown;
@@ -209,11 +230,9 @@ describe("the remote MCP service over Streamable HTTP", () => {
 
   it("lets an external client discover and author causal Event Flow syntax", async () => {
     const client = await connect(token);
+    expect(client.getInstructions()).toContain("supported source artifacts");
     expect(client.getInstructions()).toContain(
-      "unsupported representation gap, not an automatic Markdown conversion",
-    );
-    expect(client.getInstructions()).toContain(
-      "genuinely a useful cross-cutting Note",
+      "genuinely useful cross-cutting Notes",
     );
     expect(client.getInstructions()).toContain(
       "orthogonal projections, not mutually exclusive classifications",

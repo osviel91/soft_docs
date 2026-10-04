@@ -58,13 +58,19 @@ The canonical dimensions are:
 | -------------- | ---------------------------------------- | --------------------------- | -------------------------------- |
 | Sequence       | How does this flow execute?              | Execution / time            | Implemented as `.seq`            |
 | Event Flow     | What causes what asynchronously?         | Causality / reaction        | Implemented as `.eventseq`       |
-| Conceptual     | What concepts or components relate?      | Structure / relationships   | Future contract; not implemented |
-| Database       | What data is persisted and how?          | Data / persistence          | Future contract; not implemented |
+| Conceptual     | What concepts or components relate?      | Structure / relationships   | Implemented `.concept`; render, semantic diff, Share, Presentation |
+| Database       | What data is persisted and how?          | Data / persistence          | Implemented `.dbschema` source/validation/governance; no product rendering |
 | Note           | What rule, decision, or context matters? | Context / rules / decisions | Implemented as Markdown (`.md`)  |
 
-Conceptual and Database are semantic contracts for future representations, not
-current product capabilities. Do not claim that the product can create,
-render, search, or persist them as dedicated diagram types.
+Conceptual and Database have implemented source, parsing, semantic models,
+validation, and governed-resource support. Conceptual also has semantic diff,
+visual rendering, public Share rendering, and Presentation rendering. Database
+has internal projection/layout infrastructure but no product renderer, visual
+semantic review, public rendering, or Presentation support. Semantic contract
+maturity is independent of renderer maturity: internal projection/layout does
+not advertise product rendering. The MCP artifact-authoring reference exposes
+purpose, semantics, canonical examples, inference boundaries, editing guidance,
+and current capabilities to agents.
 
 The current product supports Sequence, Event Flow, Markdown, semantic message
 identity and binding, causal handlers and effects, typed resource relationships,
@@ -133,9 +139,9 @@ grant. Promoted changes to SHARED are visible through that same link; private or
 submitted changes remain unavailable until promotion. Project deletion cascades
 its grants, so a grant cannot restore a deleted project. Public responses are
 not cached; revocation prevents future platform retrieval but cannot erase copies
-already obtained by recipients. Presentation Mode is a separate future
-presentation over an already-authorized projection; the sharing reader UX is not
-implemented by this authority foundation. The current public projection contains
+already obtained by recipients. Presentation Mode presents an already-authorized
+projection; Conceptual rendering is supported there, while Database rendering is
+not. The current public projection contains
 the project name, active SHARED resource identifiers, paths, types, revisions,
 descriptions, tags, source contents, derived folders, and the canonical project
 index built from those same sources. It includes only manifest semantic identities
@@ -346,10 +352,10 @@ semantic identity connects representations or occurrences of the same
 architectural message.
 
 Similarly, `Merge Change Proposal.seq` can show execution, a proposal
-collaboration Event Flow can show asynchronous reactions, a future conceptual
-view can show proposal relationships, and a future Database view can show
-persistence. These views complement one another; they are not duplicate
-accounts of the same fact.
+collaboration Event Flow can show asynchronous reactions, a Conceptual view can
+show proposal relationships, and a Database source can document persistence.
+These views complement one another; they are not duplicate accounts of the same
+fact. Database product rendering remains unavailable.
 
 ### Assessment guidance
 
@@ -758,7 +764,7 @@ stable node IDs for Sequence and Event Flow declarations and interactions.
 Future representations should preserve equivalent traceability; D01 does not
 add source-link infrastructure.
 
-## Future Conceptual Diagram Contract
+## Conceptual Diagram Contract
 
 Conceptual Diagrams represent **structure and relationships**. They answer:
 **What are the important concepts or components and how are they related?**
@@ -774,18 +780,20 @@ such as the workspace authorization model, documentation resource model,
 deployment architecture, or proposal lifecycle relationships. Avoid an
 unreadable “entire application architecture” catch-all graph.
 
-## Future Database Diagram Contract
+## Database Diagram Contract
 
-Database Diagrams represent **data and persistence**. They expose only
-architecturally relevant tables or entities, fields, primary keys, foreign
-keys, cardinality, uniqueness, important indexes, constraints, and
-business-relevant persistence invariants. They should not replicate every
-database implementation detail by default.
+Database Diagrams represent **persistent data structure**: schemas when known,
+tables, columns, primary keys, foreign keys, uniqueness constraints, indexes,
+defaults, and explicitly documented structural relationships. Types and
+defaults are opaque authored text; omission is undocumented, not false. Do not
+infer service dependency, business cardinality, or dialect-specific behavior.
+See [the D02 source contract](d02-2-conceptual-database-dsl.md) and the MCP
+artifact-authoring reference for grammar and canonical examples.
 
 For example, a proposal persistence view may show `change_proposals` with its
 revision, status, actor, and merge fields related to `resources`, annotated with
-optimistic concurrency and immutable terminal transitions. This is a future
-representation, not a current `.seq`, `.eventseq`, or `.md` capability.
+optimistic concurrency and immutable terminal transitions. Database source is
+supported; its product renderer and presentation surfaces remain unavailable.
 
 ## Coverage Model
 
