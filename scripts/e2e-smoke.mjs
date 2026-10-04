@@ -3815,8 +3815,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       await page.reload({ waitUntil: "domcontentloaded" });
       await waitForAuthEntry(page);
-      await page.locator('[data-testid="workspace-server-workspace-select"]')
-        .selectOption(projectDetails.json.project.workspaceId);
+      await page.locator('[data-testid="workspace-active-project"]')
+        .filter({ hasText: projectName })
+        .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("workspace-back-to-projects").click();
+      const workspaceSelect = page.getByTestId("workspace-server-workspace-select");
+      await workspaceSelect.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await workspaceSelect.selectOption(projectDetails.json.project.workspaceId);
       const ownerProjectsReload = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return response.request().method() === "GET"
