@@ -7,6 +7,7 @@ describe("ConceptualPreview", () => {
     const select = vi.fn();
     render(<ConceptualPreview source={'concept customer "Customer & Co" description "Buyer\\naccount"\nconcept order "Order"\nrelation places customer -> order "places"\nrelation related customer -- order "related to"'} onNodeSelect={select} />);
     const preview = await screen.findByTestId("conceptual-preview");
+    expect(preview).toHaveClass("preview");
     await waitFor(() => expect(preview.querySelector("svg")?.querySelectorAll("[data-concept-id]")).toHaveLength(2));
     expect(preview.querySelector('[data-concept-id="customer"]')).toHaveAttribute("role", "button");
     expect(preview.querySelector('[data-concept-id="customer"]')).toHaveAttribute("aria-label", expect.stringContaining("Customer & Co"));

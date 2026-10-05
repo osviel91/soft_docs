@@ -52,7 +52,7 @@ export default function ConceptualPreview({
   if (layoutError) return <div className="conceptual-preview" role="alert">The Conceptual layout could not be calculated. The source is still available for editing.</div>;
   if (!projection || !layout) return <div className="conceptual-preview" aria-busy="true" role="status">Laying out Conceptual model…</div>;
 
-  return <div className="conceptual-preview" data-testid="conceptual-preview">
+  return <div className="preview conceptual-preview" data-testid="conceptual-preview">
     <div className="sequence-guidance-toolbar"><DiagramGuidance view="conceptual" comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} /></div>
     <DiagramViewport
       svg={renderConceptualSvg(projection, layout, reviewChanges, reviewSide)}
