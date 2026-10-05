@@ -3610,20 +3610,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await reviewerPage.reload({ waitUntil: "domcontentloaded" });
         await waitForAuthEntry(reviewerPage);
-        await reviewerPage.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
-        await reviewerPage.waitForFunction(
-          (name) => {
-            const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
-              .find((candidate) => candidate.textContent?.includes(name));
-            if (!entry) return false;
-            entry.click();
-            return true;
-          },
-          projectName,
-          { timeout: UI_TIMEOUT_MS },
-        );
-        await reviewerPage
-          .locator('[data-testid="workspace-active-project"]')
+        await reviewerPage.locator('[data-testid="workspace-active-project"]')
           .filter({ hasText: projectName })
           .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         const reloadedReviewerToggle = reviewerPage.locator('[data-testid="explorer-proposals-toggle"]');
@@ -3647,20 +3634,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await waitForAuthEntry(page);
-        await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
-        await page.waitForFunction(
-          (name) => {
-            const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
-              .find((candidate) => candidate.textContent?.includes(name));
-            if (!entry) return false;
-            entry.click();
-            return true;
-          },
-          projectName,
-          { timeout: UI_TIMEOUT_MS },
-        );
-        await page
-          .locator('[data-testid="workspace-active-project"]')
+        await page.locator('[data-testid="workspace-active-project"]')
           .filter({ hasText: projectName })
           .waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await openProposalFromExplorer("APPROVED");
