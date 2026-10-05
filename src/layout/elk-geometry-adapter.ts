@@ -13,6 +13,16 @@ const ENGINE_OPTIONS = {
   "elk.spacing.edgeNode": "18",
 };
 
+const CONCEPTUAL_OPTIONS = {
+  ...ENGINE_OPTIONS,
+  "elk.direction": "DOWN",
+  "elk.spacing.nodeNode": "20",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "32",
+  "elk.spacing.edgeNode": "8",
+};
+
+export type GeometryLayoutProfile = "default" | "conceptual";
+
 export class GeometryLayoutError extends Error {
   constructor(message: string) {
     super(message);
@@ -23,11 +33,11 @@ export class GeometryLayoutError extends Error {
 const elk = new ELK();
 
 /** ELK stays behind this adapter; callers only see the stable geometry contract. */
-export async function layoutGeometry(input: GeometryInput): Promise<PositionedGeometry> {
+export async function layoutGeometry(input: GeometryInput, profile: GeometryLayoutProfile = "default"): Promise<PositionedGeometry> {
   validateInput(input);
   if (input.items.length === 0) return { width: 0, height: 0, items: [], ports: [], connections: [] };
   try {
-    const graph = await elk.layout(toElkGraph(input));
+    const graph = await elk.layout(toElkGraph(input, profile));
     return fromElkGraph(input, graph);
   } catch (error) {
     throw new GeometryLayoutError(`Geometry layout failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -59,10 +69,10 @@ function validateInput({ items, connections }: GeometryInput): void {
   }
 }
 
-function toElkGraph(input: GeometryInput): ElkNode {
+function toElkGraph(input: GeometryInput, profile: GeometryLayoutProfile): ElkNode {
   return {
     id: "geometry-root",
-    layoutOptions: ENGINE_OPTIONS,
+    layoutOptions: profile === "conceptual" ? CONCEPTUAL_OPTIONS : ENGINE_OPTIONS,
     children: input.items.map(item => ({
       id: item.id,
       width: item.requiredWidth,

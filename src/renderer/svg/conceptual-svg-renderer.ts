@@ -17,7 +17,7 @@ export function renderConceptualSvg(projection: ConceptualVisualProjection, geom
     if (!visual || connection.points.length < 2) return "";
     const change = changeByVisualId.get(connection.id);
     const d = connection.points.map((p, index) => `${index ? "L" : "M"}${p.x},${p.y}`).join(" ");
-    const label = connection.label ? `<text class="conceptual__edge-label" x="${connection.label.x + connection.label.width / 2}" y="${connection.label.y + connection.label.height / 2}" text-anchor="middle" dominant-baseline="middle">${xml(connection.label.text)}</text>` : "";
+    const label = connection.label ? `<text class="conceptual__edge-label" x="${connection.label.x + connection.label.width / 2}" y="${connection.label.y + connection.label.height / 2}" text-anchor="middle" dominant-baseline="middle">${connection.label.text.split("\n").map((line, index) => `<tspan x="${connection.label!.x + connection.label!.width / 2}" dy="${index ? 16 : 0}">${xml(line)}</tspan>`).join("")}</text>` : "";
     return `<g class="conceptual__connection${visual.direction === "undirected" ? " conceptual__connection--undirected" : ""}${change ? ` review-change review-change--${change.kind}` : ""}" data-edge-id="${xml(visual.semanticRelationshipId)}"${change ? ` data-review-change="${xml(change.entity)}:${xml(change.identity)}"` : ""}><path d="${d}" fill="none" stroke="currentColor" stroke-width="2"${visual.direction === "directed" ? ` marker-end="url(#conceptual-arrow-${side})"` : ""}/>${label}</g>`;
   }).join("");
   const nodes = geometry.items.map(bounds => {

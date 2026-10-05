@@ -37,7 +37,7 @@ export default function ConceptualPreview({
     setLayout(null);
     setLayoutError(false);
     if (!projection) return () => { current = false; };
-    void layoutGeometry(projection.geometry).then(
+    void layoutGeometry(projection.geometry, "conceptual").then(
       result => { if (current) setLayout(result); },
       () => { if (current) setLayoutError(true); },
     );

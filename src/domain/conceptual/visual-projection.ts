@@ -32,6 +32,7 @@ export interface ConceptualVisualProjection {
 
 const itemId = (id: string) => `concept-item:${encodeURIComponent(id)}`;
 const connectionId = (id: string) => `concept-connection:${encodeURIComponent(id)}`;
+const EDGE_LABEL_WIDTH = 220;
 
 /** Project concepts to measured boxes and relationships to individually identified connections. */
 export function projectConceptual(model: ConceptualModel): ConceptualVisualProjection {
@@ -61,12 +62,19 @@ export function projectConceptual(model: ConceptualModel): ConceptualVisualProje
   }));
   const visualIdByConceptId = Object.fromEntries(items.map(item => [item.semanticConceptId, item.visualId]));
   const visualIdByRelationshipId = Object.fromEntries(connections.map(connection => [connection.semanticRelationshipId, connection.visualId]));
-  const geometryConnections: GeometryConnection[] = connections.map(connection => ({
-    id: connection.visualId,
-    source: { itemId: connection.sourceVisualId },
-    target: { itemId: connection.targetVisualId },
-    label: { text: connection.label, requiredWidth: Math.max(24, estimateTextWidth(connection.label, 12)), requiredHeight: 20 },
-  }));
+  const geometryConnections: GeometryConnection[] = connections.map(connection => {
+    const labelLines = wrapText(connection.label, EDGE_LABEL_WIDTH, 12);
+    return {
+      id: connection.visualId,
+      source: { itemId: connection.sourceVisualId },
+      target: { itemId: connection.targetVisualId },
+      label: {
+        text: labelLines.join("\n"),
+        requiredWidth: Math.max(24, ...labelLines.map(line => estimateTextWidth(line, 12))),
+        requiredHeight: Math.max(20, labelLines.length * 18),
+      },
+    };
+  });
   return {
     items,
     connections,
