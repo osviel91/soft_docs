@@ -95,7 +95,7 @@ export function documentationModelText(): string {
     "| Connected asynchronous causality/reaction | Event Flow | supported (`kind: event-flow`, `.eventseq`) |",
     "| Cross-cutting rules, decisions, or context | Note | supported (`kind: note`, `.md`) |",
     "| Structural/domain/architecture relationships | Conceptual | supported `.concept` source, validation, semantic diff, rendering, Share and Presentation |",
-    "| Data/persistence structure | Database | supported `.dbschema` source, validation and governance; product rendering, Share rendering and Presentation are not available |",
+    "| Data/persistence structure | Database | supported `.dbschema` source, validation, governance, semantic diff/rendering, Share and Presentation |",
     "",
     "Sequence and Event Flow are orthogonal projections. Sequence preserves execution order and component collaboration; Event Flow preserves asynchronous causality, message provenance, handler responsibility, caused messages, and effects. The UpOne fan-out from `UpOneTransactionRaisedEvent` through handlers, commands, and persistence effects is a valid example for both views when the causal chain is meaningful. Do not mechanically duplicate every Sequence as an Event Flow.",
     "",

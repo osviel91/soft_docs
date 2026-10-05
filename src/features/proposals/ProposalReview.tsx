@@ -5,6 +5,7 @@ import EventFlowPreview, {
 } from "../preview/EventFlowPreview";
 import MarkdownView from "../notes/MarkdownView";
 import ConceptualPreview from "../preview/ConceptualPreview";
+import DatabasePreview from "../preview/DatabasePreview";
 import type {
   ServerApiClient,
   ServerChangeProposal,
@@ -490,6 +491,8 @@ export default function ProposalReview({
             activeReviewChange={currentTarget?.id}
             focusReviewChange={currentTarget?.id}
           />
+        ) : representation === "database" ? (
+          <DatabasePreview source={content} reviewChanges={semanticChanges} reviewMode linkedTransform={linkedTransform} onTransformChange={onTransformChange} comparisonMode />
         ) : representation === "conceptual" ? (
           <ConceptualPreview
             source={content}

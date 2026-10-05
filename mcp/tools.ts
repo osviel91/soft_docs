@@ -408,7 +408,7 @@ export function createTools(): Tool[] {
         name: "list_resources",
         title: "List resources",
         description:
-          "List a project's resources: stable id, path, type (`sequence-diagram`, `event-flow`, `markdown-document`, `conceptual`, or `database`), display title, title declaration state, and applicable metrics. Conceptual/Database resources are source-only: create/read/update/validate are supported; rendering is not. Use this to find a resource id before editing. Returns `{ project, resources }`.",
+          "List a project's resources: stable id, path, type (`sequence-diagram`, `event-flow`, `markdown-document`, `conceptual`, or `database`), display title, title declaration state, and applicable metrics. Conceptual/Database resources support governed source authoring, validation, semantic visual review, product rendering, public Share rendering, and Presentation. Use this to find a resource id before editing. Returns `{ project, resources }`.",
         inputSchema: objectSchema({
           project: stringProp(
             "Project id or name. Optional when the workspace has exactly one project.",

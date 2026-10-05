@@ -33,6 +33,12 @@ describe("PresentationMode", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
+  it("renders Database resources with the canonical Database Diagram renderer", async () => {
+    render(<PresentationMode projectName="Billing" resources={[{ id: "db", path: "billing.dbschema", title: "Billing schema", type: "database", content: 'table customer - "Customer"\ncolumn customer id "id" {uuid} not-null\nprimary-key customer_pk customer (id)' }]} initialId="db" onExit={vi.fn()} />);
+    expect(await screen.findByTestId("database-preview-svg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "How to read Database Diagram" })).toBeInTheDocument();
+  });
+
   it("keeps navigator dismissal in a dedicated header control", () => {
     render(<PresentationMode projectName="Checkout" resources={resources} initialId="readme" onExit={vi.fn()} onSelect={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Architecture" }));

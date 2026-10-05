@@ -8,6 +8,7 @@ import type { ResourceState } from "./resource-state";
 import { analyze } from "../../language/analyze";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
 import { parseConceptual } from "../../language/conceptual/analyze";
+import { parseDatabase } from "../../language/database/analyze";
 import {
   channelsOf,
   eventsOf,
@@ -672,7 +673,34 @@ const strategies: Record<ResourceRepresentation, Strategy> = {
     }
     return representationResult("conceptual", changes, diagnostics, invalid);
   },
-  database: (before, after) => sourceOnlyDiff("database", before, after),
+  database: (before, after) => {
+    const oldResult = parseDatabase(before), newResult = parseDatabase(after);
+    const diagnostics = [...oldResult.diagnostics, ...newResult.diagnostics];
+    const invalid = diagnostics.some(item => item.severity === "error");
+    const changes: SemanticChange[] = [];
+    if (!invalid && oldResult.model && newResult.model) {
+      const compare = <T>(entity: string, oldItems: T[], newItems: T[], identity: (item: T) => string, shape: (item: T) => unknown = item => item) => {
+        const oldById = new Map(oldItems.map(item => [identity(item), item])), newById = new Map(newItems.map(item => [identity(item), item]));
+        for (const [id, oldItem] of oldById) {
+          const next = newById.get(id);
+          if (!next) changes.push({ kind: "removed", entity, identity: id, details: { before: shape(oldItem) } });
+          else if (JSON.stringify(shape(oldItem)) !== JSON.stringify(shape(next))) changes.push({ kind: "modified", entity, identity: id, details: { before: shape(oldItem), after: shape(next) } });
+        }
+        for (const [id, item] of newById) if (!oldById.has(id)) changes.push({ kind: "added", entity, identity: id, details: { after: shape(item) } });
+      };
+      const oldModel = oldResult.model, newModel = newResult.model;
+      compare("schema", oldModel.schemas, newModel.schemas, item => item.id);
+      compare("table", oldModel.tables, newModel.tables, item => item.id, item => ({ schemaId: item.schemaId, name: item.name, description: item.description }));
+      const columnIdentity = (tableId: string, column: { id?: string; name: string }) => column.id ? `${tableId}#id:${column.id}` : `${tableId}#name:${column.name}`;
+      const columns = (model: typeof oldModel) => model.tables.flatMap(table => table.columns.map(column => ({ tableId: table.id, column, identity: columnIdentity(table.id, column) })));
+      compare("column", columns(oldModel), columns(newModel), item => item.identity, item => ({ tableId: item.tableId, ...item.column }));
+      compare("primary-key", oldModel.tables.flatMap(table => table.primaryKey ? [{ tableId: table.id, key: table.primaryKey }] : []), newModel.tables.flatMap(table => table.primaryKey ? [{ tableId: table.id, key: table.primaryKey }] : []), item => item.key.id, item => ({ tableId: item.tableId, ...item.key }));
+      compare("unique", oldModel.tables.flatMap(table => table.uniqueConstraints.map(key => ({ tableId: table.id, key }))), newModel.tables.flatMap(table => table.uniqueConstraints.map(key => ({ tableId: table.id, key }))), item => item.key.id, item => ({ tableId: item.tableId, ...item.key }));
+      compare("index", oldModel.tables.flatMap(table => table.indexes.map(index => ({ tableId: table.id, index }))), newModel.tables.flatMap(table => table.indexes.map(index => ({ tableId: table.id, index }))), item => item.index.id, item => ({ tableId: item.tableId, ...item.index }));
+      compare("foreign-key", oldModel.foreignKeys, newModel.foreignKeys, item => item.id);
+    }
+    return representationResult("database", changes, diagnostics, invalid);
+  },
   markdown: (before, after) => {
     const source = sourceDiff(before, after);
     const changes = source.hunks.map((hunk) => ({
@@ -684,14 +712,6 @@ const strategies: Record<ResourceRepresentation, Strategy> = {
     return representationResult("markdown", changes, [], false);
   },
 };
-
-function sourceOnlyDiff(representation: ResourceRepresentation, before: string, after: string): RepresentationDiff {
-  const source = sourceDiff(before, after);
-  return representationResult(representation, source.hunks.map(hunk => ({
-    kind: "modified" as const, entity: "source", identity: `lines:${hunk.newStart}`,
-    details: { oldLines: hunk.oldLines, newLines: hunk.newLines },
-  })), [], false);
-}
 
 function representationResult(
   representation: ResourceRepresentation,

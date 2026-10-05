@@ -2324,7 +2324,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
               "RechargeRequested handled by LoadBalance", "LoadBalance causes BalanceLoaded", "BalanceLoaded handled by AuthorizeRecharge", "AuthorizeRecharge causes RechargeAuthorized", "RechargeAuthorized handled by CapturePayment", "CapturePayment causes PaymentCaptured", "PaymentCaptured handled by CompleteRecharge", "CompleteRecharge causes RechargeCompleted", "RechargeCompleted handled by NotifyCustomer", "NotifyCustomer causes NotificationQueued", "CompleteRecharge causes LedgerUpdated", "LedgerUpdated handled by NotifyCustomer",
               "effect persist-recharge on CompleteRecharge: persist recharge", "effect audit-recharge on CompleteRecharge: append audit record", "failure capture-failed on handler CapturePayment", "retry capture-again for capture-failed {", "  mechanism: handler", "  target: same-execution", "}",
             ].join("\n") },
-            { path: "internal.dbschema", type: "database", content: 'title "Internal schema"\ntable users - "users"' },
+            { path: "internal.dbschema", type: "database", content: 'title "Internal schema"\ntable users - "users"\ncolumn users user_id "id" {uuid} not-null\nprimary-key users_pk users (id)' },
           ],
         }),
       });
@@ -2356,8 +2356,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await anonymousPage.getByRole("heading", { name: "How to read Sequence" }).waitFor({ state: "visible" });
        check("public reader navigates Markdown and renders canonical Sequence with opt-in guidance", true);
        const conceptualNavigation = anonymousPage.getByRole("button", { name: "Customer model" });
-       check("public navigation exposes Conceptual but excludes Database", await conceptualNavigation.count() === 1 && await anonymousPage.getByRole("button", { name: "Internal schema" }).count() === 0);
-       await conceptualNavigation.click();
+       check("public navigation exposes Database within the Share projection", await conceptualNavigation.count() === 1 && await anonymousPage.getByRole("button", { name: "Internal schema" }).count() === 1);
+       await anonymousPage.getByRole("button", { name: "Internal schema" }).click();
+       await anonymousPage.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await anonymousPage.getByRole("button", { name: "How to read Database Diagram" }).click();
+       await anonymousPage.getByRole("heading", { name: "How to read Database Diagram" }).waitFor({ state: "visible" });
+       check("public reader renders Database with canonical notation guidance", await anonymousPage.getByTestId("database-preview-svg").locator("svg").getAttribute("aria-label") === "Database Diagram");
+        await conceptualNavigation.click();
        await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        await anonymousPage.getByRole("button", { name: "How to read Conceptual" }).click();
        await anonymousPage.getByRole("heading", { name: "How to read Conceptual" }).waitFor({ state: "visible" });
@@ -2376,6 +2381,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         const navigatorBox = await presentationNavigator.boundingBox();
         check("presentation navigator close control is compact and top-right", closeBox !== null && navigatorBox !== null && closeBox.width <= 40 && Math.abs(closeBox.x + closeBox.width - navigatorBox.x - navigatorBox.width) <= 20);
         await closeNavigator.click();
+        await anonymousPage.getByRole("button", { name: "Architecture", exact: true }).click();
+        await anonymousPage.getByRole("navigation", { name: "Presentation resources" }).getByRole("button", { name: "Internal schema" }).click();
+        await anonymousPage.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await anonymousPage.getByRole("button", { name: "How to read Database Diagram" }).click();
+        await anonymousPage.getByRole("heading", { name: "How to read Database Diagram" }).waitFor({ state: "visible" });
+        await anonymousPage.reload({ waitUntil: "domcontentloaded" });
+        await anonymousPage.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        check("public Database Presentation renders canonical output and survives refresh", anonymousPage.url().includes("resource=") && anonymousPage.url().includes("presentation=1"));
+        await anonymousPage.getByRole("button", { name: "Architecture", exact: true }).click();
+        await anonymousPage.getByRole("navigation", { name: "Presentation resources" }).getByRole("button", { name: "Customer model" }).click();
+        await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
         await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
         const notesBox = await anonymousPage.getByTestId("preview-notes").boundingBox();
@@ -3594,6 +3610,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         );
         await reviewerPage.reload({ waitUntil: "domcontentloaded" });
         await waitForAuthEntry(reviewerPage);
+        await reviewerPage.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
         await reviewerPage.waitForFunction(
           (name) => {
             const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
@@ -3630,6 +3647,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await waitForAuthEntry(page);
+        await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
         await page.waitForFunction(
           (name) => {
             const entry = [...document.querySelectorAll('[data-testid="workspace-server-project"]')]
@@ -3849,6 +3867,212 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.locator('[data-testid="explorer-shared-section"] [data-testid="select-diagram-button"]').click();
       await waitForText(page.getByTestId("conceptual-preview-svg"), text => text.includes("Account Holder") && text.includes("Order") && text.includes("places"), "promoted SHARED Conceptual rendering");
       check("post-promotion SHARED render shows the new Conceptual state", true);
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await ownerContext.close();
+      await reviewerContext.close();
+    }
+  });
+
+  await scenario("Authenticated Database authoring and promotion lifecycle", async () => {
+    const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const reviewerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const page = await ownerContext.newPage();
+    const reviewerPage = await reviewerContext.newPage();
+    const projectName = "Database Authenticated E2E";
+    const proposalTitle = "Rename customer table";
+    const base = [
+      'title "Billing schema"', 'schema billing "billing"',
+      'table customer billing "Customer"', 'column customer customer_id "id" {uuid} not-null', 'primary-key customer_pk customer (id)',
+      'table invoice billing "Invoice"', 'column invoice invoice_id "id" {uuid} not-null', 'column invoice invoice_customer_id "customer_id" {uuid} not-null',
+      'primary-key invoice_pk invoice (id)', 'foreign-key invoice_customer invoice (customer_id) -> customer (id)',
+    ].join("\n");
+    const renamed = base.replace('table customer billing "Customer"', 'table customer billing "AccountHolder"');
+    let projectId = null;
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaceId = (await apiRequest(page, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(page, "/api/projects/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, name: projectName, resources: [{ path: "billing.dbschema", type: "database", content: base }] }),
+      });
+      if (created.status !== 201) throw new Error(`Database bootstrap failed: ${created.status} ${created.text}`);
+      projectId = created.json.project.id;
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await openServerProject(page, projectName);
+
+      await page.getByRole("button", { name: "Load diagram Billing schema" }).click();
+      const sharedSvg = page.getByTestId("database-preview-svg");
+      await sharedSvg.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await waitForText(sharedSvg, text => text.includes("Customer") && text.includes("Invoice") && text.includes("customer_id"), "SHARED Database preview");
+      check("authenticated SHARED Database uses canonical renderer and retains schema facts", await page.getByTestId("app-shell").isVisible() && (await sharedSvg.locator("svg").getAttribute("aria-label")) === "Database Diagram" && (await sharedSvg.textContent()).includes("billing.Customer") && (await sharedSvg.locator('[data-edge-id="invoice_customer"]').count()) === 1);
+      const sharedBefore = await currentServerResource(page, projectName);
+      check("SHARED Database source starts at the canonical fixture", sharedBefore.content === base);
+      const sharedObserver = await ownerContext.newPage();
+      await sharedObserver.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(sharedObserver);
+      await openServerProject(sharedObserver, projectName);
+      await sharedObserver.getByRole("button", { name: "Load diagram Billing schema" }).click();
+      const observedSharedSvg = sharedObserver.getByTestId("database-preview-svg");
+      await observedSharedSvg.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const sharedRenderBefore = await observedSharedSvg.textContent();
+
+      await page.getByTestId("explorer-my-work-create").click();
+      await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Draft name").fill("database-authoring-work");
+      await page.getByRole("button", { name: "Create draft" }).click();
+      const contexts = await apiRequest(page, `/api/projects/${projectId}/private-work`);
+      const work = contexts.json.contexts.find(entry => entry.name === "database-authoring-work");
+      if (!work) throw new Error("Database MY WORK context was not created");
+      const workResource = await apiRequest(page, `/api/projects/${projectId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ contextId: work.id, path: "billing.dbschema", type: "database", content: base }),
+      });
+      if (workResource.status !== 201) throw new Error(`MY WORK Database creation failed: ${workResource.status} ${workResource.text}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const privateRow = page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]');
+      await privateRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await privateRow.locator('[data-testid="select-diagram-button"]').click();
+      await showEditor(page);
+      const editor = page.getByTestId("dsl-textarea");
+      await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("MY WORK Database retains its source editor and canonical preview", true);
+
+      await editor.fill(renamed);
+      await waitForText(page.getByTestId("database-preview-svg"), text => text.includes("AccountHolder") && text.includes("Invoice") && text.includes("invoice_customer"), "renamed MY WORK Database preview");
+      check("stable table ID rename updates MY WORK render and preserves FK", true);
+      check("MY WORK edit leaves SHARED Database source unchanged", (await currentServerResource(page, projectName)).content === sharedBefore.content);
+      const selectedTable = page.getByTestId("database-preview-svg").locator('[data-node-id="customer"]');
+      await selectedTable.dispatchEvent("click");
+      await page.waitForFunction(() => {
+        const sourceEditor = document.querySelector('[data-testid="dsl-textarea"]');
+        return sourceEditor instanceof HTMLTextAreaElement && sourceEditor.value.slice(sourceEditor.selectionStart, sourceEditor.selectionEnd).includes("table customer");
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Database table selection navigates by stable table ID to source", true);
+
+      const myWorkToggle = page.getByTestId("explorer-my-work-toggle");
+      if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
+      const workRow = page.getByTestId("explorer-private-context");
+      await workRow.getByRole("button", { name: /Actions for MY WORK/ }).click();
+      await page.getByRole("menuitem", { name: "Create proposal from this draft…" }).click();
+      const submitDialog = page.locator('section[aria-label="Submit architectural proposal"]');
+      await submitDialog.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Proposal title").fill(proposalTitle);
+      await page.getByLabel("Proposal description").fill("Stable-ID Database table rename; preserve invoice FK.");
+      await submitDialog.locator('input[type="checkbox"]').check();
+      await page.getByRole("button", { name: "Submit proposal for review" }).click();
+      await page.locator('section[aria-label="Architectural Proposal"] h2').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const proposalList = (await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`)).json.proposals;
+      const proposal = proposalList.find(entry => entry.title === proposalTitle);
+      if (!proposal) throw new Error("submitted Database proposal was not discoverable");
+      const snapshot = await apiRequest(page, `/api/architectural-proposals/${proposal.id}?projectId=${projectId}`);
+      check("Database proposal snapshot contains MY WORK rename and SHARED remains unchanged", snapshot.status === 200 && snapshot.json.proposal.resources.some(resource => resource.content === renamed) && (await currentServerResource(page, projectName)).content === base);
+      const laterMyWork = renamed.replace('table customer billing "AccountHolder"', 'table customer billing "OwnerWorkOnly"');
+      const currentMyWorkBeforeUpdate = await apiRequest(page, `/api/projects/${projectId}/resources/${workResource.json.resource.id}?contextId=${work.id}`);
+      const workAfterSubmit = await apiRequest(page, `/api/projects/${projectId}/resources/${workResource.json.resource.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ content: laterMyWork, contextId: work.id, expectedRevision: currentMyWorkBeforeUpdate.json.resource.revision }),
+      });
+      const currentMyWork = await apiRequest(page, `/api/projects/${projectId}/resources/${workResource.json.resource.id}?contextId=${work.id}`);
+      check("post-submission MY WORK edit is accepted", workAfterSubmit.status === 200 && currentMyWork.json.content === laterMyWork, `${workAfterSubmit.status} ${workAfterSubmit.text}`);
+      const readProposalDiff = async () => apiRequest(page, `/api/architectural-proposals/${proposal.id}/diff?projectId=${projectId}`);
+      let proposalDiff = (await readProposalDiff()).json.diff;
+      let diffResource = proposalDiff.resources.find(resource => resource.path === "billing.dbschema");
+      check("Database diff uses immutable SHARED base and submitted snapshot, not current MY WORK", diffResource.baseContent === base && diffResource.proposedContent === renamed && !diffResource.proposedContent.includes("OwnerWorkOnly"));
+      check("Database semantic diff classifies the stable-ID rename as one modified table", diffResource.content.changes.some(change => change.entity === "table" && change.identity === "customer" && change.kind === "modified") && !diffResource.content.changes.some(change => change.entity === "table" && change.kind === "added"));
+
+      const reviewer = { sub: "e2e-database-reviewer", name: "Database Reviewer B", email: "database-reviewer@e2e.test" };
+      await reviewerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(reviewerPage);
+      await signIn(reviewerPage, idp, reviewer);
+      const reviewerId = (await apiRequest(reviewerPage, "/api/me")).json.user.id;
+      check("Database Reviewer B is an independent identity", reviewerId !== proposal.authorUserId);
+      const projectDetails = await apiRequest(page, `/api/projects/${projectId}`);
+      const workspaceMembership = await apiRequest(page, `/api/workspaces/${projectDetails.json.project.workspaceId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      check("owner grants Database Reviewer B workspace access", workspaceMembership.status === 200);
+      const projectMembership = await apiRequest(page, `/api/projects/${projectId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      check("owner grants Database Reviewer B project access", projectMembership.status === 204);
+      await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+      await openServerProject(reviewerPage, projectName);
+      const proposalToggle = reviewerPage.getByTestId("explorer-proposals-toggle");
+      if ((await proposalToggle.getAttribute("aria-expanded")) !== "true") await proposalToggle.click();
+      const proposalRow = reviewerPage.getByTestId("explorer-proposal").filter({ hasText: proposalTitle }).filter({ hasText: "OPEN" });
+      await proposalRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await proposalRow.getByTestId("explorer-proposal-open").click();
+      await reviewerPage.waitForFunction(id => new URL(location.href).searchParams.get("proposal") === id, proposal.id, { timeout: UI_TIMEOUT_MS });
+      const restoreReviewerDetails = reviewerPage.getByRole("button", { name: "Show proposal details" });
+      if (await restoreReviewerDetails.isVisible()) await restoreReviewerDetails.click();
+      const reviewerDetail = reviewerPage.locator('section[aria-label="Architectural Proposal"]');
+      await waitForText(reviewerDetail, text => text.includes(proposalTitle), "Database Reviewer B proposal detail");
+      await reviewerDetail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Impact" }).evaluate(button => button.click());
+      const semanticImpact = reviewerPage.getByTestId("database-semantic-impact");
+      await semanticImpact.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Reviewer B sees Database stable-ID semantic impact", (await semanticImpact.textContent()).includes("1 table modified"));
+      await reviewerPage.locator('section[aria-label="Changes"] button').filter({ hasText: "billing.dbschema" }).click();
+      await reviewerDetail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Review" }).click({ force: true });
+      const inspector = reviewerPage.locator('section[aria-label="Comparison for billing.dbschema"]');
+      await inspector.getByRole("button", { name: "Compare", exact: true }).click();
+      await reviewerPage.getByTestId("database-preview-svg").first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const compared = await inspector.textContent();
+      check("Reviewer B Compare renders the same table with its modified name", (await inspector.getByRole("button", { name: "Compare", exact: true }).getAttribute("aria-pressed")) === "true" && compared.includes("Customer") && compared.includes("AccountHolder"));
+      check("Reviewer B comparison retains the invoice FK", compared.includes("invoice_customer") || (await inspector.locator('[data-edge-id="invoice_customer"]').count()) > 0);
+
+      const prePromotion = await apiRequest(page, `/api/architectural-proposals/${proposal.id}/promotion?projectId=${projectId}`);
+      await reviewerDetail.locator("textarea").fill("Reviewed stable table identity and preserved FK.", { force: true });
+      await reviewerPage.locator('section[aria-label="Proposal review"] button').filter({ hasText: "Approve proposal" }).click();
+      await waitForText(reviewerPage.locator('section[aria-label="Proposal review"]'), text => text.includes("1 approvals"), "Database Reviewer B approval evidence");
+      const approved = await apiRequest(page, `/api/architectural-proposals/${proposal.id}/reviews?projectId=${projectId}`);
+      const approvedReviews = approved.json?.reviews?.reviews ?? [];
+      const approvedState = await currentServerResource(reviewerPage, projectName);
+      check("Database approval is recorded and leaves SHARED source unchanged", approved.status === 200 && approvedReviews.some(review => review.decision === "APPROVE" && review.reviewerUserId === reviewerId) && approvedState.content === base);
+      check("Database approval leaves the SHARED render unchanged", (await observedSharedSvg.textContent()) === sharedRenderBefore && (await observedSharedSvg.textContent()).includes("Customer"));
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("workspace-back-to-projects").click();
+      const workspaceSelect = page.getByTestId("workspace-server-workspace-select");
+      await workspaceSelect.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await workspaceSelect.selectOption(projectDetails.json.project.workspaceId);
+      const ownerProjectsReload = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return response.request().method() === "GET" && url.pathname === "/api/projects" && url.searchParams.get("workspaceId") === projectDetails.json.project.workspaceId;
+      });
+      await page.getByTestId("workspace-server-refresh").click();
+      await ownerProjectsReload;
+      await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await openServerProject(page, projectName);
+      const ownerProposalsToggle = page.getByTestId("explorer-proposals-toggle");
+      if ((await ownerProposalsToggle.getAttribute("aria-expanded")) !== "true") await ownerProposalsToggle.click();
+      await page.getByTestId("explorer-proposal").filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open").click();
+      const restoreDetails = page.getByRole("button", { name: "Show proposal details" });
+      if (await restoreDetails.isVisible()) await restoreDetails.click();
+      await page.getByRole("button", { name: "Preview promotion" }).click();
+      await waitForText(page.locator('section[aria-label="Proposal promotion"]'), text => text.includes("Ready to promote"), "Database promotion readiness");
+      const readiness = await apiRequest(page, `/api/architectural-proposals/${proposal.id}/promotion?projectId=${projectId}`);
+      const readinessBlockers = readiness.json?.promotion?.blockers ?? [];
+      check("Database promotion readiness is separate and review requirement is satisfied", prePromotion.status === 200 && readiness.status === 200 && !readinessBlockers.some(blocker => blocker.code === "REVIEW_REQUIRED") && (await currentServerResource(page, projectName)).content === base);
+      await page.getByRole("button", { name: "Promote to SHARED" }).click();
+      await waitForText(page.locator('section[aria-label="Architectural Proposal"]'), text => text.includes("PROMOTED"), "Database proposal promotion");
+      const promoted = await currentServerResource(page, projectName);
+      check("explicit promotion applies submitted snapshot, not later MY WORK, and preserves FK", promoted.content === renamed && promoted.content.includes("invoice_customer") && promoted.content !== laterMyWork);
+      await page.getByRole("button", { name: "Base status", exact: true }).click();
+      await page.getByRole("button", { name: "Open resulting SHARED knowledge" }).click();
+      await page.locator('[data-testid="explorer-shared-section"] [data-testid="select-diagram-button"]').click();
+      const promotedSvg = page.getByTestId("database-preview-svg");
+      await waitForText(promotedSvg, text => text.includes("AccountHolder") && text.includes("Invoice"), "promoted SHARED Database rendering");
+      check("promoted SHARED Database render shows the renamed table and FK", (await promotedSvg.textContent()).includes("invoice_customer") || (await promotedSvg.locator('[data-edge-id="invoice_customer"]').count()) === 1);
+      proposalDiff = (await readProposalDiff()).json.diff;
+      diffResource = proposalDiff.resources.find(resource => resource.path === "billing.dbschema");
+      check("promotion preserves immutable Database proposal base and snapshot", diffResource.baseContent === base && diffResource.proposedContent === renamed);
     } finally {
       if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
       await ownerContext.close();

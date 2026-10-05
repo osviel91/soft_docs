@@ -1,6 +1,6 @@
 # D02.3 — Visual projection and layout architecture
 
-**Status:** headless Conceptual/Database projection and geometry layout implemented. Rendering and product UI integration remain deferred.
+**Status:** headless Conceptual/Database projection and geometry layout implemented. Database product rendering consumes this projection and positioned geometry; product lifecycle integration is tracked by D02.5.
 
 ## Boundary
 
@@ -33,7 +33,7 @@ The projections remain artifact-specific. `src/layout/geometry-input.ts` contain
 
 ### Database
 
-`projectDatabase` maps each table to a compound visual item. It retains qualified display name, authored column order, type, nullability, default, description, PK/FK markers, and the IDs of unique constraints containing each column. Explicit column IDs and implicit `(tableId, exactName)` identities are represented distinctly. Each column gets west/east row ports. Each FK gets one visual connection ID and ordered source/target column and port evidence arrays; a composite FK remains one connection, with the generic route attached to the first paired ports. This is a visual attachment policy, not a claim that the composite FK has a single-column semantic endpoint. No cardinality is projected.
+`projectDatabase` maps each table to a compound visual item. It retains qualified display name, authored column order, type, nullability, default, description, PK/FK markers, unique-constraint and index participation, complete index mappings, and explicit versus implicit column identities. Each column gets west/east row ports. Each FK gets one visual connection ID and ordered source/target column and port evidence arrays; a composite FK remains one connection, with the generic route attached to the first paired ports. This is a visual attachment policy, not a claim that the composite FK has a single-column semantic endpoint. No cardinality is projected.
 
 Schemas are shown as qualified table names; no schema containers are created.
 
@@ -83,7 +83,7 @@ ELK is asynchronous. The adapter selects layered RIGHT placement, orthogonal rou
 
 Text sizing is a deterministic estimate, not browser font measurement. Conceptual wraps names/descriptions at a fixed available width and computes a minimum box. Database row heights are fixed and table width is the maximum estimated header/row width. A renderer may later replace the measurement policy or render overflow handling without changing semantic models or the geometry adapter.
 
-Database ports are placed at each column row on the west/east sides. ELK routes to those ports using orthogonal edges. Self-loops and parallel edges remain separate identified connections/routes; undirected Conceptual connections retain their direction metadata in the artifact projection while layout treats endpoints as geometry anchors. ELK is responsible for bends and route placement. Composite FK evidence is preserved on the projection; current single route attaches to the first ordered source/target pair.
+Database ports are placed at each column row on the west/east sides. ELK routes to those ports using orthogonal edges. Self-loops and parallel edges remain separate identified connections/routes; undirected Conceptual connections retain their direction metadata in the artifact projection while layout treats endpoints as geometry anchors. ELK is responsible for bends and route placement. Composite FK evidence is preserved on the projection; current single route attaches to the first ordered source/target pair. The product renderer exposes the complete ordered mapping in accessible relationship details, so the representative route is not presented as the complete semantic mapping.
 
 ## Evidence and known limits
 

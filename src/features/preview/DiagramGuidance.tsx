@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog" | "conceptual";
+export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog" | "conceptual" | "database";
 
 type Guide = { title: string; read: string; notation: string[]; interaction: string[] };
 
@@ -42,6 +42,12 @@ export const DIAGRAM_GUIDES: Record<GuidanceView, Guide> = {
     notation: ["Directed arrows preserve the authored direction; undirected lines remain undirected.", "Connection labels are open authored text and do not imply topology, execution, or causality."],
     interaction: ["Select a concept to reveal its source declaration. Pan and zoom with the canvas controls."],
   },
+  database: {
+    title: "Database Diagram",
+    read: "Tables and columns show documented persistence structure. Missing schema facts are undocumented here, not proof of absence.",
+    notation: ["A table header uses the authored schema and table name; columns remain in authored order. Types and defaults are shown as opaque authored text.", "PK marks primary-key columns, including each member of a composite key. FK marks columns participating in a documented foreign key; UQ indicates documented unique participation. NULL and NOT NULL reproduce authored nullability.", "Foreign-key arrows point from the referencing/source table and column to the referenced/target table and column. A composite FK is one constraint; its complete ordered column mapping is available from the relationship details.", "A foreign key is documented data structure. It does not by itself imply service dependency, runtime dependency, ownership, event flow, causality, or business cardinality.", "Indexes are structural documentation, not graph relationships; select table/column details for declared constraints and defaults."],
+    interaction: ["Select a table to highlight it and inspect its directly related foreign keys; selection is navigation, not a semantic change.", "Pan and zoom with the viewport controls; fit to view frames the complete layout."],
+  },
 };
 
 export default function DiagramGuidance({ view, comparison = false, diffDecorations = false }: { view: GuidanceView; comparison?: boolean; diffDecorations?: boolean }) {
@@ -72,6 +78,7 @@ export default function DiagramGuidance({ view, comparison = false, diffDecorati
         {view === "topology" && <><span className="diagram-guidance__box">producer</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">consumer</span></>}
         {view === "causal" && <><span className="diagram-guidance__box">message</span><span className="diagram-guidance__message diagram-guidance__message--dashed" /><span className="diagram-guidance__box">effect</span></>}
         {view === "conceptual" && <><span className="diagram-guidance__box">concept</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">concept</span></>}
+        {view === "database" && <><span className="diagram-guidance__box">source row</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">target row</span></>}
       </div>}
       <details className="diagram-guidance__more"><summary>Learn more</summary>
         {comparison && <p>Each viewer is a separate resource and context. A shared semantic selection highlights occurrences, not resource changes.</p>}

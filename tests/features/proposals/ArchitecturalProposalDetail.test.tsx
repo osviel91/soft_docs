@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ArchitecturalProposalDetail, ProposalResourceComparison } from "../../../src/features/proposals/ArchitecturalProposalDetail";
 import type { ServerApiClient, ServerArchitecturalProposalDiff, ServerArchitecturalProposal } from "../../../src/workspace/server/api-client";
 import { diffResources } from "../../../src/domain/diff/resource-diff";
@@ -114,9 +114,38 @@ describe("ArchitecturalProposalDetail", () => {
     expect(screen.queryByLabelText("Comparison for overview.md")).not.toBeInTheDocument();
     expect(onDiffLoaded).toHaveBeenCalledWith(diff);
   });
+
+  it("summarizes Database proposal impact from parsed semantic changes", async () => {
+    const baseContent = 'table orders - "Orders"\ncolumn orders order_id "id" {uuid} not-null\nprimary-key orders_pk orders (id)\nindex orders_ix orders (id)';
+    const proposedContent = 'table orders - "Sales Orders"\ncolumn orders order_id "id" {uuid} not-null\nprimary-key orders_pk orders (id)';
+    const semantic = diffResources({ content: baseContent, type: "database" }, { content: proposedContent, type: "database" });
+    const api = client();
+    vi.mocked(api.getArchitecturalProposalDiff).mockResolvedValue({ ...diff, resources: [{ ...semantic, path: "orders.dbschema", type: "database", operation: "MODIFIED", baseContent, proposedContent }] });
+    vi.mocked(api.getArchitecturalProposal).mockResolvedValue({ ...proposal, resources: [{ sourceResourceId: "orders", path: "orders.dbschema", type: "database", sourceRevision: 2, content: proposedContent, operation: "UPDATE" }] });
+    render(<ArchitecturalProposalDetail client={api} projectId="project-1" proposalId="proposal-1" onBack={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Impact" }));
+    expect(await screen.findByTestId("database-semantic-impact")).toHaveTextContent("1 table modified, 1 index removed");
+  });
 });
 
 describe("ProposalResourceComparison", () => {
+  it("renders Database Before, After, and Compare from the semantic resource diff", async () => {
+    const baseContent = 'table customer - "Customer"';
+    const proposedContent = 'table customer - "AccountHolder"';
+    const computed = diffResources({ content: baseContent, type: "database" }, { content: proposedContent, type: "database" });
+    const resource = { ...computed, path: "billing.dbschema", type: "database" as const, operation: "MODIFIED" as const, baseContent, proposedContent };
+    const view = render(<ProposalResourceComparison resource={resource} mode="before" onModeChange={vi.fn()} />);
+    expect(await screen.findByTestId("database-preview-svg")).toBeInTheDocument();
+    expect(view.container.textContent).toContain("Customer");
+    expect(view.container.textContent).not.toContain("AccountHolder");
+    view.rerender(<ProposalResourceComparison resource={resource} mode="after" onModeChange={vi.fn()} />);
+    expect(await screen.findByTestId("database-preview-svg")).toBeInTheDocument();
+    expect(view.container.textContent).toContain("AccountHolder");
+    expect(view.container.textContent).not.toContain("Customer");
+    view.rerender(<ProposalResourceComparison resource={resource} mode="compare" onModeChange={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByTestId("database-preview-svg")).toHaveLength(2));
+  });
+
   it("switches text modes and aligns unchanged context in side-by-side view", () => {
     let mode: "unified" | "side-by-side" = "unified";
     const view = render(<ProposalResourceComparison resource={diff.resources[0]} mode={mode} onModeChange={(next) => { mode = next as typeof mode; view.rerender(<ProposalResourceComparison resource={diff.resources[0]} mode={mode} onModeChange={(value) => { mode = value as typeof mode; }} />); }} />);

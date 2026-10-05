@@ -59,16 +59,14 @@ The canonical dimensions are:
 | Sequence       | How does this flow execute?              | Execution / time            | Implemented as `.seq`            |
 | Event Flow     | What causes what asynchronously?         | Causality / reaction        | Implemented as `.eventseq`       |
 | Conceptual     | What concepts or components relate?      | Structure / relationships   | Implemented `.concept`; render, semantic diff, Share, Presentation |
-| Database       | What data is persisted and how?          | Data / persistence          | Implemented `.dbschema` source/validation/governance; no product rendering |
+| Database       | What data is persisted and how?          | Data / persistence          | Implemented `.dbschema`; render, semantic diff, Share, Presentation |
 | Note           | What rule, decision, or context matters? | Context / rules / decisions | Implemented as Markdown (`.md`)  |
 
 Conceptual and Database have implemented source, parsing, semantic models,
-validation, and governed-resource support. Conceptual also has semantic diff,
-visual rendering, public Share rendering, and Presentation rendering. Database
-has internal projection/layout infrastructure but no product renderer, visual
-semantic review, public rendering, or Presentation support. Semantic contract
-maturity is independent of renderer maturity: internal projection/layout does
-not advertise product rendering. The MCP artifact-authoring reference exposes
+validation, governed-resource support, semantic diff, visual rendering, public
+Share rendering, and Presentation rendering. Their semantic models remain
+independent; each uses an artifact-specific renderer over the geometry boundary.
+Semantic contract maturity is independent of renderer maturity. The MCP artifact-authoring reference exposes
 purpose, semantics, canonical examples, inference boundaries, editing guidance,
 and current capabilities to agents.
 
@@ -140,8 +138,7 @@ submitted changes remain unavailable until promotion. Project deletion cascades
 its grants, so a grant cannot restore a deleted project. Public responses are
 not cached; revocation prevents future platform retrieval but cannot erase copies
 already obtained by recipients. Presentation Mode presents an already-authorized
-projection; Conceptual rendering is supported there, while Database rendering is
-not. The current public projection contains
+projection; Conceptual and Database rendering are supported there. The current public projection contains
 the project name, active SHARED resource identifiers, paths, types, revisions,
 descriptions, tags, source contents, derived folders, and the canonical project
 index built from those same sources. It includes only manifest semantic identities
@@ -355,7 +352,7 @@ Similarly, `Merge Change Proposal.seq` can show execution, a proposal
 collaboration Event Flow can show asynchronous reactions, a Conceptual view can
 show proposal relationships, and a Database source can document persistence.
 These views complement one another; they are not duplicate accounts of the same
-fact. Database product rendering remains unavailable.
+fact. Database uses its own schema semantics and dedicated renderer.
 
 ### Assessment guidance
 

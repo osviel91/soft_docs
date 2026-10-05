@@ -3,12 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Preview from "../../../src/features/preview/Preview";
 import EventFlowPreview from "../../../src/features/preview/EventFlowPreview";
+import DiagramGuidance from "../../../src/features/preview/DiagramGuidance";
 import type { SemanticChange } from "../../../src/domain/diff/resource-diff";
 
 vi.mock("../../../src/renderer/causal/CausalFlowView", () => ({ default: () => <div /> }));
 afterEach(cleanup);
 
 describe("contextual diagram guidance", () => {
+  it("explains Database FK direction and semantic boundaries", () => {
+    render(<DiagramGuidance view="database" />);
+    fireEvent.click(screen.getByRole("button", { name: "How to read Database Diagram" }));
+    fireEvent.click(screen.getByText("Learn more"));
+    expect(screen.getByText(/Foreign-key arrows point from the referencing\/source/)).toBeInTheDocument();
+    expect(screen.getByText(/A foreign key is documented data structure/)).toBeInTheDocument();
+    expect(screen.getByText(/not a semantic change/)).toBeInTheDocument();
+  });
+
   it("is opt-in, keyboard operable, and does not replace the sequence canvas", async () => {
     render(<Preview source={"participant A\nparticipant B\nA -> B: call"} />);
     const help = screen.getByRole("button", { name: "How to read Sequence" });

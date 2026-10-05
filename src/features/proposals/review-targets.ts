@@ -34,6 +34,8 @@ function comparableInDiagram(
   if (representation === "event-flow") return EVENT_ENTITIES.has(change.entity);
   if (representation === "conceptual")
     return change.entity === "concept" || change.entity === "relationship";
+  if (representation === "database")
+    return ["schema", "table", "column", "primary-key", "unique", "index", "foreign-key"].includes(change.entity);
   return false;
 }
 

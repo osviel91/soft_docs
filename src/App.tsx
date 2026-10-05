@@ -125,9 +125,11 @@ import EventFlowPreview, {
   type EventFlowView,
 } from "./features/preview/EventFlowPreview";
 import ConceptualPreview from "./features/preview/ConceptualPreview";
+import DatabasePreview from "./features/preview/DatabasePreview";
 import { parseConceptual } from "./language/conceptual/analyze";
 import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
+import { parseDatabaseSyntax } from "./language/database/parser";
 import ComparisonView from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
@@ -1880,6 +1882,10 @@ export default function App() {
           ? parseConceptualSyntax(source).ast.declarations.find(
               (declaration) => declaration.kind === "concept" && declaration.id === nodeId,
             )?.range
+          : activeRepresentation === "database"
+            ? parseDatabaseSyntax(source).ast.declarations.find(
+                (declaration) => declaration.kind === "table" && declaration.id === nodeId,
+              )?.range
           : isSequence && ast
             ? nodeRangeById(ast, nodeId)
             : null;
@@ -3748,7 +3754,7 @@ export default function App() {
                   ) : isConceptual ? (
                     <ConceptualPreview source={renderedSource || source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
                   ) : isDatabase ? (
-                    <div className="preview__empty" role="status">Database source is editable and validated; its visual rendering is not available yet.</div>
+                    <DatabasePreview source={source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
                   ) : isEventFlow ? (
                     <>
                       <EventFlowPreview

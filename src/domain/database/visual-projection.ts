@@ -12,6 +12,7 @@ export interface DatabaseVisualColumn {
   isPrimaryKey: boolean;
   isForeignKey: boolean;
   uniqueConstraintIds: string[];
+  indexIds: string[];
   default?: string;
   description?: string;
   order: number;
@@ -21,7 +22,13 @@ export interface DatabaseVisualColumn {
 export interface DatabaseVisualTable {
   visualId: string;
   semanticTableId: string;
+  schemaId?: string;
   qualifiedName: string;
+  description?: string;
+  primaryKeyColumns: string[];
+  primaryKeyId?: string;
+  uniqueConstraintIds: string[];
+  indexMappings: Array<{ id: string; columns: string[] }>;
   columns: DatabaseVisualColumn[];
   requiredWidth: number;
   requiredHeight: number;
@@ -63,6 +70,8 @@ export function projectDatabase(model: DatabaseModel): DatabaseVisualProjection 
     const pk = new Set(table.primaryKey?.columns ?? []);
     const uniqueByColumn = new Map<string, string[]>();
     for (const constraint of table.uniqueConstraints) for (const column of constraint.columns) uniqueByColumn.set(column, [...(uniqueByColumn.get(column) ?? []), constraint.id]);
+    const indexByColumn = new Map<string, string[]>();
+    for (const index of table.indexes) for (const column of index.columns) indexByColumn.set(column, [...(indexByColumn.get(column) ?? []), index.id]);
     const incoming = model.foreignKeys.filter(fk => fk.targetTableId === table.id);
     const outgoing = model.foreignKeys.filter(fk => fk.sourceTableId === table.id);
     const foreignColumns = new Set([...incoming.flatMap(fk => fk.targetColumns), ...outgoing.flatMap(fk => fk.sourceColumns)]);
@@ -75,6 +84,7 @@ export function projectDatabase(model: DatabaseModel): DatabaseVisualProjection 
       isPrimaryKey: pk.has(column.name),
       isForeignKey: foreignColumns.has(column.name),
       uniqueConstraintIds: uniqueByColumn.get(column.name) ?? [],
+      indexIds: indexByColumn.get(column.name) ?? [],
       ...(column.default === undefined ? {} : { default: column.default }),
       ...(column.description === undefined ? {} : { description: column.description }),
       order,
@@ -87,7 +97,13 @@ export function projectDatabase(model: DatabaseModel): DatabaseVisualProjection 
     return {
       visualId: tableVisualId(table.id),
       semanticTableId: table.id,
+      ...(table.schemaId === undefined ? {} : { schemaId: table.schemaId }),
       qualifiedName: qualifiedTableName(model, table),
+      ...(table.description === undefined ? {} : { description: table.description }),
+      primaryKeyColumns: table.primaryKey?.columns ?? [],
+      ...(table.primaryKey ? { primaryKeyId: table.primaryKey.id } : {}),
+      uniqueConstraintIds: table.uniqueConstraints.map(constraint => constraint.id),
+      indexMappings: table.indexes.map(index => ({ id: index.id, columns: [...index.columns] })),
       columns,
       requiredWidth,
       requiredHeight: 42 + columns.length * rowHeight,

@@ -13,7 +13,7 @@ const state = (
 });
 
 describe("resource diff", () => {
-  it("compares Conceptual facts by stable IDs while Database stays source-only", () => {
+  it("compares Conceptual and Database facts by stable IDs", () => {
     const before = 'concept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"\n';
     const after = 'concept customer "Account Holder"\nconcept invoice "Invoice"\nrelation places customer -- invoice "owns"\n';
     const conceptual = diffResources(state(before, "conceptual"), state(after, "conceptual"));
@@ -26,7 +26,35 @@ describe("resource diff", () => {
     const invalid = diffResources(state("concept nope", "conceptual"), state(after, "conceptual"));
     expect(invalid.content.available).toBe(false);
     expect(invalid.content.changes).toEqual([]);
-    expect(diffResources(state('table t - "T"', "database"), state('table t - "Table"', "database")).content.changes[0]).toMatchObject({ entity: "source" });
+    expect(diffResources(state('table t - "T"', "database"), state('table t - "Table"', "database")).content.changes[0]).toMatchObject({ entity: "table", identity: "t", kind: "modified" });
+  });
+
+  it("uses stable table, explicit column, and foreign-key IDs while keeping implicit rename conservative", () => {
+    const before = 'table orders - "Orders"\ncolumn orders order_id "id" {uuid} not-null\ncolumn orders - "old_name" {text} nullable\ncolumn orders ref_id "customer_id" {uuid} not-null\nprimary-key orders_pk orders (id)\ntable customers - "Customers"\ncolumn customers id "id" {uuid} not-null\nprimary-key customers_pk customers (id)\nforeign-key orders_customer orders (customer_id) -> customers (id)';
+    const after = 'table orders - "Sales Orders"\ncolumn orders order_id "order_id" {uuid} not-null\ncolumn orders - "new_name" {text} nullable\ncolumn orders ref_id "account_id" {uuid} not-null\nprimary-key orders_pk orders (order_id)\ntable customers - "Customers"\ncolumn customers id "id" {uuid} not-null\nprimary-key customers_pk customers (id)\nforeign-key orders_customer orders (account_id) -> customers (id)';
+    const diff = diffResources(state(before, "database"), state(after, "database"));
+    expect(diff.content.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "modified", entity: "table", identity: "orders" }),
+      expect.objectContaining({ kind: "modified", entity: "column", identity: "orders#id:order_id" }),
+      expect.objectContaining({ kind: "removed", entity: "column", identity: "orders#name:old_name" }),
+      expect.objectContaining({ kind: "added", entity: "column", identity: "orders#name:new_name" }),
+      expect.objectContaining({ kind: "modified", entity: "foreign-key", identity: "orders_customer" }),
+    ]));
+  });
+
+  it("detects PK, unique, index, type, nullability, and default changes without source-order noise", () => {
+    const before = 'table item - "Item"\ncolumn item id "id" {uuid} not-null\ncolumn item sku "sku" {text} not-null\ncolumn item label "label" {text} nullable default {old}\nprimary-key item_pk item (id)\nunique item_uq item (sku)\nindex item_ix item (label)';
+    const after = 'table item - "Item"\ncolumn item id "id" {uuid} not-null\ncolumn item sku "sku" {varchar(40)} not-null\ncolumn item label "label" {text} not-null default {new}\nprimary-key item_pk item (sku)\nunique item_uq item (label)\nindex item_ix item (sku)';
+    const diff = diffResources(state(before, "database"), state(after, "database"));
+    expect(diff.content.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "modified", entity: "primary-key", identity: "item_pk" }),
+      expect.objectContaining({ kind: "modified", entity: "unique", identity: "item_uq" }),
+      expect.objectContaining({ kind: "modified", entity: "index", identity: "item_ix" }),
+      expect.objectContaining({ kind: "modified", entity: "column", identity: "item#id:sku" }),
+      expect.objectContaining({ kind: "modified", entity: "column", identity: "item#id:label" }),
+    ]));
+    const reordered = 'table item - "Item"\ncolumn item label "label" {text} nullable default {old}\ncolumn item sku "sku" {text} not-null\ncolumn item id "id" {uuid} not-null\nprimary-key item_pk item (id)\nunique item_uq item (sku)\nindex item_ix item (label)';
+    expect(diffResources(state(before, "database"), state(reordered, "database")).content.changes).toEqual([]);
   });
 
   it("compares normalized resource metadata", () => {

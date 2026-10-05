@@ -144,12 +144,13 @@ Capabilities below describe user-visible product behavior, not available interna
 | --- | --- | --- |
 | Source authoring and validation | Yes | Yes |
 | MY WORK, proposals, review/governance, promotion | Yes | Yes |
-| Semantic review | Yes (semantic diff) | No visual semantic review; source comparison only |
-| Product visual rendering | Yes | No (internal projection/layout are not product rendering) |
-| Public Share rendering | Yes | No |
-| Presentation rendering | Yes | No |
+| Semantic review | Yes (semantic diff) | Yes (Database semantic diff) |
+| Product visual rendering | Yes | Yes |
+| Public Share rendering | Yes | Yes |
+| Presentation rendering | Yes | Yes |
 
-Malformed source is a validation failure. Valid source requested in an unsupported product surface (for example, Database Presentation) is an unsupported capability, not invalid source.
+Malformed source is a validation failure. Database comparison uses stable table/FK IDs and explicit column IDs; implicit columns retain exact-name identity. Composite FK review preserves ordered mappings. Geometry and selection are not semantic changes.
+A valid resource requested in a surface that does not render it is an unsupported capability, not invalid source.
 
 ## Safe editing and governance
 
