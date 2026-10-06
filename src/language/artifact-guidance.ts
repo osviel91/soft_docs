@@ -132,7 +132,7 @@ unique products_sku products (sku)
 index products_status_idx products (status)
 \`\`\`
 
-Use \`-\` in a table's schema position when schema is undocumented. Types/defaults are opaque; do not infer vendor behavior.
+Use \`-\` in a table's schema position when schema is undocumented. Types/defaults are opaque; do not infer vendor behavior. Database and Conceptual line comments use \`#\`; \`//\` is not source syntax. Every Database column must explicitly end in \`nullable\` or \`not-null\`.
 
 An FK does not by itself prove service ownership/dependency, runtime call direction, event or causal dependency, aggregate boundary, or business cardinality. A junction table does not automatically prove a business many-to-many relationship. Derive cardinality only from contract-permitted explicit structural evidence; otherwise it remains unknown. Add constraints and relationships only from user instruction or evidence. Same labels never establish cross-artifact identity: IDs are resource-local absent explicit binding evidence.
 

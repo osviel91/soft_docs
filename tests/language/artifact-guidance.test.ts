@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARTIFACT_GUIDANCE } from "../../src/language/artifact-guidance";
 import { parseConceptual } from "../../src/language/conceptual/analyze";
 import { parseDatabase } from "../../src/language/database/analyze";
+import { analyzeResource } from "../../src/domain/project/resource-analysis";
 
 describe("agent artifact examples", () => {
   it("parses every canonical Conceptual example through production analysis", () => {
@@ -13,6 +14,7 @@ describe("agent artifact examples", () => {
       expect(result.ast).not.toBeNull();
       expect(result.model).not.toBeNull();
       expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+      expect(analyzeResource({ id: "canonical-concept", projectId: "p", path: "canonical.concept", type: "conceptual", title: "Canonical" }, source).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
     }
     for (const source of ['concept customer "Customer"', 'concept customer "Account Holder"']) {
       expect(parseConceptual(source).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
@@ -29,7 +31,11 @@ describe("agent artifact examples", () => {
       expect(result.ast).not.toBeNull();
       expect(result.model).not.toBeNull();
       expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+      expect(analyzeResource({ id: "canonical-database", projectId: "p", path: "canonical.dbschema", type: "database", title: "Canonical" }, source).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
     }
     expect(ARTIFACT_GUIDANCE).toContain("identity remains exact-name based");
+    expect(ARTIFACT_GUIDANCE).toContain("line comments use `#`");
+    expect(ARTIFACT_GUIDANCE).toContain("`//` is not source syntax");
+    expect(ARTIFACT_GUIDANCE).toContain("Every Database column must explicitly end in `nullable` or `not-null`");
   });
 });

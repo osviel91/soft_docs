@@ -15,6 +15,10 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { MCP_INSTRUCTIONS } from "../../apps/mcp/mcp/server";
 import { ARTIFACT_GUIDANCE_URI, GOVERNANCE_GUIDE_URI } from "../../apps/mcp/mcp/reference";
 import { createMcpTools } from "../../apps/mcp/mcp/tools";
+import { analyzeResource } from "../../src/domain/project/resource-analysis";
+import { parseDatabase } from "../../src/language/database/analyze";
+import { projectDatabase } from "../../src/domain/database/visual-projection";
+import { layoutGeometry } from "../../src/layout/elk-geometry-adapter";
 import { startHarness, type McpHarness } from "./harness";
 
 let harness: McpHarness;
@@ -44,7 +48,7 @@ afterAll(async () => {
 });
 
 /** Connect a client with a bearer token. */
-async function connect(bearer: string | null): Promise<Client> {
+async function connect(bearer: string | null, selectedContextId = contextId): Promise<Client> {
   const client = new Client({ name: "sdm-test", version: "1.0.0" });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(harness.url), {
@@ -58,7 +62,7 @@ async function connect(bearer: string | null): Promise<Client> {
     callTool({
       ...params,
       ...(privateTools.has(params.name)
-        ? { arguments: { ...(params.arguments ?? {}), contextId } }
+         ? { arguments: { ...(params.arguments ?? {}), contextId: selectedContextId } }
         : {}),
     })) as typeof client.callTool;
   return client;
@@ -89,6 +93,7 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(MCP_INSTRUCTIONS).toContain("search_project");
     expect(MCP_INSTRUCTIONS).toContain("semantic metadata");
     expect(MCP_INSTRUCTIONS).toContain("descriptions and tags");
+    expect(MCP_INSTRUCTIONS).toContain("pass the owned MY WORK contextId to validate resources");
   });
 
   it("exposes canonical Sequence messaging guidance", async () => {
@@ -798,6 +803,91 @@ describe("the remote MCP service over Streamable HTTP", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(Array.isArray(structured(result).diagnostics)).toBe(true);
+    await client.close();
+  });
+
+  it("keeps MCP MY WORK validation aligned with browser analysis for Database and Conceptual", async () => {
+    const validationContextId = (await harness.service.runtime.knowledgeContexts.createPrivate({
+      projectId,
+      ownerUserId: ownerId,
+      name: "Artifact validation work",
+    })).id;
+    const client = await connect(token, validationContextId);
+    const invalidDatabase = [
+      "// unsupported comment syntax",
+      'table sample - "sample"',
+      'column sample id "id" {uuid} not-null',
+      'column sample note "note" {text}',
+      "primary-key sample_pk sample (id)",
+    ].join("\n");
+    const created = await client.callTool({
+      name: "create_resource",
+      arguments: {
+        projectId,
+        path: "validation/database.dbschema",
+        type: "database",
+        content: 'table sample - "sample"\ncolumn sample id "id" {uuid} not-null\nprimary-key sample_pk sample (id)',
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    const resourceId = structured(created).resource.id as string;
+    const firstUpdate = await client.callTool({
+      name: "update_resource",
+      arguments: { projectId, resource: resourceId, content: invalidDatabase, expectedRevision: 1 },
+    });
+    expect(firstUpdate.isError).toBeFalsy();
+    const secondUpdate = await client.callTool({
+      name: "update_resource",
+      arguments: { projectId, resource: resourceId, content: invalidDatabase, expectedRevision: 2 },
+    });
+    expect(secondUpdate.isError).toBeFalsy();
+    expect(structured(secondUpdate).resource.revision).toBe(3);
+
+    const persisted = await client.callTool({ name: "read_resource", arguments: { projectId, resource: resourceId } });
+    expect(structured(persisted).resource.revision).toBe(3);
+    expect(structured(persisted).content).toBe(invalidDatabase);
+    const browserDatabase = analyzeResource({ id: resourceId, projectId, path: "validation/database.dbschema", type: "database", title: "Database" }, invalidDatabase);
+    expect(browserDatabase.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length).toBeGreaterThan(0);
+    const invalidDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    const mcpDatabaseCodes = structured(invalidDatabaseValidation).diagnostics.map((diagnostic: { code: string }) => diagnostic.code);
+    expect(mcpDatabaseCodes).toEqual(expect.arrayContaining(browserDatabase.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => String(diagnostic.code))));
+
+    const validDatabase = 'table sample - "sample"\ncolumn sample id "id" {uuid} not-null\ncolumn sample note "note" {text} nullable\nprimary-key sample_pk sample (id)';
+    const validDatabaseUpdate = await client.callTool({
+      name: "update_resource",
+      arguments: { projectId, resource: resourceId, content: validDatabase, expectedRevision: 3 },
+    });
+    expect(validDatabaseUpdate.isError).toBeFalsy();
+    expect(structured(validDatabaseUpdate).resource.revision).toBe(4);
+    const validDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    expect(structured(validDatabaseValidation).diagnostics).toEqual([]);
+    const parsedDatabase = parseDatabase(validDatabase);
+    expect(parsedDatabase.model).not.toBeNull();
+    const databaseProjection = projectDatabase(parsedDatabase.model!);
+    expect((await layoutGeometry(databaseProjection.geometry)).items).toHaveLength(1);
+
+    const invalidConceptual = 'concept customer "Customer"\nrelation owns customer -> missing "owns"';
+    const conceptualCreated = await client.callTool({
+      name: "create_resource",
+      arguments: { projectId, path: "validation/conceptual.concept", type: "conceptual", content: invalidConceptual },
+    });
+    expect(conceptualCreated.isError).toBeFalsy();
+    const conceptualId = structured(conceptualCreated).resource.id as string;
+    const browserConceptual = analyzeResource({ id: conceptualId, projectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, invalidConceptual);
+    expect(browserConceptual.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length).toBeGreaterThan(0);
+    const invalidConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    const mcpConceptualCodes = structured(invalidConceptualValidation).diagnostics.map((diagnostic: { code: string }) => diagnostic.code);
+    expect(mcpConceptualCodes).toEqual(expect.arrayContaining(browserConceptual.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => String(diagnostic.code))));
+
+    const validConceptual = 'concept customer "Customer"\nconcept account "Account"\nrelation owns customer -> account "owns"';
+    const conceptualUpdate = await client.callTool({
+      name: "update_resource",
+      arguments: { projectId, resource: conceptualId, content: validConceptual, expectedRevision: 1 },
+    });
+    expect(conceptualUpdate.isError).toBeFalsy();
+    expect(analyzeResource({ id: conceptualId, projectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, validConceptual).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    const validConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    expect(structured(validConceptualValidation).diagnostics).toEqual([]);
     await client.close();
   });
 

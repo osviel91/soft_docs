@@ -2244,9 +2244,10 @@ export function createMcpTools(): McpTool[] {
       name: "validate_project",
       title: "Validate a project",
       description:
-        "Run the project's own validators across every resource and return the diagnostics with their severity, file and location. Bounded to the first 500 documents and a page of problems.",
+        "Run the project's own validators across every SHARED resource, or across resources in an explicitly selected MY WORK context, and return diagnostics with severity, file and location. Bounded to the first 500 documents and a page of problems.",
       inputSchema: {
         projectId: projectId(),
+        contextId: z.string().uuid().optional().describe("Include this owned MY WORK context in the effective project validation."),
         severity: z
           .enum(["error", "warning", "info"])
           .optional()
@@ -2259,7 +2260,8 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         throwIfAborted(toolContext.signal);
         const id = stringArg(args, "projectId");
-        const { index } = await semanticIndex(toolContext, id);
+        const contextId = typeof args.contextId === "string" ? args.contextId : null;
+        const { index } = await semanticIndex(toolContext, id, contextId);
         const wanted = args.severity;
         const filtered =
           typeof wanted === "string"

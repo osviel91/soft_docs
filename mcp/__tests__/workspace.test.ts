@@ -261,6 +261,25 @@ describe("DocumentationWorkspace", () => {
     );
   });
 
+  it("validates persisted Database and Conceptual resources through resource and project analysis", async () => {
+    const ws = await open();
+    await ws.createProject("Artifact validation");
+    const project = await ws.resolveProject("Artifact validation");
+    const invalidDatabase = 'table sample - "sample"\ncolumn sample id "id" {uuid} not-null\ncolumn sample note "note" {text}\nprimary-key sample_pk sample (id)';
+    await ws.createResource(project, { kind: "database", name: "sample", content: invalidDatabase });
+    const databaseResource = await ws.validateResource(project, "sample.dbschema");
+    expect(databaseResource.diagnostics.map((diagnostic) => diagnostic.code)).toContain("database.syntax");
+
+    const invalidConceptual = 'concept customer "Customer"\nrelation owns customer -> missing "owns"';
+    await ws.createResource(project, { kind: "conceptual", name: "model", content: invalidConceptual });
+    const conceptualResource = await ws.validateResource(project, "model.concept");
+    expect(conceptualResource.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
+
+    const projectValidation = await ws.validateProject(project);
+    expect(projectValidation.diagnostics.map((diagnostic) => diagnostic.code)).toContain("database.syntax");
+    expect(projectValidation.diagnostics.some((diagnostic) => diagnostic.resourceId === conceptualResource.resource.id && diagnostic.severity === "error")).toBe(true);
+  });
+
   it("flags a broken in-project link and a missing title", async () => {
     const ws = await open();
     await ws.createProject("Payments");
