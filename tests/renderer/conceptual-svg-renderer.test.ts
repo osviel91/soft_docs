@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { projectConceptual } from "../../src/domain/conceptual/visual-projection";
 import { parseConceptual } from "../../src/language/conceptual/analyze";
 import { layoutGeometry } from "../../src/layout/elk-geometry-adapter";
-import { renderConceptualSvg } from "../../src/renderer/svg/conceptual-svg-renderer";
+import { renderConceptualNotationSample, renderConceptualSvg } from "../../src/renderer/svg/conceptual-svg-renderer";
 import { estimateTextWidth } from "../../src/layout/text";
 
 describe("Conceptual SVG renderer", () => {
@@ -35,6 +35,38 @@ describe("Conceptual SVG renderer", () => {
     expect(svg).toContain(`data-label-for="link"`);
     expect(svg).toContain(`data-edge-id="link"`);
     expect(svg.match(/<rect x=/g)).toHaveLength(3);
+    expect(svg).not.toContain('rx="4"');
+    expect(svg.indexOf('class="conceptual__edge-label"')).toBeGreaterThan(svg.indexOf("<path d="));
+  });
+
+  it("gives Concepts and route labels distinct visual roles", async () => {
+    const model = parseConceptual('concept source "Initiator"\nconcept target "Shared Record"\nrelation update source -> target "changes durable project knowledge"').model!;
+    const projection = projectConceptual(model);
+    const geometry = await layoutGeometry(projection.geometry, "conceptual");
+    const svg = renderConceptualSvg(projection, geometry);
+    const style = svg.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+    const sample = renderConceptualNotationSample();
+    const conceptRectStyle = style.match(/\.conceptual__concept rect\s*\{[^}]+\}/)?.[0] ?? "";
+    const labelRectStyle = style.match(/\.conceptual__edge-label rect\s*\{[^}]+\}/)?.[0] ?? "";
+    const labelTextStyle = style.match(/\.conceptual__edge-label text\s*\{[^}]+\}/)?.[0] ?? "";
+
+    expect(conceptRectStyle).toContain("--bg-panel");
+    expect(conceptRectStyle).toContain("stroke: var(--border-strong");
+    expect(labelRectStyle).toContain("fill: var(--bg,");
+    expect(labelRectStyle).toContain("stroke: none");
+    expect(labelTextStyle).toContain("fill: currentColor");
+    expect(labelTextStyle).toContain("font: 500 12px");
+    expect(style).toContain("font: 600 16px");
+    expect(style).toContain(".conceptual__connection--related { color: var(--accent-strong");
+    expect(sample.match(/class="conceptual__concept"/g)).toHaveLength(4);
+    expect(sample.match(/class="conceptual__edge-label"/g)).toHaveLength(2);
+    expect(sample).toContain('data-edge-id="sample-directed"');
+    expect(sample).toContain('marker-end="url(#conceptual-arrow-sample)"');
+    expect(sample).toContain('class="conceptual__connection conceptual__connection--undirected"');
+    expect(sample).toContain('data-edge-id="sample-undirected"');
+    expect(sample).not.toMatch(/data-edge-id="sample-undirected"[\s\S]*?marker-end=/);
+    expect(sample.match(/<style>([\s\S]*?)<\/style>/)?.[1]).toBe(style);
+    expect(svg).toContain("changes durable project knowledge");
   });
 
   it("keeps parallel and self relationships independently identified and directional", async () => {
@@ -52,7 +84,7 @@ describe("Conceptual SVG renderer", () => {
     expect(svg).toContain('data-edge-id="self"');
     expect(svg).toContain('data-edge-id="first"');
     expect(svg).toContain('data-edge-id="second"');
-    expect(svg).toContain("var(--muted,#5b6472)");
-    expect(svg).toContain("var(--text-muted,var(--muted,#5b6472))");
+    expect(svg).toContain("var(--muted, #5b6472)");
+    expect(svg).toContain("var(--text-muted, var(--muted, #5b6472))");
   });
 });

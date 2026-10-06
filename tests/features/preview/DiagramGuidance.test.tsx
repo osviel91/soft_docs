@@ -19,6 +19,33 @@ describe("contextual diagram guidance", () => {
     expect(screen.getByText(/not a semantic change/)).toBeInTheDocument();
   });
 
+  it("shows the Conceptual renderer's distinction between Concepts and relationship labels", () => {
+    render(<DiagramGuidance view="conceptual" />);
+    fireEvent.click(screen.getByRole("button", { name: "How to read Conceptual" }));
+
+    const sample = screen.getByTestId("conceptual-notation-sample").querySelector("svg")!;
+    const [directed, undirected] = [...sample.querySelectorAll("[data-edge-id]")];
+    const style = sample.querySelector("style")!.textContent!;
+    expect(screen.getByText(/Solid arrow-ended routes are directed/)).toBeInTheDocument();
+    expect(sample.querySelectorAll(".conceptual__concept")).toHaveLength(4);
+    expect(sample.querySelectorAll(".conceptual__edge-label")).toHaveLength(2);
+    expect(directed).not.toHaveClass("conceptual__connection--undirected");
+    expect(directed?.querySelector("path")).toHaveAttribute("marker-end");
+    expect(undirected).toHaveClass("conceptual__connection--undirected");
+    expect(undirected?.querySelector("path")).not.toHaveAttribute("marker-end");
+    expect(style).toMatch(/\.conceptual__connection--undirected path\s*\{\s*stroke-dasharray:\s*5 3/);
+    expect(style).toMatch(/\.conceptual__edge-label rect\s*\{\s*fill:\s*var\(--bg,/);
+    expect(style).toMatch(/\.conceptual__edge-label rect\s*\{[^}]*stroke:\s*none/);
+
+    fireEvent.click(screen.getByText("Learn more"));
+    expect(screen.getByText(/missing connection does not prove absence/)).toBeInTheDocument();
+    expect(screen.getByText(/without designating either endpoint as source or target/)).toBeInTheDocument();
+    expect(screen.getByText(/no topology, execution, causality, service dependency, ownership/)).toBeInTheDocument();
+    expect(screen.getByText(/Self-relations, parallel relationships, cycles, and isolated Concepts/)).toBeInTheDocument();
+    expect(screen.getByText(/selection is not a semantic change/)).toBeInTheDocument();
+    expect(screen.getByText(/Pan and zoom are navigation only/)).toBeInTheDocument();
+  });
+
   it("is opt-in, keyboard operable, and does not replace the sequence canvas", async () => {
     render(<Preview source={"participant A\nparticipant B\nA -> B: call"} />);
     const help = screen.getByRole("button", { name: "How to read Sequence" });

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { renderConceptualNotationSample } from "../../renderer/svg/conceptual-svg-renderer";
 
 export type GuidanceView = "sequence" | "event-flow" | "topology" | "causal" | "catalog" | "conceptual" | "database";
 
@@ -38,9 +39,9 @@ export const DIAGRAM_GUIDES: Record<GuidanceView, Guide> = {
   },
   conceptual: {
     title: "Conceptual",
-    read: "Each box is an authored concept. Connections show only relationships documented in this resource; missing connections do not mean a relationship is absent.",
-    notation: ["Directed arrows preserve the authored direction; undirected lines remain undirected.", "Connection labels are open authored text and do not imply topology, execution, or causality."],
-    interaction: ["Select a concept to reveal its source declaration. Pan and zoom with the canvas controls."],
+    read: "Boxes are Concepts named by their authored text. Solid arrow-ended routes are directed; dashed routes without arrowheads are undirected. Smaller text on a route is its authored relationship label, not another Concept.",
+    notation: ["Connections represent only explicitly authored relationships; a missing connection does not prove absence.", "A directed relationship preserves its authored direction. An undirected relationship asserts a relationship without designating either endpoint as source or target.", "Relationship labels are open authored text attached to their connection, not additional Concepts.", "A relationship implies no topology, execution, causality, service dependency, ownership, or other meaning beyond what is explicitly authored.", "Self-relations, parallel relationships, cycles, and isolated Concepts add no notation or implied hierarchy, order, or behavior."],
+    interaction: ["Selecting a Concept emphasizes it and its immediate relationship context for inspection; selection is not a semantic change.", "Pan and zoom are navigation only."],
   },
   database: {
     title: "Database Diagram",
@@ -72,12 +73,11 @@ export default function DiagramGuidance({ view, comparison = false, diffDecorati
       <button type="button" className="diagram-guidance__close" aria-label="Close diagram guidance" onClick={() => setOpen(false)}>×</button>
       <h2>How to read {guide.title}</h2>
       <p>{guide.read}</p>
-      {view !== "catalog" && <div className={`diagram-guidance__sample diagram-guidance__sample--${view}`} aria-label={`${guide.title} notation sample`}>
+      {view === "conceptual" ? <div className={`diagram-guidance__sample diagram-guidance__sample--${view}`} style={{ background: "var(--bg)" }} aria-label={`${guide.title} notation sample`} data-testid="conceptual-notation-sample" dangerouslySetInnerHTML={{ __html: renderConceptualNotationSample() }} /> : view !== "catalog" && <div className={`diagram-guidance__sample diagram-guidance__sample--${view}`} aria-label={`${guide.title} notation sample`}>
         {view === "sequence" && <><span className="diagram-guidance__lifeline" /><span className="diagram-guidance__message" /><span className="diagram-guidance__message diagram-guidance__message--dashed" /></>}
         {view === "event-flow" && <><span className="diagram-guidance__box">service</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">event</span></>}
         {view === "topology" && <><span className="diagram-guidance__box">producer</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">consumer</span></>}
         {view === "causal" && <><span className="diagram-guidance__box">message</span><span className="diagram-guidance__message diagram-guidance__message--dashed" /><span className="diagram-guidance__box">effect</span></>}
-        {view === "conceptual" && <><span className="diagram-guidance__box">concept</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">concept</span></>}
         {view === "database" && <><span className="diagram-guidance__box">source row</span><span className="diagram-guidance__message" /><span className="diagram-guidance__box">target row</span></>}
       </div>}
       <details className="diagram-guidance__more"><summary>Learn more</summary>
