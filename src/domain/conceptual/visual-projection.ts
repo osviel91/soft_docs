@@ -33,6 +33,7 @@ export interface ConceptualVisualProjection {
 const itemId = (id: string) => `concept-item:${encodeURIComponent(id)}`;
 const connectionId = (id: string) => `concept-connection:${encodeURIComponent(id)}`;
 const EDGE_LABEL_WIDTH = 220;
+const EDGE_LABEL_PADDING = 12;
 
 /** Project concepts to measured boxes and relationships to individually identified connections. */
 export function projectConceptual(model: ConceptualModel): ConceptualVisualProjection {
@@ -70,8 +71,8 @@ export function projectConceptual(model: ConceptualModel): ConceptualVisualProje
       target: { itemId: connection.targetVisualId },
       label: {
         text: labelLines.join("\n"),
-        requiredWidth: Math.max(24, ...labelLines.map(line => estimateTextWidth(line, 12))),
-        requiredHeight: Math.max(20, labelLines.length * 18),
+        requiredWidth: Math.max(24, ...labelLines.map(line => estimateTextWidth(line, 12))) + EDGE_LABEL_PADDING,
+        requiredHeight: labelLines.length * 18 + EDGE_LABEL_PADDING,
       },
     };
   });

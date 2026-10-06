@@ -401,11 +401,24 @@ export default function DiagramViewport({
     for (const element of content.querySelectorAll(".svg-node--active")) {
       element.classList.remove("svg-node--active");
     }
-    if (!activeNodeId) return;
-    const target = content.querySelector(
-      `[data-node-id="${CSS.escape(activeNodeId)}"]`,
-    );
-    target?.classList.add("svg-node--active");
+    const conceptual = content.querySelector("svg[aria-label='Conceptual model']");
+    if (activeNodeId) {
+      const target = content.querySelector(`[data-node-id="${CSS.escape(activeNodeId)}"]`);
+      target?.classList.add("svg-node--active");
+    }
+    if (!conceptual) return;
+    const relatedEdges: Element[] = [];
+    for (const edge of conceptual.querySelectorAll(".conceptual__connection")) {
+      const related = edge.getAttribute("data-source-concept-id") === activeNodeId || edge.getAttribute("data-target-concept-id") === activeNodeId;
+      edge.classList.toggle("conceptual__connection--related", Boolean(activeNodeId && related));
+      edge.classList.toggle("conceptual__connection--dim", Boolean(activeNodeId && !related));
+      if (activeNodeId && related) relatedEdges.push(edge);
+    }
+    for (const concept of conceptual.querySelectorAll("[data-concept-id]")) {
+      const id = concept.getAttribute("data-concept-id");
+      const related = relatedEdges.some(edge => edge.getAttribute("data-source-concept-id") === id || edge.getAttribute("data-target-concept-id") === id);
+      concept.classList.toggle("conceptual__concept--dim", Boolean(activeNodeId && id !== activeNodeId && !related));
+    }
   }, [activeNodeId, svg]);
 
   useEffect(() => {

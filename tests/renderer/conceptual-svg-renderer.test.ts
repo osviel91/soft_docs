@@ -31,5 +31,28 @@ describe("Conceptual SVG renderer", () => {
     for (const line of lines) expect(svg).toContain(`>${line}</tspan>`);
     expect(projection.connections[0]!.label).toBe(label);
     expect(estimateTextWidth(widestLine, 12)).toBeLessThanOrEqual(220);
+    expect(geometry.connections[0]!.label!.width).toBeGreaterThanOrEqual(estimateTextWidth(widestLine, 12) + 12);
+    expect(svg).toContain(`data-label-for="link"`);
+    expect(svg).toContain(`data-edge-id="link"`);
+    expect(svg.match(/<rect x=/g)).toHaveLength(3);
+  });
+
+  it("keeps parallel and self relationships independently identified and directional", async () => {
+    const model = parseConceptual('concept node "Node"\nconcept neighbor "Neighbor"\nconcept island "Island"\nrelation self node -> node "loops back"\nrelation first node -> neighbor "first link"\nrelation second node -- neighbor "second link"').model!;
+    const projection = projectConceptual(model);
+    const geometry = await layoutGeometry(projection.geometry, "conceptual");
+    const svg = renderConceptualSvg(projection, geometry);
+
+    expect(geometry.connections.map(connection => connection.id)).toEqual(projection.connections.map(connection => connection.visualId));
+    expect(svg.match(/data-edge-id=/g)).toHaveLength(3);
+    expect(svg).toContain('data-concept-id="island"');
+    expect(svg.match(/data-label-for=/g)).toHaveLength(3);
+    expect(svg.match(/marker-end=/g)).toHaveLength(2);
+    expect(new Set(geometry.connections.map(connection => JSON.stringify(connection.points))).size).toBe(3);
+    expect(svg).toContain('data-edge-id="self"');
+    expect(svg).toContain('data-edge-id="first"');
+    expect(svg).toContain('data-edge-id="second"');
+    expect(svg).toContain("var(--muted,#5b6472)");
+    expect(svg).toContain("var(--text-muted,var(--muted,#5b6472))");
   });
 });

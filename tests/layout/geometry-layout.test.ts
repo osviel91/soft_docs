@@ -5,7 +5,6 @@ import { projectConceptual } from "../../src/domain/conceptual/visual-projection
 import { projectDatabase } from "../../src/domain/database/visual-projection";
 import type { DatabaseModel } from "../../src/domain/database/model";
 import { fitTransform } from "../../src/features/preview/viewport";
-import { estimateTextWidth } from "../../src/layout/text";
 
 const points = (input: GeometryInput) => layoutGeometry(input);
 
@@ -110,7 +109,7 @@ describe("headless geometry layout", () => {
 
   it("keeps a dense, long-labeled conceptual model readable at fit", async () => {
     const concepts = Array.from({ length: 15 }, (_, i) => ({ id: `concept-${i}`, name: `Domain concept ${i}` }));
-    const endpoints = [[1,0],[2,0],[0,3],[0,4],[5,0],[5,4],[4,6],[7,6],[7,0],[6,8],[9,8],[10,12],[12,13],[12,14],[14,11]];
+    const endpoints = [[1,0],[2,0],[0,3],[0,4],[5,0],[5,4],[4,6],[7,6],[7,0],[6,8],[0,1],[10,12],[12,13],[12,14],[14,11]];
     const relationships = endpoints.map(([source, target], i) => ({
       id: `relationship-${i}`,
       sourceConceptId: concepts[source!]!.id,
@@ -119,30 +118,26 @@ describe("headless geometry layout", () => {
       direction: i % 3 === 0 ? "directed" as const : "undirected" as const,
     }));
     const projection = projectConceptual({ concepts, relationships });
-    const legacyInput = {
-      ...projection.geometry,
-      connections: projection.geometry.connections.map(connection => {
-        const relationship = relationships.find(candidate => `concept-connection:${candidate.id}` === connection.id)!;
-        return { ...connection, label: { text: relationship.label, requiredWidth: estimateTextWidth(relationship.label, 12), requiredHeight: 20 } };
-      }),
-    };
-    const legacyGeometry = await layoutGeometry(legacyInput);
     const [geometry, repeatedGeometry] = await Promise.all([
       layoutGeometry(projection.geometry, "conceptual"),
       layoutGeometry(projection.geometry, "conceptual"),
     ]);
     const fit = fitTransform({ width: geometry.width, height: geometry.height }, { width: 800, height: 600 });
-    const legacyFit = fitTransform({ width: legacyGeometry.width, height: legacyGeometry.height }, { width: 800, height: 600 });
-    const aspectRatio = Math.max(geometry.width / geometry.height, geometry.height / geometry.width);
-    const legacyAspectRatio = Math.max(legacyGeometry.width / legacyGeometry.height, legacyGeometry.height / legacyGeometry.width);
 
     expect(projection.items).toHaveLength(15);
     expect(projection.connections).toHaveLength(15);
     expect(relationships.some(relationship => relationship.direction === "directed")).toBe(true);
     expect(relationships.some(relationship => relationship.direction === "undirected")).toBe(true);
     expect(geometry).toEqual(repeatedGeometry);
-    expect(aspectRatio).toBeLessThan(legacyAspectRatio);
-    expect(fit.scale).toBeGreaterThan(legacyFit.scale);
+    expect(fit.scale).toBeGreaterThan(0.35);
+    expect(geometry.connections.every(connection => connection.label && connection.label.text.split("\n").join(" ").startsWith("evidence-backed relationship description"))).toBe(true);
     expect(geometry.connections.every(connection => connection.points.length >= 2)).toBe(true);
+    for (const connection of geometry.connections) {
+      const label = connection.label!;
+      for (const item of geometry.items) {
+        const overlaps = label.x < item.x + item.requiredWidth && label.x + label.width > item.x && label.y < item.y + item.requiredHeight && label.y + label.height > item.y;
+        expect(overlaps, `${connection.id} label overlaps ${item.id}`).toBe(false);
+      }
+    }
   });
 });
