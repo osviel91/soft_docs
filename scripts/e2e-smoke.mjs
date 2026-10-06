@@ -2348,6 +2348,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const editorCausalNode = ownerPage.locator(".causal-flow .react-flow__node").first();
       await editorCausalNode.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("authenticated editor displays explicit causal nodes", (await editorCausalNode.boundingBox())?.width > 0);
+      await showEditor(ownerPage);
       const editorHeader = ownerPage.getByTestId("resource-header");
       const contextParam = new URL(ownerPage.url()).searchParams.get("context");
       const headerCount = await editorHeader.count();
