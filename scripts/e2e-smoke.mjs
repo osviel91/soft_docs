@@ -2342,6 +2342,31 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await ownerPage.getByRole("button", { name: "Copy link" }).click();
       check("owner creates, copies, and sees an active C.4 share", await ownerPage.evaluate(() => navigator.clipboard.readText()) === shareUrl && await ownerPage.getByText("Active", { exact: true }).count() === 1);
       await ownerPage.getByRole("button", { name: "Close share management" }).click();
+      await ownerPage.getByRole("button", { name: "Load diagram Programmed Recharge Lifecycle Causal Flow" }).click();
+      await ownerPage.getByTestId("event-flow-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await ownerPage.getByTestId("event-flow-preview").getByRole("button", { name: "Causal", exact: true }).click();
+      const editorCausalNode = ownerPage.locator(".causal-flow .react-flow__node").first();
+      await editorCausalNode.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("authenticated editor displays explicit causal nodes", (await editorCausalNode.boundingBox())?.width > 0);
+      const editorHeader = ownerPage.getByTestId("resource-header");
+      const contextParam = new URL(ownerPage.url()).searchParams.get("context");
+      const headerCount = await editorHeader.count();
+      const headerVisible = headerCount === 1 && await editorHeader.isVisible();
+      const presentButton = editorHeader.getByRole("button", { name: "Present", exact: true });
+      const presentButtonCount = await presentButton.count();
+      check("authenticated Event Flow remains in SHARED context", contextParam === null, `context=${contextParam ?? "SHARED"}`);
+      check("authenticated Event Flow resource header is visible", headerVisible, `headers=${headerCount}`);
+      check("Present is available for the selected SHARED resource", presentButtonCount === 1, `buttons=${presentButtonCount}`);
+      if (presentButtonCount === 1) {
+        await presentButton.click();
+        await ownerPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
+        const presentationCausalNode = ownerPage.locator(".causal-flow .react-flow__node").first();
+        await presentationCausalNode.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const presentationCausalBox = await presentationCausalNode.boundingBox();
+        check("authenticated Presentation displays explicit causal nodes", presentationCausalBox !== null && presentationCausalBox.width > 0 && presentationCausalBox.height > 0);
+        await ownerPage.getByRole("button", { name: /Exit presentation/ }).click();
+        await ownerPage.getByTestId("app-shell").waitFor({ state: "visible" });
+      }
       await ownerPage.getByTestId("workspace-share-project").click();
       await ownerPage.getByRole("button", { name: "Create read-only link" }).click();
       secondShareUrl = await ownerPage.getByLabel("Read-only link").inputValue();
@@ -3690,6 +3715,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const sharedSvg = page.getByTestId("conceptual-preview-svg");
       await waitForText(sharedSvg, text => text.includes("Customer") && text.includes("Order") && text.includes("places"), "SHARED Conceptual preview");
+      const conceptualPane = await page.getByTestId("viewport-pane").evaluate(element => {
+        const pane = element.getBoundingClientRect();
+        const minimap = element.parentElement.querySelector('[data-testid="minimap"]').getBoundingClientRect();
+        return { paneHeight: pane.height, paneTop: pane.top, paneBottom: pane.bottom, minimapTop: minimap.top, minimapBottom: minimap.bottom };
+      });
+      check("Conceptual canvas has real viewport height", conceptualPane.paneHeight > 100, `height=${conceptualPane.paneHeight}`);
+      check("Conceptual minimap stays inside its canvas", conceptualPane.minimapTop >= conceptualPane.paneTop && conceptualPane.minimapBottom <= conceptualPane.paneBottom);
       check("authenticated SHARED selects and renders its Conceptual artifact", true);
       check("SHARED directed relationship is visible", await sharedSvg.locator("marker").count() > 0);
       check("authenticated workspace shell remains mounted", await page.getByTestId("app-shell").isVisible());
@@ -3918,6 +3950,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const editor = page.getByTestId("dsl-textarea");
       await editor.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const databasePaneHeight = await page.getByTestId("viewport-pane").evaluate(element => element.getBoundingClientRect().height);
+      check("Database canvas retains real viewport height", databasePaneHeight > 100, `height=${databasePaneHeight}`);
       check("MY WORK Database retains its source editor and canonical preview", true);
 
       await editor.fill(renamed);

@@ -2192,6 +2192,16 @@ body {
   height: 100%;
 }
 
+.conceptual-preview,
+.database-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
 .preview__empty {
   margin: auto;
   padding: 22px 26px;
