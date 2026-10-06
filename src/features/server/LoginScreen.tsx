@@ -15,6 +15,7 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const authResult = new URLSearchParams(window.location.search).get("auth");
 
   const submitPassword = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -51,6 +52,17 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
         <p className="login-card__lead">
           Choose how you want to access your workspaces and projects.
         </p>
+
+        {authResult === "pending" && (
+          <p className="login-card__message" data-testid="login-account-status">
+            Your account is awaiting administrator approval.
+          </p>
+        )}
+        {authResult === "suspended" && (
+          <p className="login-card__message" data-testid="login-account-status">
+            Your account is suspended. Contact an administrator.
+          </p>
+        )}
 
         {auth.status === "authenticated" &&
           (auth.user?.accountStatus === "PENDING" ||

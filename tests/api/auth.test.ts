@@ -771,6 +771,11 @@ describe("the authentication routes", () => {
       expect(user.status).toBe("ACTIVE");
       expect(user.platformAdmin).toBe(true);
 
+      await app.users.setStatus(user.id, "PENDING");
+      const recovered = await oidcCallback(subject, "platform-admin@example.test", app);
+      expect(cookieFrom(recovered.headers, SESSION_COOKIE)).not.toBeNull();
+      expect((await app.users.findById(user.id))?.status).toBe("ACTIVE");
+
       await app.users.setStatus(user.id, "SUSPENDED");
       const next = await oidcCallback(subject, "platform-admin@example.test", app);
       expect(cookieFrom(next.headers, SESSION_COOKIE) || null).toBeNull();
@@ -889,6 +894,9 @@ describe("the authentication routes", () => {
     );
 
     expect(callback.status).toBe(303);
+    expect(callback.headers.find((header) => header.name === "location")?.value).toBe(
+      "/?auth=suspended",
+    );
     expect(cookieFrom(callback.headers, SESSION_COOKIE)).toBeNull();
     const events = await dependencies.audit.listForUser(user.id, 10);
     expect(events[0]).toMatchObject({

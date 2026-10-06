@@ -17,6 +17,14 @@ function auth(overrides: Partial<AuthHook> = {}): AuthHook {
 }
 
 describe("LoginScreen", () => {
+  it("explains an account awaiting approval after Google sign-in", () => {
+    window.history.replaceState({}, "", "/?auth=pending");
+    render(<LoginScreen auth={auth()} />);
+    expect(screen.getByTestId("login-account-status")).toHaveTextContent(
+      "awaiting administrator approval",
+    );
+  });
+
   it("offers local registration and Google without rendering the app", async () => {
     const currentAuth = auth();
     render(<LoginScreen auth={currentAuth} />);

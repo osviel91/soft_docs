@@ -225,8 +225,10 @@ export function createAuthRoutes(
         if (
           config.platformAdminEmail !== null &&
           user.email?.toLowerCase() === config.platformAdminEmail &&
-          !user.platformAdmin &&
-          user.status !== "SUSPENDED"
+          user.status !== "SUSPENDED" &&
+          (!user.platformAdmin ||
+            user.status !== "ACTIVE" ||
+            user.activatedAt === null)
         ) {
           await dependencies.sql.query(
             "UPDATE users SET platform_admin = true, status = 'ACTIVE', activated_at = COALESCE(activated_at, now()), updated_at = now() WHERE id = $1",
@@ -254,7 +256,8 @@ export function createAuthRoutes(
             requestId,
             detail: { reason: "account_not_active" },
           });
-          const response = failedLogin(requestId, "account is not active");
+          process.stderr.write(`${requestId} login rejected: account is ${user.status.toLowerCase()}\n`);
+          const response = redirect(`/?auth=${user.status.toLowerCase()}`, 303);
           return { ...response, headers: [...response.headers, clearLogin()] };
         }
         const sessionCookie = await createSessionCookie(request, user.id);

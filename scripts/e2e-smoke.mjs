@@ -661,10 +661,10 @@ async function signIn(page, idp, subject) {
   await button.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
   await button.click();
   await page.waitForFunction(
-    () => Boolean(document.querySelector('[data-testid="toolbar-account"]')) || new URLSearchParams(location.search).get("auth") === "failed",
+    () => Boolean(document.querySelector('[data-testid="toolbar-account"]')) || ["failed", "pending"].includes(new URLSearchParams(location.search).get("auth")),
     { timeout: UI_TIMEOUT_MS },
   );
-  if (new URL(page.url()).searchParams.get("auth") === "failed" && e2ePlatformAdminPage && subject.email) {
+  if (["failed", "pending"].includes(new URL(page.url()).searchParams.get("auth")) && e2ePlatformAdminPage && subject.email) {
     const listed = await apiRequest(e2ePlatformAdminPage, "/api/admin/users");
     const user = listed.json?.users?.find((entry) => entry.email === subject.email);
     if (!user) throw new Error(`platform admin could not find pending OIDC user ${subject.email}`);
