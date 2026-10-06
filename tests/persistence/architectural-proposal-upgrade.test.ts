@@ -79,6 +79,9 @@ it("creates, reviews, promotes, and restarts after a 0022-to-current upgrade", a
 
   const owner = (await users.findOrCreateByExternalIdentity({ issuer: "upgrade-test", subject: "owner", displayName: "Owner", email: null })).id;
   const reviewer = (await users.findOrCreateByExternalIdentity({ issuer: "upgrade-test", subject: "reviewer", displayName: "Reviewer", email: null })).id;
+  const workspaces = createWorkspaceRepository(client);
+  await workspaces.setMember(owner, owner, "ADMIN");
+  await workspaces.setMember(owner, reviewer, "EDITOR");
   const ownerContext = contextFor(owner);
   const reviewerContext = contextFor(reviewer);
   const project = await bootstrap.bootstrap(ownerContext, {

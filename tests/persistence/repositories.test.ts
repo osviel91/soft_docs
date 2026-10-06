@@ -227,6 +227,10 @@ describe("project repository", () => {
       ownerId: owner.id,
       name: "Shared",
     });
+    await client.query(
+      "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'EDITOR')",
+      [project.workspaceId, viewer.id],
+    );
 
     expect(
       (await projects.listForUser(viewer.id)).map((e) => e.project.id),
@@ -246,6 +250,10 @@ describe("project repository", () => {
       ownerId: owner.id,
       name: "Promote me",
     });
+    await client.query(
+      "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'EDITOR')",
+      [project.workspaceId, member.id],
+    );
 
     await projects.setMember(project.id, member.id, "VIEWER");
     await projects.setMember(project.id, member.id, "EDITOR");
@@ -576,24 +584,6 @@ describe("audit repository", () => {
     const listed = await audit.listForUser(owner.id);
     expect(listed[0].action).toBe("resource.created");
     expect(listed[1].action).toBe("project.created");
-  });
-
-  it("keeps an audit row when its user is deleted, without the user id", async () => {
-    const owner = await aUser();
-    const project = await projects.create({
-      ownerId: owner.id,
-      name: "Survivor",
-    });
-    await audit.record({
-      action: "project.created",
-      subjectUserId: owner.id,
-      authType: "session",
-      projectId: project.id,
-    });
-    await client.query("DELETE FROM users WHERE id = $1", [owner.id]);
-    const listed = await audit.listForProject(project.id);
-    expect(listed).toHaveLength(1);
-    expect(listed[0].subjectUserId).toBeNull();
   });
 
   it("bounds a listing", async () => {

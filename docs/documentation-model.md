@@ -115,11 +115,19 @@ and traces.
 Workspace invitation links are transferable bearer credentials, not email or
 account invitations. They grant one authenticated user a preselected workspace
 role once, expire after seven days, and are stored as a one-way hash. They never
-grant project membership independently, expose project knowledge anonymously, or
-act as PAT/MCP credentials. Invitation inspection is a minimal public preview;
-acceptance requires an active browser session. The resulting workspace role is
-not a project role, and existing project/workspace authorization gates remain in
-force. Revocation, acceptance, and membership creation are audited atomically.
+expose project knowledge anonymously or act as PAT/MCP credentials. Invitation
+inspection is a minimal public preview; acceptance requires an active browser
+session. Workspace membership grants access to every project in that workspace:
+`ADMIN` and `EDITOR` inherit project `EDITOR` capabilities (including submitting
+architectural proposals), while `VIEWER` inherits read-only access. A project
+specific `VIEWER` role may narrow an editor, but a project role cannot elevate a
+workspace viewer. Removing or downgrading workspace membership takes effect on
+the next authorization check. The active designated project owner retains
+`OWNER` authority; workspace administration alone never grants it. Ownership
+transfer is explicit, limited to an active member of the same workspace, and
+audited. Suspending an account does not transfer ownership; deleting an account
+cannot cascade-delete its owned projects or workspaces. Revocation, acceptance,
+and membership creation are audited atomically.
 The `/invite/<token>` route uses only that preview until an authenticated user
 explicitly accepts; it does not load project data first. OIDC returns to the same
 route through the existing short-lived signed login-state cookie. Local registration

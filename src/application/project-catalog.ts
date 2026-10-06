@@ -216,6 +216,9 @@ export interface ProjectCatalog {
     userId: string,
   ): Promise<void>;
 
+  /** Transfer ownership to an active member; only a workspace ADMIN may do so. */
+  transferOwnership(context: ApplicationContext, projectId: string, userId: string): Promise<void>;
+
   /** Every resource a project records. */
   listResources(
     context: ApplicationContext,
@@ -662,6 +665,23 @@ export function createProjectCatalog(
       await writeAudit(context, {
         action: "project.member.removed",
         projectId: projectId,
+      });
+    },
+
+    async transferOwnership(context, projectId, userId) {
+      const { project } = await requirePermission(context, projectId, "project:read");
+      if (!credentialGrants(context.principal, "project:members:write")) {
+        throw forbidden("This credential does not carry the project:members:write permission.");
+      }
+      if (userId === project.ownerId) throw invalid("The selected user already owns this project.");
+      const workspaceRole = await workspaces.roleOf(project.workspaceId, context.principal.subjectUserId);
+      if (workspaceRole !== "ADMIN") throw forbidden("Only a workspace ADMIN may transfer project ownership.");
+      const transferred = await projects.transferOwnership(projectId, userId);
+      if (!transferred) throw invalid("The new owner must be an active member of this workspace.");
+      await writeAudit(context, {
+        action: "project.owner.transferred",
+        projectId,
+        detail: { previousOwnerId: project.ownerId, newOwnerId: userId },
       });
     },
 

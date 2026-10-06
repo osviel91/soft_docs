@@ -93,6 +93,9 @@ export interface ProjectRepository {
   /** Delete a project; its members and resource rows go with it. */
   delete(id: string): Promise<void>;
 
+  /** Transfer ownership to an active member of the same workspace; null if ineligible. */
+  transferOwnership(projectId: string, userId: string): Promise<ServerProject | null>;
+
   /** The user's role in a project, or `null` when they are not a member. */
   roleOf(projectId: string, userId: string): Promise<ProjectRole | null>;
 

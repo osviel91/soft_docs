@@ -161,6 +161,7 @@ export async function startHarness(
       return user.id;
     },
     async aProject(ownerId, name = "MCP Project") {
+      await service.runtime.workspaces.setMember(ownerId, ownerId, "ADMIN");
       const project = await service.runtime.projects.create({
         ownerId,
         name,

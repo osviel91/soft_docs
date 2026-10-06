@@ -34,6 +34,7 @@ let service: ReturnType<typeof createArchitecturalProposalService>;
 let architecturalProposals: ReturnType<typeof createArchitecturalProposalRepository>;
 let promotionService: ReturnType<typeof createPromotionService>;
 let bootstrapService: ReturnType<typeof createProjectBootstrapService>;
+let workspaces: ReturnType<typeof createWorkspaceRepository>;
 
 const contextFor = (id: string): ApplicationContext => ({
   requestId: "proposal-test",
@@ -44,7 +45,7 @@ beforeAll(async () => {
   client = await openTestDatabase();
   volume = await mkdtemp(path.join(tmpdir(), "sd-proposal-"));
   const projects = createProjectRepository(client);
-  const workspaces = createWorkspaceRepository(client);
+  workspaces = createWorkspaceRepository(client);
   const policy = createAuthorizationPolicy<ServerProject>(projects);
   const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces });
   const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces });
@@ -90,7 +91,15 @@ beforeAll(async () => {
 afterAll(async () => { await closeTestDatabase(client); await rm(volume, { recursive: true, force: true }); });
 
 async function user(subject: string): Promise<string> {
-  return (await users.findOrCreateByExternalIdentity({ issuer: "proposal-test", subject, displayName: subject, email: null })).id;
+  const id = (await users.findOrCreateByExternalIdentity({ issuer: "proposal-test", subject, displayName: subject, email: null })).id;
+  await workspaces.setMember(id, id, "ADMIN");
+  await client.query(
+    `INSERT INTO workspace_members (workspace_id, user_id, role)
+     SELECT id, $1, 'EDITOR' FROM workspaces WHERE owner_id <> $1
+     ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+    [id],
+  );
+  return id;
 }
 
 it("submits a selective immutable snapshot without allowing direct SHARED edits", async () => {
@@ -167,13 +176,14 @@ it("does not expose a private proposal to another project member", async () => {
   const owner = await user("proposal-private-owner");
   const member = await user("proposal-private-member");
   const project = (await catalog.createProject(contextFor(owner), { name: "Private Proposal", workspaceId: owner })).project;
+  await workspaces.setMember(owner, member, "VIEWER");
   await catalog.setMember(contextFor(owner), project.id, member, "EDITOR");
   const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "only-owner" });
   const resource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "private.md", type: "markdown-document", content: "# Private\n" });
   const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [resource.id], title: "Visible Proposal" });
   expect("sourcePrivateContextId" in proposal).toBe(false);
   expect((await service.list(contextFor(member), project.id)).some((item) => item.id === proposal.id)).toBe(true);
-  await expect(catalog.listPrivateWorkContexts(contextFor(member), project.id)).rejects.toMatchObject({ code: "not_found" });
+  await expect(catalog.listPrivateWorkContexts(contextFor(member), project.id)).resolves.toEqual([]);
   await expect(service.get(contextFor(member), project.id, proposal.id)).resolves.toMatchObject({ id: proposal.id });
 });
 

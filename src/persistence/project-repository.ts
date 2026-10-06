@@ -161,7 +161,15 @@ export function createProjectRepository(
     userId: string,
   ): Promise<ProjectRole | null> => {
     const result = await client.query(
-      "SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2",
+      `SELECT CASE
+                WHEN p.owner_id = $2 THEN 'OWNER'
+                WHEN w.role = 'VIEWER' OR m.role = 'VIEWER' THEN 'VIEWER'
+                ELSE 'EDITOR'
+              END AS role
+         FROM projects p
+         JOIN workspace_members w ON w.workspace_id = p.workspace_id AND w.user_id = $2
+         LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = $2
+        WHERE p.id = $1`,
       [projectId, userId],
     );
     const row = result.rows[0];
@@ -215,11 +223,17 @@ export function createProjectRepository(
 
     async listForUser(userId, workspaceId = userId) {
       const result = await client.query(
-        `SELECT p.*, m.role,
+        `SELECT p.*,
+                CASE
+                  WHEN p.owner_id = $1 THEN 'OWNER'
+                  WHEN w.role = 'VIEWER' OR m.role = 'VIEWER' THEN 'VIEWER'
+                  ELSE 'EDITOR'
+                END AS role,
                 (SELECT count(*)::int FROM resources r WHERE r.project_id = p.id AND r.knowledge_context_id IS NULL AND r.lifecycle = 'ACTIVE') AS resource_count
            FROM projects p
-           JOIN project_members m ON m.project_id = p.id
-           WHERE m.user_id = $1 AND p.workspace_id = $2
+           JOIN workspace_members w ON w.workspace_id = p.workspace_id AND w.user_id = $1
+           LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = $1
+           WHERE p.workspace_id = $2
            ORDER BY p.created_at DESC, p.id DESC`,
         [userId, workspaceId],
       );
@@ -255,6 +269,41 @@ export function createProjectRepository(
 
     async delete(id) {
       await client.query("DELETE FROM projects WHERE id = $1", [id]);
+    },
+
+    async transferOwnership(projectId, userId) {
+      return client.transaction(async (tx) => {
+        const found = await tx.query(
+          "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+          [projectId],
+        );
+        const project = found.rows[0];
+        if (!project) return null;
+        const eligible = await tx.query(
+          `SELECT 1 FROM workspace_members wm
+             JOIN users u ON u.id = wm.user_id AND u.status = 'ACTIVE'
+            WHERE wm.workspace_id = $1 AND wm.user_id = $2`,
+          [text(project, "workspace_id"), userId],
+        );
+        if (eligible.rows.length === 0) return null;
+
+        const oldOwnerId = text(project, "owner_id");
+        const slug = await freeSlug(tx, userId, text(project, "slug"));
+        const updated = await tx.query(
+          "UPDATE projects SET owner_id = $2, slug = $3, updated_at = now() WHERE id = $1 RETURNING *",
+          [projectId, userId, slug],
+        );
+        await tx.query(
+          "UPDATE project_members SET role = 'EDITOR' WHERE project_id = $1 AND user_id = $2",
+          [projectId, oldOwnerId],
+        );
+        await tx.query(
+          `INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'OWNER')
+           ON CONFLICT (project_id, user_id) DO UPDATE SET role = 'OWNER'`,
+          [projectId, userId],
+        );
+        return toServerProject(updated.rows[0]);
+      });
     },
 
     roleOf,

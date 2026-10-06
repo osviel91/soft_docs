@@ -15,7 +15,10 @@ observable browser workflow and automated tests.
 - Every user has exactly one non-deletable default workspace.
 - Users can create, rename, and manage their own workspaces.
 - Workspace owners and workspace administrators manage members and invitations.
-- Project roles remain separate from workspace roles.
+- Workspace membership grants access to all its projects: ADMIN/EDITOR inherit
+  editor abilities; VIEWER inherits read-only access. Project roles may narrow,
+  but never elevate, those inherited permissions. Ownership is transferred
+  explicitly to an active member of the same workspace.
 - An invitation is a single-use, expirable link bound to one normalized email.
 - The invitation email must match the authenticated local or verified Google email.
 
@@ -75,12 +78,13 @@ project filtering and workspace-targeted creation begin in Phase 4.
 - [x] Create projects inside a selected workspace.
 - [x] List projects only through accessible workspaces.
 - [x] Require workspace membership before project authorization.
-- [x] Preserve existing project roles and resource behavior.
+- [x] Apply workspace roles as the ceiling for project access and preserve
+  project-specific restrictions.
 
 Acceptance workflow status: switching workspaces changes the visible project
-list. Workspace membership gates access before existing project-role permissions
-are evaluated, so a project membership alone cannot leak a project after workspace
-access is removed.
+list. Workspace membership provides project visibility; workspace and explicit
+project roles are combined on every authorization check, so removal and
+downgrade apply immediately.
 
 ### Phase 5 — Invitations (not started)
 

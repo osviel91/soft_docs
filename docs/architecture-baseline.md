@@ -46,6 +46,10 @@ rules live in `docs/documentation-model.md`.
   supports those references.
 - Server project access is authorized by the application catalog before storage
   is opened. Resource mutations use revisions and reject stale expectations.
+- Workspace membership gates visibility and authorization for every project in
+  that workspace. `ADMIN`/`EDITOR` inherit editor capabilities and `VIEWER`
+  inherits read-only access; an explicit project `VIEWER` may narrow access.
+  Ownership remains explicit and transfers only to an active workspace member.
 
 ### HTTP API
 

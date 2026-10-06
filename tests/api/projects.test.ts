@@ -269,7 +269,8 @@ describe("project routes", () => {
     const after = await call("GET", `/api/projects/${owner.projectId}`, {
       cookie: member.cookie,
     });
-    expect(after.status).toBe(404);
+    expect(after.status).toBe(200);
+    expect(after.body.project.role).toBe("VIEWER");
   });
 
   it("refuses an unknown role", async () => {
@@ -286,6 +287,7 @@ describe("project routes", () => {
   it("stops an editor from administering membership", async () => {
     const owner = await aProject("Editors");
     const editor = await signIn();
+    await addWorkspaceMember(owner, editor.userId);
     await call(
       "PUT",
       `/api/projects/${owner.projectId}/members/${editor.userId}`,
@@ -295,6 +297,7 @@ describe("project routes", () => {
       },
     );
     const someone = await signIn();
+    await addWorkspaceMember(owner, someone.userId);
     const response = await call(
       "PUT",
       `/api/projects/${owner.projectId}/members/${someone.userId}`,

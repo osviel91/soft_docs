@@ -1002,6 +1002,103 @@ describe("no membership and the wrong role are refused differently", () => {
   });
 });
 
+describe("workspace roles provide bounded project access", () => {
+  it("shows existing and new projects to workspace members and applies downgrades immediately", async () => {
+    const owner = await signIn();
+    const editor = await signIn();
+    const existing = await createOwnedProject(owner, "Inherited existing", {
+      path: "shared.seq",
+      content: "participant A\nA -> B: shared\n",
+    });
+    expect((await call("PUT", `/api/workspaces/${owner.userId}/members/${editor.userId}`, {
+      cookie: owner.cookie, body: { role: "EDITOR" },
+    })).status).toBe(200);
+
+    const listing = await call("GET", `/api/projects?workspaceId=${owner.userId}`, { cookie: editor.cookie });
+    expect(listing.body.projects.map((project: any) => project.id)).toContain(existing.projectId);
+    expect((await call("GET", `/api/projects/${existing.projectId}`, { cookie: editor.cookie })).body.project.role).toBe("EDITOR");
+    expect(await dependencies.catalog.can(contextFor(editor.userId), existing.projectId, "resource:update")).toBe(true);
+
+    const created = await call("POST", "/api/projects", {
+      cookie: owner.cookie,
+      body: { name: "Inherited new", workspaceId: owner.userId },
+    });
+    expect(created.status).toBe(201);
+    expect((await call("GET", `/api/projects?workspaceId=${owner.userId}`, { cookie: editor.cookie })).body.projects.map((p: any) => p.id)).toContain(created.body.project.id);
+
+    expect((await call("PUT", `/api/workspaces/${owner.userId}/members/${editor.userId}`, {
+      cookie: owner.cookie, body: { role: "VIEWER" },
+    })).status).toBe(200);
+    expect((await call("GET", `/api/projects/${existing.projectId}`, { cookie: editor.cookie })).body.project.role).toBe("VIEWER");
+    expect(await dependencies.catalog.can(contextFor(editor.userId), existing.projectId, "resource:update")).toBe(false);
+    expect((await call("DELETE", `/api/workspaces/${owner.userId}/members/${editor.userId}`, { cookie: owner.cookie })).status).toBe(204);
+    expect((await call("GET", `/api/projects/${existing.projectId}`, { cookie: editor.cookie })).status).toBe(404);
+  });
+
+  it("transfers ownership atomically to an active workspace member and audits it", async () => {
+    const owner = await signIn();
+    const nextOwner = await signIn();
+    const project = await createOwnedProject(owner, "Transfer me", {
+      path: "owned.seq",
+      content: "participant A\nA -> B: retained\n",
+    });
+    expect((await call("PUT", `/api/workspaces/${owner.userId}/members/${nextOwner.userId}`, {
+      cookie: owner.cookie, body: { role: "EDITOR" },
+    })).status).toBe(200);
+
+    const collidingSlug = await call("POST", "/api/projects", {
+      cookie: nextOwner.cookie, body: { name: "Transfer me", workspaceId: nextOwner.userId },
+    });
+    expect(collidingSlug.status).toBe(201);
+    expect((await call("POST", `/api/projects/${project.projectId}/owner`, {
+      cookie: nextOwner.cookie, body: { userId: nextOwner.userId },
+    })).status).toBe(403);
+    expect((await call("POST", `/api/projects/${project.projectId}/owner`, {
+      cookie: owner.cookie, body: { userId: (await signIn()).userId },
+    })).status).toBe(422);
+
+    const transferred = await call("POST", `/api/projects/${project.projectId}/owner`, {
+      cookie: owner.cookie, body: { userId: nextOwner.userId },
+    });
+    expect(transferred.status).toBe(204);
+    expect((await call("GET", `/api/projects/${project.projectId}`, { cookie: nextOwner.cookie })).body.project.ownerId).toBe(nextOwner.userId);
+    expect((await call("GET", `/api/projects/${project.projectId}`, { cookie: nextOwner.cookie })).body.project.slug).toBe("transfer-me-2");
+    expect((await call("GET", `/api/projects/${project.projectId}`, { cookie: owner.cookie })).body.project.role).toBe("EDITOR");
+    expect((await call("GET", `/api/projects/${project.projectId}/resources/${project.resourceId}`, { cookie: owner.cookie })).body.content).toContain("retained");
+    expect(await dependencies.sql.query("SELECT 1 FROM audit_events WHERE project_id = $1 AND action = 'project.owner.transferred'", [project.projectId]).then((result) => result.rows.length)).toBe(1);
+
+    await expect(dependencies.sql.query("DELETE FROM users WHERE id = $1", [nextOwner.userId])).rejects.toThrow();
+    expect(await dependencies.projects.findById(project.projectId)).toMatchObject({ ownerId: nextOwner.userId });
+  });
+
+  it("lets an inherited EDITOR submit an architectural proposal", async () => {
+    const owner = await signIn();
+    const editor = await signIn();
+    const project = await createOwnedProject(owner, "Proposal access", {
+      path: "shared.seq",
+      content: "participant A\nA -> B: shared\n",
+    });
+    expect((await call("PUT", `/api/workspaces/${owner.userId}/members/${editor.userId}`, {
+      cookie: owner.cookie, body: { role: "EDITOR" },
+    })).status).toBe(200);
+    const privateWork = await call("POST", `/api/projects/${project.projectId}/private-work`, {
+      cookie: editor.cookie, body: { name: "editor work" },
+    });
+    expect(privateWork.status).toBe(201);
+    privateContextByProject.set(project.projectId, privateWork.body.context.id);
+    const resource = await call("POST", `/api/projects/${project.projectId}/resources`, {
+      cookie: editor.cookie,
+      body: { path: "proposal.seq", type: "sequence-diagram", content: "participant A\nA -> B: proposed\n" },
+    });
+    expect(resource.status).toBe(201);
+    const submitted = await call("POST", `/api/projects/${project.projectId}/architectural-proposals`, {
+      cookie: editor.cookie,
+      body: { sourcePrivateContextId: privateWork.body.context.id, resourceIds: [resource.body.resource.id], title: "Inherited edit" },
+    });
+    expect(submitted.status).toBe(201);
+  });
+});
+
 describe("an unauthenticated request is refused before any project is looked up", () => {
   it("maps a missing session to a typed unauthorized failure, not an unknown project", async () => {
     // `unauthorized`/401 is this codebase's name for AUTHENTICATION_REQUIRED:

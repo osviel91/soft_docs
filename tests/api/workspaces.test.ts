@@ -96,6 +96,8 @@ describe("workspace lifecycle API", () => {
     const guest = await signIn();
     const created = await router.handle(request("POST", "/api/workspaces", owner.cookie, { name: "Invite target" }));
     const workspaceId = JSON.parse(created.body).workspace.id as string;
+    const projectResponse = await router.handle(request("POST", "/api/projects", owner.cookie, { name: "Invite-visible project", workspaceId }));
+    const projectId = JSON.parse(projectResponse.body).project.id as string;
     const minted = await router.handle(request("POST", `/api/workspaces/${workspaceId}/invitations`, owner.cookie, { role: "VIEWER" }));
     expect(minted.status).toBe(201);
     const { token } = JSON.parse(minted.body) as { token: string };
@@ -105,6 +107,9 @@ describe("workspace lifecycle API", () => {
     expect(accepted.status).toBe(200);
     expect(JSON.parse(accepted.body)).toMatchObject({ workspaceId, role: "VIEWER" });
     expect(await dependencies.workspaces.roleOf(workspaceId, guest.userId)).toBe("VIEWER");
+    const listing = await router.handle(request("GET", `/api/projects?workspaceId=${workspaceId}`, guest.cookie));
+    expect(JSON.parse(listing.body).projects.map((project: { id: string }) => project.id)).toContain(projectId);
+    expect((await router.handle(request("GET", `/api/projects/${projectId}`, guest.cookie))).status).toBe(200);
     expect((await router.handle(request("POST", "/api/invitations/accept", guest.cookie, { token }))).status).toBe(404);
   });
 

@@ -630,6 +630,15 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.post("/api/projects/:projectId/owner", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const body = parseJsonBody(request.body);
+      await catalog.transferOwnership(context, params.projectId, requireBodyString(body, "userId"));
+      return json(204, null);
+    }),
+  );
+
   router.delete("/api/projects/:projectId", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);

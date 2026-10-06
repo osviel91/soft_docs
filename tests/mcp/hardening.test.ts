@@ -238,6 +238,8 @@ describe("authorization", () => {
 
   it("refuses a write for a VIEWER even with a write-enabled credential", async () => {
     const viewerId = await harness.aUser("Viewer");
+    const project = await harness.service.runtime.projects.findById(projectA);
+    await harness.service.runtime.workspaces.setMember(project!.workspaceId, viewerId, "VIEWER");
     await harness.service.runtime.projects.setMember(
       projectA,
       viewerId,
@@ -445,12 +447,12 @@ describe("governance boundaries", () => {
     const ownerId = await harness.aUser();
     const projectId = await harness.aProject(ownerId);
     const editorId = await harness.aUser();
-    await harness.service.runtime.projects.setMember(projectId, editorId, "EDITOR");
+    await harness.service.runtime.workspaces.setMember(ownerId, editorId, "EDITOR");
     const contextId = await harness.aPrivateWork(projectId, editorId);
     const { token } = await harness.aToken(editorId, ["project:read", "resource:create"]);
     const capability = await post(harness.origin, call("get_project_capabilities", { projectId }), { token });
     expect((await capability.json() as any).result.structuredContent.project["privateWork.create"].allowed).toBe(true);
-    await harness.service.runtime.projects.setMember(projectId, editorId, "VIEWER");
+    await harness.service.runtime.workspaces.setMember(ownerId, editorId, "VIEWER");
     const mutation = await post(harness.origin, call("create_resource", {
       projectId, contextId, path: "after-revocation.seq", type: "sequence-diagram", content: "",
     }), { token });
