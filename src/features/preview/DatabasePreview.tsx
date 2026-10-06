@@ -20,7 +20,7 @@ export default function DatabasePreview({ source, onNodeSelect, activeNodeId = n
     let current = true;
     setLayout(null); setLayoutError(false);
     if (!projection) return () => { current = false; };
-    void layoutGeometry(projection.geometry).then(value => { if (current) setLayout(value); }, () => { if (current) setLayoutError(true); });
+    void layoutGeometry(projection.geometry, "database").then(value => { if (current) setLayout(value); }, () => { if (current) setLayoutError(true); });
     return () => { current = false; };
   }, [projection]);
   const invalid = !parsed.model || parsed.diagnostics.some(diagnostic => diagnostic.severity === "error");

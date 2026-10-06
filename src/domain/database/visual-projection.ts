@@ -91,7 +91,11 @@ export function projectDatabase(model: DatabaseModel): DatabaseVisualProjection 
       portIds: { west: portId(table.id, column, "west"), east: portId(table.id, column, "east") },
     }));
     const headerWidth = estimateTextWidth(qualifiedTableName(model, table), 14) + 32;
-    const columnWidth = Math.max(0, ...columns.map(column => estimateTextWidth(`${column.name}  ${column.type}`, 12) + 58));
+    const columnWidth = Math.max(0, ...columns.map(column => {
+      const marks = [pk.has(column.name) ? "PK" : "", foreignColumns.has(column.name) ? "FK" : "", uniqueByColumn.has(column.name) ? "UQ" : ""].filter(Boolean).join(" ");
+      const attributes = `${column.type}${marks ? ` · ${marks}` : ""} · ${column.nullable ? "NULL" : "NOT NULL"}`;
+      return estimateTextWidth(column.name, 12) + estimateTextWidth(attributes, 12) + 40;
+    }));
     const requiredWidth = Math.max(180, Math.ceil(headerWidth), Math.ceil(columnWidth));
     const rowHeight = 28;
     return {
@@ -136,8 +140,8 @@ export function projectDatabase(model: DatabaseModel): DatabaseVisualProjection 
         requiredWidth: table.requiredWidth,
         requiredHeight: table.requiredHeight,
         ports: table.columns.flatMap(column => [
-          { id: column.portIds.west, side: "WEST" as const, y: 42 + column.order * 28 + 14 },
-          { id: column.portIds.east, side: "EAST" as const, y: 42 + column.order * 28 + 14 },
+          { id: column.portIds.west, side: "WEST" as const, x: 0, y: 42 + column.order * 28 + 14 },
+          { id: column.portIds.east, side: "EAST" as const, x: table.requiredWidth, y: 42 + column.order * 28 + 14 },
         ]),
       })),
       connections: connections.map(connection => connection.geometry),

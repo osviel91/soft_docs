@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DatabaseModel } from "../../../src/domain/database/model";
 import { projectDatabase } from "../../../src/domain/database/visual-projection";
+import { estimateTextWidth } from "../../../src/layout/text";
 
 describe("Database visual projection", () => {
   it("projects tables, ordered compound rows, identities, keys, nullability, and FK endpoints", () => {
@@ -43,5 +44,18 @@ describe("Database visual projection", () => {
     expect(fk.sourcePortIds).toHaveLength(2);
     expect(fk.targetPortIds).toHaveLength(2);
     expect(fk.geometry.source.portId).not.toBe(fk.geometry.target.portId);
+  });
+
+  it("reserves separate deterministic name and attribute regions for long rows", () => {
+    const name = "an_extremely_long_column_name_without_wrapping";
+    const type = "numeric(38, 12)";
+    const model: DatabaseModel = { schemas: [], tables: [{
+      id: "wide-row", name: "wide_row", columns: [{ id: "long", name, type, nullable: false }],
+      primaryKey: { id: "pk", columns: [name] }, uniqueConstraints: [], indexes: [],
+    }], foreignKeys: [] };
+    const table = projectDatabase(model).tables[0]!;
+    const attributes = `${type} · PK · NOT NULL`;
+    expect(table.requiredWidth).toBeGreaterThanOrEqual(estimateTextWidth(name, 12) + estimateTextWidth(attributes, 12) + 40);
+    expect(table.requiredWidth).toBe(Math.ceil(estimateTextWidth(name, 12) + estimateTextWidth(attributes, 12) + 40));
   });
 });

@@ -21,7 +21,18 @@ const CONCEPTUAL_OPTIONS = {
   "elk.spacing.edgeNode": "8",
 };
 
-export type GeometryLayoutProfile = "default" | "conceptual";
+const DATABASE_OPTIONS = {
+  ...ENGINE_OPTIONS,
+  "elk.direction": "RIGHT",
+  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "96",
+  "elk.spacing.nodeNode": "56",
+  "elk.spacing.edgeNode": "24",
+  "elk.spacing.edgeEdge": "16",
+  "elk.layered.spacing.edgeNodeBetweenLayers": "20",
+};
+
+export type GeometryLayoutProfile = "default" | "conceptual" | "database";
 
 export class GeometryLayoutError extends Error {
   constructor(message: string) {
@@ -72,7 +83,7 @@ function validateInput({ items, connections }: GeometryInput): void {
 function toElkGraph(input: GeometryInput, profile: GeometryLayoutProfile): ElkNode {
   return {
     id: "geometry-root",
-    layoutOptions: profile === "conceptual" ? CONCEPTUAL_OPTIONS : ENGINE_OPTIONS,
+    layoutOptions: profile === "conceptual" ? CONCEPTUAL_OPTIONS : profile === "database" ? DATABASE_OPTIONS : ENGINE_OPTIONS,
     children: input.items.map(item => ({
       id: item.id,
       width: item.requiredWidth,

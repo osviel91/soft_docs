@@ -140,4 +140,44 @@ describe("headless geometry layout", () => {
       }
     }
   });
+
+  it("uses a deterministic Database profile with port-anchored routes and reportable bounds", async () => {
+    const tables = Array.from({ length: 33 }, (_, i) => ({
+      id: `fixture-${i}`, name: `structural_table_${i}`,
+      columns: [{ id: `id-${i}`, name: "id", type: "uuid", nullable: false }, { id: `ref-${i}`, name: "reference_id", type: "varchar(256)", nullable: true }],
+      primaryKey: { id: `pk-${i}`, columns: ["id"] }, uniqueConstraints: [], indexes: [],
+    }));
+    const model: DatabaseModel = {
+      schemas: [], tables,
+      foreignKeys: Array.from({ length: 48 }, (_, i) => ({
+        id: `fixture-fk-${i}`, sourceTableId: `fixture-${(i + 1) % 33}`, sourceColumns: ["reference_id"],
+        targetTableId: `fixture-${i % 33}`, targetColumns: ["id"],
+      })),
+    };
+    const projection = projectDatabase(model);
+    const [geometry, repeated] = await Promise.all([
+      layoutGeometry(projection.geometry, "database"), layoutGeometry(projection.geometry, "database"),
+    ]);
+    const fit = fitTransform({ width: geometry.width, height: geometry.height }, { width: 800, height: 600 });
+    const routes = geometry.connections.map(route => route.points.map((point, i) => i ? `${point.x},${point.y}` : "").filter(Boolean));
+    const sharedSegments = routes.reduce((count, route, i) => count + routes.slice(i + 1).filter(other => route.some((segment, j) => segment === other[j])).length, 0);
+
+    expect(geometry).toEqual(repeated);
+    expect(geometry.items).toHaveLength(33);
+    expect(geometry.connections.map(edge => edge.id)).toEqual(projection.connections.map(edge => edge.visualId));
+    expect(geometry.items.every((item, i) => geometry.items.slice(i + 1).every(other =>
+      item.x + item.requiredWidth <= other.x || other.x + other.requiredWidth <= item.x || item.y + item.requiredHeight <= other.y || other.y + other.requiredHeight <= item.y,
+    ))).toBe(true);
+    for (const [index, edge] of geometry.connections.entries()) {
+      const fk = projection.connections[index]!;
+      const source = geometry.ports.find(port => port.id === fk.sourcePortIds[0])!;
+      const target = geometry.ports.find(port => port.id === fk.targetPortIds[0])!;
+      expect(Math.abs(edge.points[0]!.x - source.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(edge.points[0]!.y - source.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(edge.points.at(-1)!.x - target.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(edge.points.at(-1)!.y - target.y)).toBeLessThanOrEqual(1);
+    }
+    expect(fit.scale).toBeGreaterThan(0);
+    expect(Number.isFinite(geometry.width + geometry.height + sharedSegments)).toBe(true);
+  });
 });
