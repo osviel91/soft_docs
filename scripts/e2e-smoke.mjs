@@ -2371,6 +2371,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await ownerPage.getByTestId("workspace-share-project").click();
       await ownerPage.getByRole("button", { name: "Create read-only link" }).click();
       secondShareUrl = await ownerPage.getByLabel("Read-only link").inputValue();
+      await ownerPage.getByText("Active", { exact: true }).nth(1).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("a project can hold multiple independently active share grants", secondShareUrl !== shareUrl && await ownerPage.getByText("Active", { exact: true }).count() === 2);
 
       await anonymousPage.goto(shareUrl, { waitUntil: "domcontentloaded" });
