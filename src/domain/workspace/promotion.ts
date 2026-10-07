@@ -2,6 +2,7 @@ import type { ResourceRelationship } from "./resource-relationship";
 import type { ResourceType } from "./resource-id";
 import type { ResourceAuthorship } from "./resource-revision";
 import type { SemanticMessageIdentity } from "./metadata";
+import type { SemanticBinding } from "./semantic-binding";
 
 export type PromotionOperation = "CREATE" | "UPDATE" | "RETIRE";
 
@@ -32,6 +33,11 @@ export interface PromotionSemanticMessageChange {
   baseKind?: "event" | "command";
 }
 
+export type PromotionSemanticBindingChange =
+  | { operation: "ADD"; binding: SemanticBinding }
+  | { operation: "UPDATE"; binding: SemanticBinding; expectedRevision: number; baseFingerprint: string }
+  | { operation: "REMOVE"; bindingId: string; binding: SemanticBinding; expectedRevision: number; baseFingerprint: string };
+
 export interface Promotion {
   id: string;
   projectId: string;
@@ -44,6 +50,7 @@ export interface Promotion {
   entries: PromotionEntry[];
   relationships: PromotionRelationshipChange[];
   semanticMessages: PromotionSemanticMessageChange[];
+  semanticBindings?: PromotionSemanticBindingChange[];
   status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED";
   completedAt?: Date;
 }
@@ -64,4 +71,5 @@ export interface PromotionPreview {
   semanticIdentityReuses: string[];
   semanticChanges: PromotionSemanticMessageChange[];
   relationships: PromotionRelationshipChange[];
+  semanticBindings: PromotionSemanticBindingChange[];
 }

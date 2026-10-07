@@ -8,7 +8,7 @@ import type { ProjectRepository } from "./ports/project-repository";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { AuditRepository } from "./ports/audit-repository";
 import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
-import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalSemanticMessageSnapshot, ProposalReview, ProposalReviewDecision, ProposalReviewSummary } from "../domain/workspace/architectural-proposal";
+import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalSemanticMessageSnapshot, ProposalReview, ProposalReviewDecision, ProposalReviewSummary, ProposalSemanticBindingSnapshot } from "../domain/workspace/architectural-proposal";
 import type { ProjectStorage } from "./project-storage";
 import { createEmptyMetadata, parseProjectMetadata, type ProjectMetadata } from "../domain/workspace/metadata";
 import { analyzeResource } from "../domain/project/resource-analysis";
@@ -17,6 +17,8 @@ import { validateProject } from "../domain/project/validate";
 import { traceArchitectureQuery, type ArchitectureTrace, type TraceDirection } from "../domain/project/architecture-trace";
 import type { Promotion } from "../domain/workspace/promotion";
 import { architecturalProposalDiff, type ArchitecturalProposalDiff } from "./proposal-diff";
+import type { SemanticBindingRepository } from "./ports/semantic-binding-repository";
+import { entityAnchorKey, validateSemanticBinding } from "../domain/workspace/semantic-binding";
 
 export type ProposalLifecycleState = "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
 
@@ -30,18 +32,25 @@ function lifecycle(status: ArchitecturalProposal["status"], reviewStatus: Propos
   return "OPEN";
 }
 
-export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePrivateContextId" | "semanticMessages" | "relationships"> & {
+export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePrivateContextId" | "semanticMessages" | "relationships" | "semanticBindings"> & {
   semanticMessages: Array<Omit<ProposalSemanticMessageSnapshot, "sourceContextId">>;
   relationships: Array<Omit<ProposalRelationshipSnapshot, "sourceContextId" | "contextId">>;
+  semanticBindings: Array<Omit<ProposalSemanticBindingSnapshot, "sourceContextId">>;
 };
 export type PublicArchitecturalProposalSummary = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId">;
 
 function publicProposal(proposal: ArchitecturalProposal): PublicArchitecturalProposal {
   const { id, projectId, authorUserId, title, description, status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
+  const publicBinding = (binding: import("../domain/workspace/semantic-binding").SemanticBinding) => {
+    const provenance = { ...binding.provenance };
+    delete provenance.contextId;
+    return { ...binding, provenance };
+  };
   return {
     id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources,
     semanticMessages: semanticMessages.map(({ id: messageId, name, kind, operation, baseName, baseKind }) => ({ id: messageId, name, kind, ...(operation === undefined ? {} : { operation }), ...(baseName === undefined ? {} : { baseName }), ...(baseKind === undefined ? {} : { baseKind }) })),
     relationships: relationships.map(({ sourceId, targetId, kind, sourceRole, targetRole, operation, baseFingerprint }) => ({ sourceId, targetId, kind, ...(sourceRole === undefined ? {} : { sourceRole }), ...(targetRole === undefined ? {} : { targetRole }), ...(operation === undefined ? {} : { operation }), ...(baseFingerprint === undefined ? {} : { baseFingerprint }) })),
+    semanticBindings: (proposal.semanticBindings ?? []).map((entry) => ({ ...entry, binding: publicBinding(entry.binding), ...(entry.operation === "UPDATE" ? { baseBinding: publicBinding(entry.baseBinding) } : {}) } as Omit<ProposalSemanticBindingSnapshot, "sourceContextId">)),
   };
 }
 
@@ -54,8 +63,8 @@ export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
   get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string; lifecycle: { state: ProposalLifecycleState; promotionStatus?: Promotion["status"] }; promotion?: Pick<Promotion, "id" | "status" | "createdAt" | "completedAt" | "resultingSharedRevision">; supersedes?: { id: string; title: string }; supersededBy?: { id: string; title: string }; revisionContextId?: string }>;
   diff(context: ApplicationContext, projectId: string, proposalId: string): Promise<ArchitecturalProposalDiff>;
-  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
-  revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; semanticBindings?: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
+  revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; semanticBindings?: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   withdraw(context: ApplicationContext, input: { projectId: string; proposalId: string; reason?: string }): Promise<PublicArchitecturalProposal>;
   validate(context: ApplicationContext, projectId: string, proposalId: string): Promise<{ diagnostics: ProjectDiagnostic[]; index: ProjectIndex }>;
   trace(context: ApplicationContext, projectId: string, proposalId: string, input: { messageId: string; direction: TraceDirection; maxDepth: number; maxNodes: number; includeCandidates: boolean; includeRecovery: boolean }): Promise<{ trace: ArchitectureTrace | null; resolution: unknown }>;
@@ -74,10 +83,26 @@ export function createArchitecturalProposalService(options: {
   workspaceSelfReview?: WorkspaceSelfReviewPolicy;
   storage?: (projectId: string) => ProjectStorage;
   promotions?: import("./ports/promotion-repository").PromotionRepository;
+  semanticBindings?: SemanticBindingRepository;
 }): ArchitecturalProposalService {
   const policy = options.policy ?? createAuthorizationPolicy<ServerProject>(options.projects);
   const requireRead = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "project:read");
   const requireSubmit = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "resource:update");
+  const validateSelectedBindings = async (projectId: string, contextId: string, selections: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[], selectedIds: Set<string>) => {
+    if (selections.length && !options.semanticBindings) throw invalid("Semantic binding selection is unavailable.");
+    const resources = [...await options.projects.listResources(projectId, null), ...await options.projects.listResources(projectId, contextId).then((rows) => rows.filter((row) => selectedIds.has(row.id)))];
+    const analyses = await Promise.all(resources.map(async (resource) => {
+      const revision = await options.projects.getRevision(resource.id, resource.revision);
+      return revision ? analyzeResource({ id: resource.id, projectId, path: resource.path, type: resource.type, title: resource.path }, revision.content) : null;
+    }));
+    const indexed = new Set(analyses.filter((analysis): analysis is NonNullable<typeof analysis> => analysis !== null).flatMap((analysis) => analysis.entities.map((entity) => entityAnchorKey(entity.anchor))));
+    for (const selection of selections) {
+      const binding = await options.semanticBindings!.get({ projectId, contextId: selection.operation === "REMOVE" ? null : contextId }, selection.bindingId);
+       if (!binding || (selection.operation === "ADD" && binding.revision !== selection.sourceRevision)) throw invalid(`Selected semantic binding ${selection.bindingId} is not current in the selected context.`);
+      try { validateSemanticBinding(binding); } catch (error) { throw invalid(error instanceof Error ? error.message : "Invalid semantic binding."); }
+      if (![binding.left, binding.right].every((anchor) => indexed.has(entityAnchorKey(anchor)))) throw invalid(`Selected semantic binding ${selection.bindingId} has an endpoint outside SHARED and the selected private resources.`);
+    }
+  };
   const indexFor = async (proposal: ArchitecturalProposal): Promise<ProjectIndex> => {
     const shared = await options.projects.listResources(proposal.projectId, null);
     const sharedFiles = await Promise.all(shared.map(async (resource) => ({ resource, revision: await options.projects.getRevision(resource.id, resource.revision) })));
@@ -109,10 +134,11 @@ export function createArchitecturalProposalService(options: {
     if (!title) throw invalid("A proposal title is required.");
     const ids = [...new Set(input.resourceIds)];
     const retireIds = [...new Set(input.retireResourceIds ?? [])];
-    if (ids.length === 0 && retireIds.length === 0) throw invalid("Select at least one private resource or explicit retirement target.");
+    if (ids.length === 0 && retireIds.length === 0 && (input.semanticBindings?.length ?? 0) === 0) throw invalid("Select at least one resource, retirement, or semantic binding operation.");
     const resources = await options.projects.listResources(input.projectId, source.id);
     const selected = resources.filter((resource) => ids.includes(resource.id));
     if (selected.length !== ids.length) throw notFound("One or more selected private resources are not available.");
+    await validateSelectedBindings(input.projectId, source.id, input.semanticBindings ?? [], new Set(ids));
     const privateMessages = await options.knowledgeContexts.listPrivateMessages(input.projectId, source.id);
     const currentContents = await Promise.all(selected.map(async (resource) => (await options.projects.getRevision(resource.id, resource.revision))?.content ?? ""));
     const privateMessageIds = privateMessages.filter((message) => currentContents.some((content) => content.includes(message.id))).map((message) => message.id);
@@ -145,6 +171,7 @@ export function createArchitecturalProposalService(options: {
       baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources, baseManifestRevision,
       ...(input.semanticMessages === undefined ? {} : { semanticMessages }),
       ...(relationships.length === 0 ? {} : { relationships }),
+      ...(input.semanticBindings === undefined ? {} : { semanticBindings: input.semanticBindings }),
     };
   };
 
@@ -210,10 +237,11 @@ export function createArchitecturalProposalService(options: {
       if (!title) throw invalid("A proposal title is required.");
       const ids = [...new Set(input.resourceIds)];
       const retireIds = [...new Set(input.retireResourceIds ?? [])];
-      if (ids.length === 0 && retireIds.length === 0) throw invalid("Select at least one private resource or explicit retirement target.");
+       if (ids.length === 0 && retireIds.length === 0 && (input.semanticBindings?.length ?? 0) === 0) throw invalid("Select at least one resource, retirement, or semantic binding operation.");
       const resources = await options.projects.listResources(input.projectId, source.id);
-      const selected = resources.filter((resource) => ids.includes(resource.id));
-      if (selected.length !== ids.length) throw notFound("One or more selected private resources are not available.");
+       const selected = resources.filter((resource) => ids.includes(resource.id));
+       if (selected.length !== ids.length) throw notFound("One or more selected private resources are not available.");
+       await validateSelectedBindings(input.projectId, source.id, input.semanticBindings ?? [], new Set(ids));
       const privateMessages = await options.knowledgeContexts.listPrivateMessages(input.projectId, source.id);
       const currentContents = await Promise.all(selected.map(async (resource) => (await options.projects.getRevision(resource.id, resource.revision))?.content ?? ""));
       const privateMessageIds = privateMessages.filter((message) => currentContents.some((content) => content.includes(message.id))).map((message) => message.id);
@@ -251,7 +279,8 @@ export function createArchitecturalProposalService(options: {
            retirements: retirementTargets.map((resource) => ({ resourceId: resource.id, expectedRevision: resource.revision })), privateMessageIds,
            baseSharedRevision: base.revision, baseSharedResourceRevisions: base.resources, baseManifestRevision,
             ...(input.semanticMessages === undefined ? {} : { semanticMessages }),
-            ...(input.relationshipOperations === undefined ? {} : { relationships }),
+             ...(input.relationshipOperations === undefined ? {} : { relationships }),
+             ...(input.semanticBindings === undefined ? {} : { semanticBindings: input.semanticBindings }),
         });
       } catch (error) {
         throw conflict(error instanceof Error ? error.message : "Private work changed during proposal submission.");

@@ -7,6 +7,8 @@ import type { ProposalReviewRepository } from "./ports/proposal-review-repositor
 import type { AuthoritativeBatchRepository, AuthoritativeBatchOperation } from "./ports/authoritative-batch-repository";
 import type { ProjectStorage } from "./project-storage";
 import type { Promotion, PromotionEntry, PromotionPreview, PromotionSemanticMessageChange } from "../domain/workspace/promotion";
+import type { PromotionSemanticBindingChange } from "../domain/workspace/promotion";
+import { validateSemanticBinding } from "../domain/workspace/semantic-binding";
 import { conflict, forbidden, invalid, notFound, unavailable } from "./errors";
 import { createEmptyMetadata, parseProjectMetadata, type ProjectMetadata } from "../domain/workspace/metadata";
 import { createIdGenerator } from "../shared/ids/uuid";
@@ -14,6 +16,8 @@ import type { ResourceAuthorship } from "../domain/workspace/resource-revision";
 import type { ServerProject } from "../domain/project/server-project";
 import type { ResourceRelationship } from "../domain/workspace/resource-relationship";
 import { createHash } from "node:crypto";
+import { analyzeResource } from "../domain/project/resource-analysis";
+import { entityAnchorKey, type IndexedEntity } from "../domain/workspace/semantic-binding";
 
 function relationshipFingerprint(relationship: ResourceRelationship): string {
   return JSON.stringify({ kind: relationship.kind, sourceId: relationship.sourceId, targetId: relationship.targetId, sourceRole: relationship.sourceRole ?? null, targetRole: relationship.targetRole ?? null });
@@ -41,6 +45,7 @@ export function createPromotionService(options: {
     if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
     const current = await options.proposals.currentSharedRevision(projectId);
     const shared = await options.projects.listResources(projectId, null);
+    const currentBindings = await options.batches.listSharedSemanticBindings(projectId);
     const manifest = await options.storage(projectId).read("project.json");
     if (!manifest.ok) throw unavailable("The project manifest could not be read.");
     let metadata: ProjectMetadata = createEmptyMetadata();
@@ -110,7 +115,72 @@ export function createPromotionService(options: {
       if (change.operation !== "ADD" && !existing) blockers.push({ code: "SEMANTIC_ID_MISSING", message: `Semantic identity ${change.message.id} is no longer present.` });
        if (change.operation !== "ADD" && existing && change.baseName !== undefined && (existing.name !== change.baseName || (change.baseKind !== undefined && existing.kind !== change.baseKind))) blockers.push({ code: "SEMANTIC_BASE_MISMATCH", message: `Semantic identity ${change.message.id} changed since the proposal base.` });
     }
-    return { proposal, current, entries, blockers, reviewStatus, shared, relationships, semanticMessages, metadata, manifestContent: manifest.value?.content ?? null };
+    const retiredResourceIds = new Set(entries.filter((entry) => entry.operation === "RETIRE").map((entry) => entry.resultingResourceId));
+    const resourceIds = new Set(shared.map((resource) => resource.id).filter((id) => !retiredResourceIds.has(id)));
+    const resultingIds = new Set(entries.filter((entry) => entry.operation !== "RETIRE").map((entry) => entry.resultingResourceId));
+    const resolveId = (id: string) => entryByProposalId.get(id)?.resultingResourceId ?? id;
+    const semanticBindings: PromotionSemanticBindingChange[] = (proposal.semanticBindings ?? []).map((operation) => {
+      const binding = {
+        ...operation.binding,
+        revision: operation.operation === "ADD" ? 1 : operation.expectedRevision + 1,
+        provenance: { ...operation.binding.provenance, contextId: undefined, proposalId: proposal.id },
+        left: { ...operation.binding.left, resourceId: resolveId(operation.binding.left.resourceId) },
+        right: { ...operation.binding.right, resourceId: resolveId(operation.binding.right.resourceId) },
+        evidence: {
+          ...operation.binding.evidence,
+          items: operation.binding.evidence.items.map((item) => {
+            if (item.kind !== "internal") return item;
+            const selectedResource = proposal.resources.find((resource) => resource.sourceResourceId === item.resourceId);
+            const promotedResource = selectedResource ? entryByProposalId.get(selectedResource.sourceResourceId) : undefined;
+            return {
+              ...item,
+              resourceId: resolveId(item.resourceId),
+              ...(selectedResource && promotedResource ? { revision: promotedResource.resultingRevision } : {}),
+              ...(item.entity ? { entity: { ...item.entity, resourceId: resolveId(item.entity.resourceId) } } : {}),
+            };
+          }),
+        },
+      };
+      if (operation.operation === "ADD") return { operation: "ADD", binding };
+      return { operation: operation.operation, binding, expectedRevision: operation.expectedRevision, baseFingerprint: operation.baseFingerprint, ...(operation.operation === "REMOVE" ? { bindingId: operation.bindingId } : {}) } as PromotionSemanticBindingChange;
+    });
+    const replacedIds = new Set(entries.filter((entry) => entry.operation !== "CREATE").map((entry) => entry.baseResourceId));
+    const projectedEntities: IndexedEntity[] = [];
+    const proposalResourceByResultId = new Map<string, { sourceRevision: number; resultingRevision: number }>();
+    for (const resource of shared) {
+      if (replacedIds.has(resource.id) || retiredResourceIds.has(resource.id)) continue;
+      const revision = await options.projects.getRevision(resource.id, resource.revision);
+      if (!revision) continue;
+      projectedEntities.push(...analyzeResource({ id: resource.id, projectId, path: resource.path, type: resource.type, title: resource.path }, revision.content).entities);
+    }
+    for (const resource of proposal.resources) {
+      const entry = entryByProposalId.get(resource.sourceResourceId);
+      if (!entry || entry.operation === "RETIRE") continue;
+      proposalResourceByResultId.set(entry.resultingResourceId, { sourceRevision: resource.sourceRevision, resultingRevision: entry.resultingRevision });
+      projectedEntities.push(...analyzeResource({ id: entry.resultingResourceId, projectId, path: entry.path, type: resource.type, title: entry.path }, resource.content).entities);
+    }
+    for (const operation of semanticBindings) {
+      const binding = operation.binding;
+      try { validateSemanticBinding(binding); } catch (error) { blockers.push({ code: "INVALID_BINDING", message: error instanceof Error ? error.message : `Semantic binding ${binding.id} is invalid.` }); }
+      for (const id of [binding.left.resourceId, binding.right.resourceId, ...binding.evidence.items.filter((item) => item.kind === "internal").map((item) => item.resourceId)]) {
+        if (!resourceIds.has(id) && !resultingIds.has(id)) blockers.push({ code: "BINDING_ENDPOINT_MISSING", message: `Semantic binding ${binding.id} references unavailable resource ${id}.`, resourceId: id });
+      }
+      for (const endpoint of [binding.left, binding.right]) {
+        if (!projectedEntities.some((entity) => entityAnchorKey(entity.anchor) === entityAnchorKey(endpoint))) blockers.push({ code: "BINDING_ENDPOINT_UNRESOLVED", message: `Semantic binding ${binding.id} has an endpoint that does not resolve in the promoted resource snapshot.`, resourceId: endpoint.resourceId });
+      }
+      for (const item of binding.evidence.items) {
+        if (item.kind !== "internal") continue;
+        const proposalResource = proposalResourceByResultId.get(item.resourceId);
+        if (proposalResource && item.revision !== proposalResource.resultingRevision) blockers.push({ code: "BINDING_EVIDENCE_REVISION_MISMATCH", message: `Evidence for binding ${binding.id} does not cite the resulting selected resource revision.`, resourceId: item.resourceId, expectedRevision: proposalResource.resultingRevision, currentRevision: item.revision });
+        if (!proposalResource && !(await options.projects.getRevision(item.resourceId, item.revision))) blockers.push({ code: "BINDING_EVIDENCE_UNAVAILABLE", message: `Evidence revision ${item.revision} for binding ${binding.id} is unavailable.`, resourceId: item.resourceId, expectedRevision: item.revision });
+        if (item.entity && !projectedEntities.some((entity) => entityAnchorKey(entity.anchor) === entityAnchorKey(item.entity!))) blockers.push({ code: "BINDING_EVIDENCE_ENTITY_UNRESOLVED", message: `Evidence entity for binding ${binding.id} does not resolve in the promoted snapshot.`, resourceId: item.resourceId });
+      }
+      const id = operation.operation === "REMOVE" ? operation.bindingId : binding.id;
+      const existing = currentBindings.find((candidate) => candidate.id === id);
+      if (operation.operation === "ADD" && existing) blockers.push({ code: "BINDING_ID_EXISTS", message: `Semantic binding ${id} already exists.` });
+      if (operation.operation !== "ADD" && (!existing || existing.revision !== operation.expectedRevision || JSON.stringify(existing) !== operation.baseFingerprint)) blockers.push({ code: "BINDING_BASE_MISMATCH", message: `Semantic binding ${id} is missing or changed since the proposal base.`, expectedRevision: operation.expectedRevision, ...(existing ? { currentRevision: existing.revision } : {}) });
+    }
+    return { proposal, current, entries, blockers, reviewStatus, shared, relationships, semanticMessages, semanticBindings, metadata, manifestContent: manifest.value?.content ?? null };
   };
   const recover = async (limit = 100): Promise<{ examined: number; completed: number; pending: number }> => {
       const batches = await options.batches.listIncomplete(limit);
@@ -154,13 +224,19 @@ export function createPromotionService(options: {
     async preview(context, projectId, proposalId) {
       await options.policy.requirePermission(context, projectId, "project:read");
       const value = await plan(projectId, proposalId);
+      const authorization = await options.policy.decide(context, projectId, "promotion:execute");
+      const workspaceAdmin = !authorization.allowed && authorization.reason === "forbidden" && options.workspaceAdmin
+        ? await options.workspaceAdmin(context, projectId, "promotion:execute")
+        : false;
+      const authorized = (authorization.allowed && authorization.role === "OWNER") || workspaceAdmin;
+      if (!authorized) value.blockers.push({ code: "PROMOTION_PERMISSION", message: "Only project owners or authorized workspace admins may promote proposals." });
       const existing = await options.promotions.getForProposal(projectId, proposalId);
       const blockers = existing?.status === "COMMITTED_COMPLETION_PENDING"
         ? [...value.blockers, { code: "COMPLETION_PENDING", message: "This promotion committed SQL state and is awaiting authoritative manifest completion." }]
         : existing?.status === "COMPLETED"
           ? [...value.blockers, { code: "PROMOTION_COMPLETED", message: "This proposal already has completed promotion evidence." }]
           : value.blockers;
-      return { proposalId, projectId, reviewStatus: value.reviewStatus as PromotionPreview["reviewStatus"], eligible: blockers.length === 0, blockers, baseSharedRevision: value.proposal.baseSharedRevision, currentSharedRevision: value.current.revision, staleBase: value.proposal.baseSharedRevision !== value.current.revision, creates: value.entries.filter((entry) => entry.operation === "CREATE"), updates: value.entries.filter((entry) => entry.operation === "UPDATE"), retires: value.entries.filter((entry) => entry.operation === "RETIRE"), semanticIdentityAdditions: value.semanticMessages.filter((message) => message.operation === "ADD").map((message) => message.message.id), semanticIdentityReuses: [], semanticChanges: value.semanticMessages, relationships: value.relationships };
+      return { proposalId, projectId, reviewStatus: value.reviewStatus as PromotionPreview["reviewStatus"], eligible: blockers.length === 0, blockers, baseSharedRevision: value.proposal.baseSharedRevision, currentSharedRevision: value.current.revision, staleBase: value.proposal.baseSharedRevision !== value.current.revision, creates: value.entries.filter((entry) => entry.operation === "CREATE"), updates: value.entries.filter((entry) => entry.operation === "UPDATE"), retires: value.entries.filter((entry) => entry.operation === "RETIRE"), semanticIdentityAdditions: value.semanticMessages.filter((message) => message.operation === "ADD").map((message) => message.message.id), semanticIdentityReuses: [], semanticChanges: value.semanticMessages, relationships: value.relationships, semanticBindings: value.semanticBindings };
     },
     async execute(context, projectId, proposalId, idempotencyKey) {
       const authorization = await options.policy.decide(context, projectId, "promotion:execute");
@@ -233,7 +309,7 @@ export function createPromotionService(options: {
       const promotionId = newId();
       let batch;
       try {
-        batch = await options.batches.claim({ batchId, projectId, actor: author, audit: { action: "proposal.promoted", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId, detail: { proposalId, batchId } }, operations, relationshipChanges: value.relationships, semanticChanges: value.semanticMessages, manifest: { expectedRevision: metadata.manifestRevision ?? 0, expectedContent: manifest.value?.content ?? null, content: manifestContent, stagedPath: manifestStagedPath }, idempotencyKey: idempotencyKey ?? `promotion:${proposalId}`, promotion: { id: promotionId, proposalId, baseSharedRevision: value.proposal.baseSharedRevision, entries: value.entries, relationships: value.relationships, semanticMessages: value.semanticMessages, baseManifestRevision: value.metadata.manifestRevision ?? 0 } });
+        batch = await options.batches.claim({ batchId, projectId, actor: author, audit: { action: "proposal.promoted", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId, detail: { proposalId, batchId } }, operations, relationshipChanges: value.relationships, semanticChanges: value.semanticMessages, semanticBindingChanges: value.semanticBindings, manifest: { expectedRevision: metadata.manifestRevision ?? 0, expectedContent: manifest.value?.content ?? null, content: manifestContent, stagedPath: manifestStagedPath }, idempotencyKey: idempotencyKey ?? `promotion:${proposalId}`, promotion: { id: promotionId, proposalId, baseSharedRevision: value.proposal.baseSharedRevision, entries: value.entries, relationships: value.relationships, semanticMessages: value.semanticMessages, semanticBindings: value.semanticBindings, baseManifestRevision: value.metadata.manifestRevision ?? 0 } });
       } catch (error) {
         await storage.remove(manifestStagedPath);
         throw error;

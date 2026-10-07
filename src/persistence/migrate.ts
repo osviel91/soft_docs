@@ -43,6 +43,9 @@ import { up as workspaceInvitations } from "./migrations/0027-workspace-invitati
 import { up as projectShareGrants } from "./migrations/0028-project-share-grants";
 import { up as conceptualDatabaseTypes } from "./migrations/0029-conceptual-database-resource-types";
 import { up as preserveProjectsOnOwnerDelete } from "./migrations/0030-preserve-projects-on-owner-delete";
+import { up as semanticBindings } from "./migrations/0031-semantic-bindings";
+import { up as proposalSemanticBindings } from "./migrations/0032-proposal-semantic-bindings";
+import { up as promotionSemanticBindings } from "./migrations/0033-promotion-semantic-bindings";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -86,6 +89,9 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 28, name: "project-share-grants", sql: projectShareGrants },
   { version: 29, name: "conceptual-database-resource-types", sql: conceptualDatabaseTypes },
   { version: 30, name: "preserve-projects-on-owner-delete", sql: preserveProjectsOnOwnerDelete },
+  { version: 31, name: "semantic-bindings", sql: semanticBindings },
+  { version: 32, name: "proposal-semantic-bindings", sql: proposalSemanticBindings },
+  { version: 33, name: "promotion-semantic-bindings", sql: promotionSemanticBindings },
 ];
 
 /**

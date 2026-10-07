@@ -17,6 +17,7 @@ import { createArchitecturalProposalService } from "../../src/application/archit
 import { createAuthoritativeBatchRepository } from "../../src/persistence/authoritative-batch-repository";
 import { createPromotionRepository } from "../../src/persistence/promotion-repository";
 import { createPromotionService } from "../../src/application/promotion-service";
+import { createSemanticBindingRepository } from "../../src/persistence/semantic-binding-repository";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
 import { createAuthorizationPolicy, createWorkspaceAdminGovernance, createWorkspaceSelfReviewPolicy } from "../../src/application/authorization";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
@@ -35,6 +36,7 @@ let architecturalProposals: ReturnType<typeof createArchitecturalProposalReposit
 let promotionService: ReturnType<typeof createPromotionService>;
 let bootstrapService: ReturnType<typeof createProjectBootstrapService>;
 let workspaces: ReturnType<typeof createWorkspaceRepository>;
+let semanticBindings: ReturnType<typeof createSemanticBindingRepository>;
 
 const contextFor = (id: string): ApplicationContext => ({
   requestId: "proposal-test",
@@ -51,6 +53,7 @@ beforeAll(async () => {
   const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces });
   users = createUserRepository(client);
   const knowledgeContexts = createKnowledgeContextRepository(client);
+  semanticBindings = createSemanticBindingRepository(client);
   architecturalProposals = createArchitecturalProposalRepository(client);
   catalog = createProjectCatalog({
     projects,
@@ -59,6 +62,7 @@ beforeAll(async () => {
     operations: createWorkspaceOperationRepository(client),
     storage: (projectId, contextId) => createFsProjectStorage({ root: path.join(volume, projectId, contextId ? ".private" : "", contextId ?? "") }),
     architecturalProposals,
+    semanticBindings,
   });
   service = createArchitecturalProposalService({
     proposals: architecturalProposals,
@@ -68,6 +72,8 @@ beforeAll(async () => {
     policy,
     workspaceAdmin,
     workspaceSelfReview,
+    semanticBindings,
+    storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }),
   });
   promotionService = createPromotionService({
     proposals: architecturalProposals,
@@ -118,6 +124,107 @@ it("submits a selective immutable snapshot without allowing direct SHARED edits"
   expect(stale.staleBase).toBe(false);
   expect(stale.baseSharedRevision).toBe(stale.currentSharedRevision);
   await expect(catalog.deletePrivateWorkContext(contextFor(owner), project.id, work.id)).rejects.toMatchObject({ code: "invalid" });
+});
+
+it("submits only explicitly selected bindings and freezes their evidence in the proposal", async () => {
+  const owner = await user("binding-proposal-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Binding proposal", workspaceId: owner })).project;
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "binding-work" });
+  const conceptResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "domain.concept", type: "conceptual", content: 'concept project "Project"' });
+  const databaseContent = 'table projects - "Projects"';
+  const createdDatabaseResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "db.dbschema", type: "database", content: databaseContent });
+  const databaseResource = await catalog.updateResource(contextFor(owner), project.id, createdDatabaseResource.id, { contextId: work.id, content: databaseContent, expectedRevision: createdDatabaseResource.revision });
+  const binding = await catalog.createSemanticBinding(contextFor(owner), project.id, work.id, {
+    id: crypto.randomUUID(),
+    left: { version: 1, resourceId: conceptResource.id, representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } },
+    right: { version: 1, resourceId: databaseResource.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } },
+    relation: "represents-in",
+    evidence: { version: 1, rationale: "The selected schema is the documented mapping.", items: [{ kind: "internal", resourceId: databaseResource.id, revision: databaseResource.revision, entity: { version: 1, resourceId: databaseResource.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } } }] },
+  });
+  const proposal = await service.submit(contextFor(owner), {
+    projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [conceptResource.id, databaseResource.id],
+    semanticBindings: [{ operation: "ADD", bindingId: binding.id, sourceRevision: binding.revision }], title: "Bind Concept to table",
+  });
+  expect(proposal.semanticBindings).toHaveLength(1);
+  expect(proposal.semanticBindings[0]?.binding.evidence).toEqual(binding.evidence);
+  expect(await service.diff(contextFor(owner), project.id, proposal.id)).toMatchObject({ semanticBindings: [{ operation: "ADDED", bindingId: binding.id }] });
+  const withoutBinding = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [conceptResource.id, databaseResource.id], title: "Resources only" });
+  expect(withoutBinding.semanticBindings).toEqual([]);
+  await catalog.updateSemanticBinding(contextFor(owner), project.id, work.id, { ...binding, evidence: { ...binding.evidence, rationale: "Later MY WORK edit." } }, binding.revision);
+  expect((await service.get(contextFor(owner), project.id, proposal.id)).semanticBindings[0]?.binding.evidence.rationale).toBe("The selected schema is the documented mapping.");
+  expect(await catalog.listSemanticBindings(contextFor(owner), project.id, work.id)).toHaveLength(1);
+  const reviewer = await user("binding-proposal-reviewer");
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  expect((await promotionService.preview(contextFor(owner), project.id, proposal.id)).eligible).toBe(true);
+  await promotionService.execute(contextFor(owner), project.id, proposal.id);
+  const shared = await semanticBindings.get({ projectId: project.id, contextId: null }, binding.id);
+  expect(shared).toMatchObject({ status: "ACTIVE", revision: 1, provenance: { proposalId: proposal.id } });
+  expect(shared?.provenance.contextId).toBeUndefined();
+  expect(shared?.left.resourceId).not.toBe(conceptResource.id);
+  expect(shared?.evidence.items[0]).toMatchObject({ resourceId: shared?.right.resourceId, revision: 1 });
+  expect(await semanticBindings.history({ projectId: project.id, contextId: null }, binding.id)).toHaveLength(1);
+  const sharedResources = await catalog.listResources(contextFor(owner), project.id);
+  const sharedDatabase = sharedResources.find((resource) => resource.path === "db.dbschema")!;
+  const retirement = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [], retireResourceIds: [sharedDatabase.id], title: "Retire schema resource" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: retirement.id, decision: "APPROVE" });
+  await promotionService.execute(contextFor(owner), project.id, retirement.id);
+  expect(await semanticBindings.get({ projectId: project.id, contextId: null }, binding.id)).toEqual(shared);
+  expect(await semanticBindings.history({ projectId: project.id, contextId: null }, binding.id)).toHaveLength(1);
+});
+
+it("accepts binding endpoints split between SHARED and a selected resource", async () => {
+  const owner = await user("binding-shared-endpoint-owner");
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Shared endpoint", resources: [{ path: "domain.concept", type: "conceptual", content: 'concept project "Project"' }] });
+  const [sharedConcept] = await catalog.listResources(contextFor(owner), project.id);
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "binding-work" });
+  const databaseResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "db.dbschema", type: "database", content: 'table projects - "Projects"' });
+  const binding = await catalog.createSemanticBinding(contextFor(owner), project.id, work.id, {
+    id: crypto.randomUUID(),
+    left: { version: 1, resourceId: sharedConcept!.id, representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } },
+    right: { version: 1, resourceId: databaseResource.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } },
+    relation: "represents-in", evidence: { version: 1, rationale: "Shared domain mapped to selected schema.", items: [{ kind: "external", reference: "ADR-1", description: "Approved mapping." }] },
+  });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [databaseResource.id], semanticBindings: [{ operation: "ADD", bindingId: binding.id, sourceRevision: binding.revision }], title: "Cross-context endpoints" });
+  expect(proposal.semanticBindings[0]?.binding.left.resourceId).toBe(sharedConcept!.id);
+  expect(proposal.semanticBindings[0]?.binding.right.resourceId).toBe(databaseResource.id);
+});
+
+it("promotes an evidence-only binding UPDATE from an explicit MY WORK selection", async () => {
+  const owner = await user("binding-update-owner");
+  const reviewer = await user("binding-update-reviewer");
+  const project = await bootstrapService.bootstrap(contextFor(owner), { workspaceId: owner, name: "Update binding", resources: [
+    { path: "domain.concept", type: "conceptual", content: 'concept project "Project"' },
+    { path: "db.dbschema", type: "database", content: 'table projects - "Projects"' },
+  ] });
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const resources = await catalog.listResources(contextFor(owner), project.id);
+  const concept = resources.find((resource) => resource.path === "domain.concept")!;
+  const table = resources.find((resource) => resource.path === "db.dbschema")!;
+  const base = await semanticBindings.create({
+    id: crypto.randomUUID(), projectId: project.id,
+    left: { version: 1, resourceId: concept.id, representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } },
+    right: { version: 1, resourceId: table.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } },
+    relation: "represents-in", evidence: { version: 1, rationale: "Original mapping.", items: [{ kind: "external", reference: "ADR-1", description: "Original evidence." }] },
+    revision: 1, status: "ACTIVE", provenance: { authorId: owner, createdAt: new Date().toISOString() },
+  });
+  const persistedBase = (await semanticBindings.get({ projectId: project.id, contextId: null }, base.id))!;
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "binding-update" });
+  const edited = await catalog.createSemanticBinding(contextFor(owner), project.id, work.id, { ...base, evidence: { ...base.evidence, rationale: "Clarified mapping." } });
+  const proposal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [], semanticBindings: [{ operation: "UPDATE", bindingId: base.id, sourceRevision: edited.revision, expectedRevision: base.revision, baseFingerprint: JSON.stringify(persistedBase) }], title: "Clarify binding evidence" });
+  expect(proposal.semanticBindings[0]?.operation).toBe("UPDATE");
+  expect((await service.diff(contextFor(owner), project.id, proposal.id)).semanticBindings[0]?.evidenceDelta).toMatchObject({ before: { rationale: "Original mapping." }, after: { rationale: "Clarified mapping." } });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: proposal.id, decision: "APPROVE" });
+  expect((await promotionService.preview(contextFor(owner), project.id, proposal.id)).eligible).toBe(true);
+  await promotionService.execute(contextFor(owner), project.id, proposal.id);
+  const promoted = (await semanticBindings.get({ projectId: project.id, contextId: null }, base.id))!;
+  expect(promoted).toMatchObject({ revision: 2, evidence: { rationale: "Clarified mapping." } });
+  const removal = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [], semanticBindings: [{ operation: "REMOVE", bindingId: base.id, expectedRevision: promoted.revision, baseFingerprint: JSON.stringify(promoted) }], title: "Remove stale binding" });
+  expect((await service.diff(contextFor(owner), project.id, removal.id)).semanticBindings[0]?.operation).toBe("DELETED");
+  await semanticBindings.update({ projectId: project.id, contextId: null }, { ...promoted, revision: 3, evidence: { ...promoted.evidence, rationale: "Concurrent authoritative edit." } }, promoted.revision);
+  const stalePreview = await promotionService.preview(contextFor(owner), project.id, removal.id);
+  expect(stalePreview.eligible).toBe(false);
+  expect(stalePreview.blockers.map((blocker) => blocker.code)).toContain("BINDING_BASE_MISMATCH");
 });
 
 it("governs Conceptual source through independent MY WORK, review, and explicit promotion", async () => {

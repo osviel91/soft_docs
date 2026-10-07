@@ -11,6 +11,8 @@ import { normalizeResourceMetadata, parseResourceMetadata } from "../domain/work
 import { createAuditEventWriter } from "./audit-repository";
 import { toWorkspaceOperation } from "./workspace-operation-repository";
 import { createHash } from "node:crypto";
+import { applySemanticBindingOperations } from "./semantic-binding-repository";
+import type { SemanticBinding } from "../domain/workspace/semantic-binding";
 
 const date = (value: unknown): Date => value instanceof Date ? value : new Date(String(value));
 const revisionFingerprint = (rows: Array<Record<string, unknown>>): string =>
@@ -84,7 +86,7 @@ export function createAuthoritativeBatchRepository(
 
   return {
     async claim(input) {
-      if (input.operations.length === 0) throw invalid("An authoritative batch must contain an operation.");
+      if (input.operations.length === 0 && !(input.semanticBindingChanges?.length) && !input.promotion) throw invalid("An authoritative batch must contain an operation.");
       return client.transaction(async (tx) => {
         const existing = await read(tx, input.batchId);
         if (existing) return existing;
@@ -184,13 +186,28 @@ export function createAuthoritativeBatchRepository(
             await tx.query("DELETE FROM resource_relationships WHERE project_id = $1 AND source_id = $2 AND target_id = $3", [input.projectId, relationship.sourceId, relationship.targetId]);
           }
         }
+        const bindingOperations = (input.semanticBindingChanges ?? []).map((change) => {
+          if (change.operation === "ADD") return { operation: "create" as const, binding: { ...change.binding, projectId: input.projectId, revision: 1, status: "ACTIVE" as const, provenance: { ...change.binding.provenance, contextId: undefined, proposalId: input.promotion?.proposalId, authorId: input.audit.actorId ?? input.audit.subjectUserId ?? "system" } } };
+          if (change.operation === "UPDATE") return { operation: "update" as const, expectedRevision: change.expectedRevision, binding: { ...change.binding, projectId: input.projectId, revision: change.expectedRevision + 1, status: "ACTIVE" as const, provenance: { ...change.binding.provenance, contextId: undefined, proposalId: input.promotion?.proposalId, authorId: input.audit.actorId ?? input.audit.subjectUserId ?? "system" } } };
+          return { operation: "remove" as const, scope: { projectId: input.projectId, contextId: null }, id: change.bindingId, expectedRevision: change.expectedRevision };
+        });
+        if (bindingOperations.length) {
+          for (const change of input.semanticBindingChanges ?? []) {
+            if (change.operation === "ADD") continue;
+            const current = await tx.query("SELECT binding FROM semantic_bindings WHERE project_id = $1 AND knowledge_context_id IS NULL AND id = $2 AND revision = $3 FOR UPDATE", [input.projectId, change.operation === "REMOVE" ? change.bindingId : change.binding.id, change.expectedRevision]);
+            if (!current.rows[0]) throw conflict(`Semantic binding ${change.binding.id} changed since the proposal base.`);
+            const decoded = typeof current.rows[0].binding === "string" ? JSON.parse(current.rows[0].binding) : current.rows[0].binding;
+            if (JSON.stringify(decoded) !== change.baseFingerprint) throw conflict(`Semantic binding ${change.binding.id} fingerprint changed since the proposal base.`);
+          }
+          await applySemanticBindingOperations(tx, bindingOperations);
+        }
         if (input.promotion) {
           const current = await tx.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE' ORDER BY id", [input.projectId]);
           const resultingRevision = revisionFingerprint(current.rows);
           await tx.query(
-             `INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, base_manifest_revision, semantic_changes, resulting_shared_revision)
-              VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8)`,
-              [input.promotion.id, input.projectId, input.promotion.proposalId, JSON.stringify(input.actor), input.promotion.baseSharedRevision, input.promotion.baseManifestRevision ?? 0, JSON.stringify(input.promotion.semanticMessages ?? []), resultingRevision],
+              `INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, base_manifest_revision, semantic_changes, semantic_bindings, resulting_shared_revision)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9)`,
+               [input.promotion.id, input.projectId, input.promotion.proposalId, JSON.stringify(input.actor), input.promotion.baseSharedRevision, input.promotion.baseManifestRevision ?? 0, JSON.stringify(input.promotion.semanticMessages ?? []), JSON.stringify(input.promotion.semanticBindings ?? []), resultingRevision],
           );
           for (const entry of input.promotion.entries) {
             await tx.query(
@@ -242,6 +259,10 @@ export function createAuthoritativeBatchRepository(
         if (record) result.push(record);
       }
       return result;
+    },
+    async listSharedSemanticBindings(projectId) {
+      const rows = await client.query("SELECT binding FROM semantic_bindings WHERE project_id = $1 AND knowledge_context_id IS NULL ORDER BY id", [projectId]);
+      return rows.rows.map((row) => (typeof row.binding === "string" ? JSON.parse(row.binding) : row.binding) as SemanticBinding);
     },
   };
 }

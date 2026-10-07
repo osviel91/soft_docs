@@ -53,6 +53,7 @@ import { createAuthoritativeBatchRepository } from "./authoritative-batch-reposi
 import { createPromotionRepository } from "./promotion-repository";
 import { createWorkspaceInvitationRepository } from "./workspace-invitation-repository";
 import { createProjectShareRepository } from "./project-share-repository";
+import { createSemanticBindingRepository } from "./semantic-binding-repository";
 
 /** The configuration the shared runtime needs. */
 export interface ServerRuntimeConfig {
@@ -97,6 +98,7 @@ export interface ServerRuntime {
   proposalReviews: ReturnType<typeof createProposalReviewRepository>;
   authoritativeBatches: ReturnType<typeof createAuthoritativeBatchRepository>;
   promotions: ReturnType<typeof createPromotionRepository>;
+  semanticBindings: ReturnType<typeof createSemanticBindingRepository>;
   /** The one authoritative resource-mutation path. */
   mutations: WorkspaceMutationService;
   /** The HMAC pepper credential digests are keyed with. Never sent anywhere. */
@@ -198,6 +200,7 @@ export async function createServerRuntime(
     proposalReviews,
     authoritativeBatches,
     promotions,
+    semanticBindings: createSemanticBindingRepository(sql),
     mutations,
     tokenPepper: config.tokenPepper,
     storageFor,

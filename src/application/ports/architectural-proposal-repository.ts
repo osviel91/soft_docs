@@ -17,6 +17,11 @@ export interface ProposalRetirementSelection {
   expectedRevision: number;
 }
 
+export type ProposalSemanticBindingSelection =
+  | { operation: "ADD"; bindingId: string; sourceRevision: number }
+  | { operation: "UPDATE"; bindingId: string; sourceRevision: number; expectedRevision: number; baseFingerprint: string }
+  | { operation: "REMOVE"; bindingId: string; expectedRevision: number; baseFingerprint: string };
+
 export interface ArchitecturalProposalRepository {
   submit(input: {
     projectId: string;
@@ -32,6 +37,7 @@ export interface ArchitecturalProposalRepository {
     baseManifestRevision: number;
     semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>;
     relationships?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>;
+    semanticBindings?: ProposalSemanticBindingSelection[];
   }): Promise<ArchitecturalProposal>;
   revise?(input: {
     proposalId: string;
@@ -49,6 +55,7 @@ export interface ArchitecturalProposalRepository {
     baseManifestRevision: number;
     semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>;
     relationships?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>;
+    semanticBindings?: ProposalSemanticBindingSelection[];
   }): Promise<ArchitecturalProposal>;
   withdraw?(proposalId: string, authorUserId: string, reason?: string): Promise<ArchitecturalProposal>;
   list(projectId: string): Promise<ArchitecturalProposalSummary[]>;

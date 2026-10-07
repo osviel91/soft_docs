@@ -53,6 +53,9 @@ import { semanticMessagesOf } from "../diagram/semantic-messages";
 import { projectEventFlowToCausalView } from "../eventflow/causal-projection";
 import { parseConceptual } from "../../language/conceptual/analyze";
 import { parseDatabase } from "../../language/database/analyze";
+import type { IndexedEntity } from "../workspace/semantic-binding";
+import type { ConceptualModel } from "../conceptual/model";
+import type { DatabaseModel } from "../database/model";
 
 /** A salt so a change to the analysis rules invalidates cached fingerprints. */
 const ANALYSIS_VERSION = "1";
@@ -323,6 +326,7 @@ export function analyzeResource(
     references: [] as ReferenceCandidate[],
     semanticOccurrences: [],
     eventFlowMessages: [],
+    entities: [] as IndexedEntity[],
     diagnostics: [] as ProjectDiagnostic[],
     metrics: { participants: 0, messages: 0, words: 0 },
   };
@@ -451,10 +455,28 @@ export function analyzeResource(
   if (classification.representation === "conceptual" || classification.representation === "database") {
     const result = classification.representation === "conceptual" ? parseConceptual(content) : parseDatabase(content);
     const declaredTitle = result.model?.title;
+    const entities: IndexedEntity[] = [];
+    if (classification.representation === "conceptual" && result.model) {
+      const model = result.model as ConceptualModel;
+      entities.push(...model.concepts.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "conceptual" as const, entityKind: "concept" as const, identity: { kind: "local-id" as const, value: entry.id } }, name: entry.name })));
+      entities.push(...model.relationships.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "conceptual" as const, entityKind: "conceptual-relationship" as const, identity: { kind: "local-id" as const, value: entry.id } }, name: entry.label })));
+    }
+    if (classification.representation === "database" && result.model) {
+      const { tables, foreignKeys } = result.model as DatabaseModel;
+      for (const table of tables) {
+        entities.push({ anchor: { version: 1, resourceId: descriptor.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: table.id } }, name: table.name });
+        if (table.primaryKey) entities.push({ anchor: { version: 1, resourceId: descriptor.id, representation: "database", entityKind: "primary-key", identity: { kind: "local-id", value: table.primaryKey.id } }, name: table.primaryKey.name ?? table.primaryKey.id });
+        entities.push(...table.uniqueConstraints.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "database" as const, entityKind: "unique-key" as const, identity: { kind: "local-id" as const, value: entry.id } }, name: entry.name ?? entry.id })));
+        entities.push(...table.indexes.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "database" as const, entityKind: "index" as const, identity: { kind: "local-id" as const, value: entry.id } }, name: entry.name ?? entry.id })));
+        entities.push(...table.columns.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "database" as const, entityKind: "column" as const, identity: entry.id ? { kind: "local-id" as const, value: entry.id } : { kind: "table-column-name" as const, tableId: table.id, name: entry.name } }, name: entry.name })));
+      }
+      entities.push(...foreignKeys.map((entry) => ({ anchor: { version: 1 as const, resourceId: descriptor.id, representation: "database" as const, entityKind: "foreign-key" as const, identity: { kind: "local-id" as const, value: entry.id } }, name: entry.name ?? entry.id })));
+    }
     return {
       ...base,
       descriptor: { ...descriptor, title: declaredTitle ?? descriptor.path },
       declaredTitle,
+      entities,
       diagnostics: result.diagnostics.map(diagnostic => ({
         severity: diagnostic.severity,
         message: diagnostic.message,

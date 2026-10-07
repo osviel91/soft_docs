@@ -18,7 +18,7 @@
  */
 import type { ApplicationContext } from "./context";
 import { actorIdOf, actorTypeOf, credentialIdOf } from "./context";
-import { ApplicationError, forbidden, invalid, notFound } from "./errors";
+import { ApplicationError, conflict, forbidden, invalid, notFound } from "./errors";
 import type {
   ProjectListing,
   ServerProject,
@@ -61,6 +61,11 @@ import { defaultIdFactory } from "../shared/ids/ids";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { PrivateWorkContext } from "../domain/workspace/knowledge-context";
 import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
+import type { SemanticBinding, EntityAnchor } from "../domain/workspace/semantic-binding";
+import { entityAnchorKey, validateSemanticBinding } from "../domain/workspace/semantic-binding";
+import type { SemanticBindingRepository } from "./ports/semantic-binding-repository";
+import { analyzeResource } from "../domain/project/resource-analysis";
+import { buildProjectIndex } from "../domain/project/project-index";
 
 /**
  * A resource as the API and MCP surface it: identity, path, type, revision.
@@ -100,6 +105,7 @@ export interface ProjectCatalogOptions {
   mutations?: WorkspaceMutationService;
   knowledgeContexts?: KnowledgeContextRepository;
   architecturalProposals?: ArchitecturalProposalRepository;
+  semanticBindings?: SemanticBindingRepository;
   /** Content digest for the journal's staging verification. */
   hashContent?: (content: string) => string;
   /**
@@ -260,6 +266,11 @@ export interface ProjectCatalog {
     expectedManifestRevision: number,
   ): Promise<{ messages: SemanticMessageIdentity[]; manifestRevision: number }>;
   updatePrivateSemanticMessages(context: ApplicationContext, projectId: string, contextId: string, messages: SemanticMessageIdentity[]): Promise<SemanticMessageIdentity[]>;
+  listSemanticBindings(context: ApplicationContext, projectId: string, contextId: string): Promise<SemanticBinding[]>;
+  getSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, id: string): Promise<SemanticBinding>;
+  createSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, binding: Omit<SemanticBinding, "projectId" | "revision" | "status" | "provenance">): Promise<SemanticBinding>;
+  updateSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, binding: SemanticBinding, expectedRevision: number): Promise<SemanticBinding>;
+  removeSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, id: string, expectedRevision: number): Promise<SemanticBinding>;
 
   /** One resource's record. */
   getResource(
@@ -477,6 +488,19 @@ export function createProjectCatalog(
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new ApplicationError("invalid", "The project manifest is not valid JSON."); }
     return { ...(parseProjectMetadata(parsed) ?? createEmptyMetadata()), raw };
+  };
+
+  const requireBindingEndpoints = async (projectId: string, contextId: string, anchors: EntityAnchor[]): Promise<void> => {
+    const [shared, privateResources] = await Promise.all([projects.listResources(projectId, null), projects.listResources(projectId, contextId)]);
+    const effective = new Map(shared.map((resource) => [resource.id, resource]));
+    privateResources.forEach((resource) => effective.set(resource.id, resource));
+    const files = await Promise.all([...effective.values()].map(async (resource) => {
+      const revision = await projects.getRevision(resource.id, resource.revision);
+      return revision ? analyzeResource({ id: resource.id, projectId, path: resource.path, type: resource.type, title: resource.path }, revision.content) : null;
+    }));
+    const index = buildProjectIndex(projectId, files.filter((file): file is NonNullable<typeof file> => file !== null), createEmptyMetadata(), () => []);
+    const indexed = new Set((index.entities ?? []).map((entity) => entityAnchorKey(entity.anchor)));
+    if (anchors.some((anchor) => !indexed.has(entityAnchorKey(anchor)))) throw invalid("Both semantic binding endpoints must resolve exactly in effective project resources.");
   };
 
   const writeAudit = async (
@@ -786,6 +810,67 @@ export function createProjectCatalog(
     async updatePrivateSemanticMessages(context, projectId, contextId, messages) {
       await requirePrivateContext(context, projectId, contextId);
       return knowledgeContexts!.updatePrivateMessages(projectId, contextId, messages);
+    },
+
+    async listSemanticBindings(context, projectId, contextId) {
+      await requirePermission(context, projectId, "project:read");
+      await requirePrivateContext(context, projectId, contextId);
+      if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      const [shared, privateBindings] = await Promise.all([
+        options.semanticBindings.list({ projectId, contextId: null }),
+        options.semanticBindings.list({ projectId, contextId }),
+      ]);
+      const effective = new Map(shared.map((binding) => [binding.id, binding]));
+      privateBindings.forEach((binding) => effective.set(binding.id, binding));
+      return [...effective.values()].sort((a, b) => a.id.localeCompare(b.id));
+    },
+
+    async getSemanticBinding(context, projectId, contextId, id) {
+      await requirePermission(context, projectId, "project:read");
+      await requirePrivateContext(context, projectId, contextId);
+      if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      const binding = await options.semanticBindings.get({ projectId, contextId }, id) ?? await options.semanticBindings.get({ projectId, contextId: null }, id);
+      if (!binding) throw notFound(`No semantic binding with id ${id}.`);
+      return binding;
+    },
+
+    async createSemanticBinding(context, projectId, contextId, input) {
+      await requirePermission(context, projectId, "resource:update");
+      if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      if (!contextId) throw invalid("Semantic bindings cannot be written directly to SHARED.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, contextId);
+      const binding: SemanticBinding = { ...input, projectId, revision: 1, status: "ACTIVE", provenance: { authorId: context.principal.subjectUserId, contextId, createdAt: new Date().toISOString() } };
+      try { validateSemanticBinding(binding); } catch (error) { throw invalid(error instanceof Error ? error.message : "Invalid semantic binding."); }
+      await requireBindingEndpoints(projectId, contextId, [binding.left, binding.right]);
+      let created: SemanticBinding;
+      try { created = await options.semanticBindings.create(binding); } catch (error) { throw conflict(error instanceof Error ? error.message : "Semantic binding creation conflicted."); }
+      await writeAudit(context, { action: "resource.updated", projectId, resourceId: binding.left.resourceId, detail: { kind: "semantic-binding.created", bindingId: binding.id, contextId } });
+      return created;
+    },
+
+    async updateSemanticBinding(context, projectId, contextId, input, expectedRevision) {
+      await requirePermission(context, projectId, "resource:update");
+      if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      if (!contextId) throw invalid("Semantic bindings cannot be written directly to SHARED.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, contextId);
+      const binding = { ...input, projectId, revision: expectedRevision + 1, provenance: { authorId: context.principal.subjectUserId, contextId, createdAt: input.provenance.createdAt } };
+      try { validateSemanticBinding(binding); } catch (error) { throw invalid(error instanceof Error ? error.message : "Invalid semantic binding."); }
+      await requireBindingEndpoints(projectId, contextId, [binding.left, binding.right]);
+      let updated: SemanticBinding;
+      try { updated = await options.semanticBindings.update({ projectId, contextId }, binding, expectedRevision); } catch (error) { throw conflict(error instanceof Error ? error.message : "Semantic binding update conflicted."); }
+      await writeAudit(context, { action: "resource.updated", projectId, resourceId: binding.left.resourceId, detail: { kind: "semantic-binding.updated", bindingId: binding.id, contextId, expectedRevision } });
+      return updated;
+    },
+
+    async removeSemanticBinding(context, projectId, contextId, id, expectedRevision) {
+      await requirePermission(context, projectId, "resource:update");
+      if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      if (!contextId) throw invalid("Semantic bindings cannot be written directly to SHARED.", { reason: "authoritative_context" });
+      await requirePrivateContext(context, projectId, contextId);
+      let removed: SemanticBinding;
+      try { removed = await options.semanticBindings.remove({ projectId, contextId }, id, expectedRevision); } catch (error) { throw conflict(error instanceof Error ? error.message : "Semantic binding removal conflicted."); }
+      await writeAudit(context, { action: "resource.updated", projectId, resourceId: removed.left.resourceId, detail: { kind: "semantic-binding.removed", bindingId: id, contextId, expectedRevision } });
+      return removed;
     },
 
     async getResource(context, projectId, resourceId, contextId = null) {

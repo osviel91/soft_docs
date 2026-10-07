@@ -1,5 +1,5 @@
 import type { PromotionRepository } from "../application/ports/promotion-repository";
-import type { Promotion, PromotionEntry, PromotionRelationshipChange, PromotionSemanticMessageChange } from "../domain/workspace/promotion";
+import type { Promotion, PromotionEntry, PromotionRelationshipChange, PromotionSemanticMessageChange, PromotionSemanticBindingChange } from "../domain/workspace/promotion";
 import type { ResourceAuthorship } from "../domain/workspace/resource-revision";
 import type { SqlClient } from "./sql-client";
 
@@ -28,6 +28,7 @@ export function createPromotionRepository(client: SqlClient): PromotionRepositor
         relationship: { kind: "complementary-view", sourceId: String(entry.source_id), targetId: String(entry.target_id), ...(entry.source_role == null ? {} : { sourceRole: String(entry.source_role) as "execution" | "causal" | "other" }), ...(entry.target_role == null ? {} : { targetRole: String(entry.target_role) as "execution" | "causal" | "other" }) },
       })),
       semanticMessages: (typeof row.semantic_changes === "string" ? JSON.parse(row.semantic_changes) : row.semantic_changes ?? []) as PromotionSemanticMessageChange[],
+      semanticBindings: (typeof row.semantic_bindings === "string" ? JSON.parse(row.semantic_bindings) : row.semantic_bindings ?? []) as PromotionSemanticBindingChange[],
     };
   };
   return {

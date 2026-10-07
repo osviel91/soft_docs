@@ -7,6 +7,7 @@ import { createProjectRepository } from "../../src/persistence/project-repositor
 import { createWorkspaceRepository } from "../../src/persistence/workspace-repository";
 import { createUserRepository } from "../../src/persistence/user-repository";
 import { createAuthoritativeBatchRepository } from "../../src/persistence/authoritative-batch-repository";
+import { createSemanticBindingRepository } from "../../src/persistence/semantic-binding-repository";
 
 let client: SqlClient;
 const projects = () => createProjectRepository(client);
@@ -58,5 +59,28 @@ describe("authoritative batches", () => {
     })).rejects.toBeTruthy();
     expect(await projects().findResourceByPath(target.id, "rolled-back.md")).toBeNull();
     expect((await projects().findResource(target.id, existing.id))?.revision).toBe(1);
+  });
+
+  it("rolls back resource writes when the selected semantic binding operation fails", async () => {
+    const target = await project();
+    const id = randomUUID();
+    const binding = {
+      id, projectId: target.id,
+      left: { version: 1 as const, resourceId: randomUUID(), representation: "conceptual" as const, entityKind: "concept" as const, identity: { kind: "local-id" as const, value: "project" } },
+      right: { version: 1 as const, resourceId: randomUUID(), representation: "database" as const, entityKind: "table" as const, identity: { kind: "local-id" as const, value: "projects" } },
+      relation: "represents-in" as const, evidence: { version: 1 as const, rationale: "Evidence-backed mapping.", items: [{ kind: "external" as const, reference: "ADR-1", description: "Approved mapping." }] }, revision: 1, status: "ACTIVE" as const,
+      provenance: { authorId: target.userId, createdAt: new Date().toISOString() },
+    };
+    await createSemanticBindingRepository(client).create(binding);
+    const resourceId = randomUUID();
+    const batch = createAuthoritativeBatchRepository(client);
+    await expect(batch.claim({
+      batchId: randomUUID(), projectId: target.id,
+      actor: { kind: "user", userId: target.userId, subjectUserId: target.userId }, audit: audit(target.userId, target.id),
+      operations: [{ operation: "create", resourceId, path: "atomic.md", type: "markdown-document", content: "# Atomic" }],
+      semanticBindingChanges: [{ operation: "ADD", binding }],
+    })).rejects.toBeTruthy();
+    expect(await projects().findResource(target.id, resourceId)).toBeNull();
+    expect(await createSemanticBindingRepository(client).list({ projectId: target.id, contextId: null })).toEqual([binding]);
   });
 });

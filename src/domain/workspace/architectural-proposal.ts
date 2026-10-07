@@ -2,6 +2,7 @@ import type { ResourceMetadata } from "./resource-metadata";
 import type { ResourceType } from "./resource-id";
 import type { ResourceRelationship } from "./resource-relationship";
 import type { SemanticMessageIdentity } from "./metadata";
+import type { SemanticBinding } from "./semantic-binding";
 
 export interface ProposalResourceSnapshot {
   sourceResourceId: string;
@@ -29,6 +30,11 @@ export interface ProposalRelationshipSnapshot extends ResourceRelationship {
   baseFingerprint?: string;
 }
 
+export type ProposalSemanticBindingSnapshot =
+  | { operation: "ADD"; binding: SemanticBinding; sourceContextId: string }
+  | { operation: "UPDATE"; binding: SemanticBinding; baseBinding: SemanticBinding; sourceContextId: string; expectedRevision: number; baseFingerprint: string }
+  | { operation: "REMOVE"; bindingId: string; sourceContextId: string; expectedRevision: number; baseFingerprint: string; binding: SemanticBinding };
+
 export interface ArchitecturalProposal {
   id: string;
   projectId: string;
@@ -51,10 +57,11 @@ export interface ArchitecturalProposal {
   resources: ProposalResourceSnapshot[];
   semanticMessages: ProposalSemanticMessageSnapshot[];
   relationships: ProposalRelationshipSnapshot[];
+  semanticBindings: ProposalSemanticBindingSnapshot[];
 }
 
 export interface ArchitecturalProposalSummary
-  extends Omit<ArchitecturalProposal, "resources" | "semanticMessages" | "relationships"> {
+  extends Omit<ArchitecturalProposal, "resources" | "semanticMessages" | "relationships" | "semanticBindings"> {
   staleBase: boolean;
   currentSharedRevision: string;
   reviewStatus?: ProposalReviewStatus;

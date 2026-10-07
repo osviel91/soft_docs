@@ -108,6 +108,7 @@ export async function createMcpService(
     mutations: runtime.mutations,
     knowledgeContexts: runtime.knowledgeContexts,
     architecturalProposals: runtime.architecturalProposals,
+    semanticBindings: runtime.semanticBindings,
   });
   const proposals = createChangeProposalService({
     proposals: runtime.proposals,
@@ -128,6 +129,7 @@ export async function createMcpService(
     policy,
     workspaceAdmin,
     workspaceSelfReview,
+    semanticBindings: runtime.semanticBindings,
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects });
   const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy, workspaceAdmin });

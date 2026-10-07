@@ -45,6 +45,7 @@ import type { SemanticMessageIdentity } from "../workspace/metadata";
 import type { AstNodeId } from "../diagram/node-id";
 import type { CausalViewModel } from "../eventflow/causal-projection";
 import type { AnalysisProvenance } from "../workspace/knowledge-context";
+import type { IndexedEntity } from "../workspace/semantic-binding";
 
 export interface EventFlowMessageEntity {
   /** The Event Flow node identity; never replaced by the semantic identity. */
@@ -255,6 +256,8 @@ export interface ProjectIndex {
   semanticOccurrences?: Array<SemanticMessageOccurrence & { resourceId: ResourceId }>;
   eventFlowMessages?: EventFlowMessageEntity[];
   eventFlowCausality?: EventFlowCausalIndex[];
+  /** Stable authored Conceptual/Database endpoints; names are display data only. */
+  entities?: IndexedEntity[];
   diagnostics: ProjectDiagnostic[];
 }
 
@@ -291,6 +294,7 @@ export interface ResourceAnalysis {
   semanticOccurrences: SemanticMessageOccurrence[];
   eventFlowMessages: EventFlowMessageEntity[];
   eventFlowCausality?: EventFlowCausalIndex;
+  entities: IndexedEntity[];
   /** Problems found inside this resource without looking at any other file. */
   diagnostics: ProjectDiagnostic[];
   headings: MarkdownHeading[];
@@ -598,6 +602,7 @@ export function buildProjectIndex(
     semanticOccurrences,
     eventFlowMessages,
     eventFlowCausality,
+    entities: ordered.flatMap((analysis) => analysis.entities),
   };
 
   return { ...core, diagnostics: validate(core) };

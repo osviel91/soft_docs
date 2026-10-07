@@ -179,6 +179,7 @@ export async function createApp(
     mutations: runtime.mutations,
     knowledgeContexts: runtime.knowledgeContexts,
     architecturalProposals: runtime.architecturalProposals,
+    semanticBindings: runtime.semanticBindings,
   });
   const bootstrap = createProjectBootstrapService({
     projects: runtime.projects,
@@ -229,6 +230,7 @@ export async function createApp(
       policy,
       workspaceAdmin,
       workspaceSelfReview,
+      semanticBindings: runtime.semanticBindings,
     }),
     promotion,
     capabilities,

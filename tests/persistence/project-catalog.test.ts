@@ -20,6 +20,7 @@ import { createWorkspaceRepository } from "../../src/persistence/workspace-repos
 import { createUserRepository } from "../../src/persistence/user-repository";
 import { createAuditRepository } from "../../src/persistence/audit-repository";
 import { createKnowledgeContextRepository } from "../../src/persistence/knowledge-context-repository";
+import { createSemanticBindingRepository } from "../../src/persistence/semantic-binding-repository";
 import { ApplicationError } from "../../src/application/errors";
 import type { ApplicationContext } from "../../src/application/context";
 import {
@@ -49,6 +50,7 @@ beforeAll(async () => {
     workspaces,
     audit,
     knowledgeContexts,
+    semanticBindings: createSemanticBindingRepository(client),
     // Phase 6: resource mutations run through the durable operation journal.
     operations: createWorkspaceOperationRepository(client),
     // The factory is the only thing that decides where a project lives, and it
@@ -591,6 +593,35 @@ describe("resources and optimistic concurrency", () => {
       }),
     );
     expect(failure.code).toBe("conflict");
+  });
+});
+
+describe("governed semantic bindings", () => {
+  it("creates, updates and removes only in the owner's MY WORK with optimistic revisions", async () => {
+    const { context, project } = await aProject("Binding governance");
+    const work = await aWork(context, project.id, "binding-work");
+    const other = await aWork(context, project.id, "other-work");
+    const concept = await catalog.createResource(context, project.id, { contextId: work.id, path: "domain.concept", type: "conceptual", content: 'concept project "Project"' });
+    const table = await catalog.createResource(context, project.id, { contextId: work.id, path: "db.dbschema", type: "database", content: 'table projects - "Projects"' });
+    const binding = {
+      id: "a4eaf244-237c-4a03-92fe-5ad681b306d4", left: { version: 1 as const, resourceId: concept.id, representation: "conceptual" as const, entityKind: "concept" as const, identity: { kind: "local-id" as const, value: "project" } },
+      right: { version: 1 as const, resourceId: table.id, representation: "database" as const, entityKind: "table" as const, identity: { kind: "local-id" as const, value: "projects" } },
+      relation: "represents-in" as const, evidence: { version: 1 as const, rationale: "The approved persistence mapping names this table.", items: [{ kind: "internal" as const, resourceId: table.id, revision: table.revision }] },
+    };
+    const created = await catalog.createSemanticBinding(context, project.id, work.id, binding);
+    expect(created.revision).toBe(1);
+    expect(await catalog.listSemanticBindings(context, project.id, work.id)).toHaveLength(1);
+    expect(await catalog.listSemanticBindings(context, project.id, other.id)).toEqual([]);
+    const stranger = await aUser("Binding stranger");
+    await expect(catalog.listSemanticBindings(contextFor(stranger), project.id, work.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(catalog.createSemanticBinding(context, project.id, null as unknown as string, binding)).rejects.toMatchObject({ code: "invalid", details: { reason: "authoritative_context" } });
+
+    const updated = await catalog.updateSemanticBinding(context, project.id, work.id, { ...created, evidence: { ...created.evidence, rationale: "Updated rationale." } }, 1);
+    expect(updated.revision).toBe(2);
+    await expect(catalog.updateSemanticBinding(context, project.id, work.id, created, 1)).rejects.toMatchObject({ code: "conflict" });
+    await expect(catalog.removeSemanticBinding(context, project.id, work.id, created.id, 1)).rejects.toMatchObject({ code: "conflict" });
+    await catalog.removeSemanticBinding(context, project.id, work.id, created.id, 2);
+    expect(await catalog.listSemanticBindings(context, project.id, work.id)).toEqual([]);
   });
 });
 

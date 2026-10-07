@@ -4,6 +4,8 @@ import type { ResourceMetadata } from "../../domain/workspace/resource-metadata"
 import type { ResourceType } from "../../domain/workspace/resource-id";
 import type { WorkspaceOperationRecord } from "./workspace-operation-repository";
 import type { PromotionEntry, PromotionRelationshipChange, PromotionSemanticMessageChange } from "../../domain/workspace/promotion";
+import type { PromotionSemanticBindingChange } from "../../domain/workspace/promotion";
+import type { SemanticBinding } from "../../domain/workspace/semantic-binding";
 
 export type AuthoritativeBatchOperation =
   | {
@@ -42,7 +44,8 @@ export interface AuthoritativeBatchIntent {
   manifest?: { expectedRevision: number; expectedContent: string | null; content: string; stagedPath?: string };
   relationshipChanges?: PromotionRelationshipChange[];
   semanticChanges?: PromotionSemanticMessageChange[];
-  promotion?: { id: string; proposalId: string; baseSharedRevision: string; baseManifestRevision?: number; entries: PromotionEntry[]; relationships: PromotionRelationshipChange[]; semanticMessages?: PromotionSemanticMessageChange[] };
+  semanticBindingChanges?: PromotionSemanticBindingChange[];
+  promotion?: { id: string; proposalId: string; baseSharedRevision: string; baseManifestRevision?: number; entries: PromotionEntry[]; relationships: PromotionRelationshipChange[]; semanticMessages?: PromotionSemanticMessageChange[]; semanticBindings?: PromotionSemanticBindingChange[] };
 }
 
 export interface AuthoritativeBatchRecord {
@@ -63,4 +66,5 @@ export interface AuthoritativeBatchRepository {
   complete(batchId: string): Promise<AuthoritativeBatchRecord | null>;
   get(batchId: string): Promise<AuthoritativeBatchRecord | null>;
   listIncomplete(limit?: number): Promise<AuthoritativeBatchRecord[]>;
+  listSharedSemanticBindings(projectId: string): Promise<SemanticBinding[]>;
 }

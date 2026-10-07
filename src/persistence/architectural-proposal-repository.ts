@@ -1,5 +1,5 @@
 import type { ArchitecturalProposalRepository } from "../application/ports/architectural-proposal-repository";
-import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalResourceSnapshot, ProposalSemanticMessageSnapshot } from "../domain/workspace/architectural-proposal";
+import type { ArchitecturalProposal, ArchitecturalProposalSummary, ProposalRelationshipSnapshot, ProposalResourceSnapshot, ProposalSemanticMessageSnapshot, ProposalSemanticBindingSnapshot } from "../domain/workspace/architectural-proposal";
 import type { ResourceMetadata } from "../domain/workspace/resource-metadata";
 import { resourceTypeOfName, type ResourceType } from "../domain/workspace/resource-id";
 import type { SqlClient } from "./sql-client";
@@ -22,7 +22,7 @@ function isResourceType(value: unknown): value is ResourceType {
   return value === "sequence-diagram" || value === "event-flow" || value === "markdown-document" || value === "conceptual" || value === "database";
 }
 
-function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSnapshot[], messages: ProposalSemanticMessageSnapshot[], relationships: ProposalRelationshipSnapshot[]): ArchitecturalProposal {
+function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSnapshot[], messages: ProposalSemanticMessageSnapshot[], relationships: ProposalRelationshipSnapshot[], semanticBindings: ProposalSemanticBindingSnapshot[] = []): ArchitecturalProposal {
   const revisions = (typeof row.base_shared_resource_revisions === "string" ? JSON.parse(row.base_shared_resource_revisions) : row.base_shared_resource_revisions) as Record<string, number>;
   return {
     id: String(row.id), projectId: String(row.project_id), authorUserId: String(row.author_user_id),
@@ -35,12 +35,35 @@ function proposalOf(row: Record<string, unknown>, resources: ProposalResourceSna
      supersededAt: row.superseded_at == null ? null : date(row.superseded_at),
     baseSharedRevision: String(row.base_shared_revision), baseSharedResourceRevisions: revisions,
     baseManifestRevision: row.base_manifest_revision == null ? null : Number(row.base_manifest_revision),
-    createdAt: date(row.created_at), submittedAt: date(row.submitted_at), resources, semanticMessages: messages, relationships,
+     createdAt: date(row.created_at), submittedAt: date(row.submitted_at), resources, semanticMessages: messages, relationships, semanticBindings,
   };
 }
 
 export function createArchitecturalProposalRepository(client: SqlClient, options: { newId?: IdGenerator } = {}): ArchitecturalProposalRepository {
   const newId = options.newId ?? createIdGenerator();
+
+  const snapshotBindings = async (tx: SqlClient, proposalId: string, input: { projectId: string; sourcePrivateContextId: string; semanticBindings?: import("../application/ports/architectural-proposal-repository").ProposalSemanticBindingSelection[] }) => {
+    for (const selection of input.semanticBindings ?? []) {
+      const contextId = input.sourcePrivateContextId;
+      const privateResult = selection.operation === "REMOVE" ? null : await tx.query("SELECT binding, revision FROM semantic_bindings WHERE project_id = $1 AND knowledge_context_id = $2 AND id = $3 FOR UPDATE", [input.projectId, input.sourcePrivateContextId, selection.bindingId]);
+      const baseResult = selection.operation === "ADD" ? null : await tx.query("SELECT binding, revision FROM semantic_bindings WHERE project_id = $1 AND knowledge_context_id IS NULL AND id = $2 FOR UPDATE", [input.projectId, selection.bindingId]);
+      const result = selection.operation === "REMOVE" ? baseResult : privateResult;
+      if (!result?.rows[0]) throw new Error(`Semantic binding ${selection.bindingId} is unavailable in the required context.`);
+      const binding = (typeof result.rows[0].binding === "string" ? JSON.parse(result.rows[0].binding) : result.rows[0].binding) as import("../domain/workspace/semantic-binding").SemanticBinding;
+      const revision = Number(result.rows[0].revision);
+      if (selection.operation === "ADD" && revision !== 1) throw new Error(`New semantic binding ${selection.bindingId} must be at revision 1.`);
+       if (selection.operation !== "ADD") {
+        const baseBinding = (typeof baseResult?.rows[0]?.binding === "string" ? JSON.parse(baseResult.rows[0].binding) : baseResult?.rows[0]?.binding) as import("../domain/workspace/semantic-binding").SemanticBinding | undefined;
+        if (!baseBinding || Number(baseResult?.rows[0]?.revision) !== selection.expectedRevision) throw new Error(`SHARED semantic binding ${selection.bindingId} changed since it was read.`);
+        const fingerprintValue = JSON.stringify(baseBinding);
+        if (fingerprintValue !== selection.baseFingerprint) throw new Error(`Semantic binding ${selection.bindingId} base fingerprint does not match.`);
+        if (selection.operation === "UPDATE" && binding.id !== baseBinding.id) throw new Error(`Private semantic binding ${selection.bindingId} does not correspond to its SHARED base.`);
+       }
+       if (selection.operation !== "REMOVE" && revision !== selection.sourceRevision) throw new Error(`Private semantic binding ${selection.bindingId} changed during proposal submission; re-read and retry.`);
+       const baseBinding = selection.operation === "ADD" ? null : (typeof baseResult?.rows[0]?.binding === "string" ? JSON.parse(baseResult.rows[0].binding) : baseResult?.rows[0]?.binding);
+       await tx.query("INSERT INTO architectural_proposal_bindings (proposal_id, binding_id, operation, source_context_id, source_revision, expected_revision, base_fingerprint, binding, base_binding) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)", [proposalId, selection.bindingId, selection.operation, contextId, selection.operation === "REMOVE" ? null : selection.sourceRevision, selection.operation === "ADD" ? null : selection.expectedRevision, selection.operation === "ADD" ? null : selection.baseFingerprint, JSON.stringify(binding), baseBinding == null ? null : JSON.stringify(baseBinding)]);
+    }
+  };
 
   const currentSharedRevision = async (db: SqlClient, projectId: string) => {
     const result = await db.query("SELECT id, revision FROM resources WHERE project_id = $1 AND knowledge_context_id IS NULL AND lifecycle = 'ACTIVE' ORDER BY id", [projectId]);
@@ -49,7 +72,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
   };
 
   const children = async (db: SqlClient, proposalId: string) => {
-    const [resourceRows, messageRows, relationshipRows] = await Promise.all([
+    const [resourceRows, messageRows, relationshipRows, bindingRows] = await Promise.all([
       db.query(`SELECT apr.*, source_revision.type AS source_revision_type
                   FROM architectural_proposal_resources apr
                   LEFT JOIN resource_revisions source_revision
@@ -59,6 +82,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
                  ORDER BY apr.path, apr.source_resource_id`, [proposalId]),
       db.query("SELECT * FROM architectural_proposal_messages WHERE proposal_id = $1 ORDER BY name, message_id", [proposalId]),
       db.query("SELECT * FROM architectural_proposal_relationships WHERE proposal_id = $1 ORDER BY source_id, target_id", [proposalId]),
+      db.query("SELECT * FROM architectural_proposal_bindings WHERE proposal_id = $1 ORDER BY binding_id", [proposalId]),
     ]);
     const resources = resourceRows.rows.map((row): ProposalResourceSnapshot => {
       const type = isResourceType(row.type)
@@ -84,7 +108,8 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
       ...(row.base_fingerprint == null ? {} : { baseFingerprint: String(row.base_fingerprint) }),
       contextId: String(row.source_context_id),
     }));
-    return { resources, messages, relationships };
+    const semanticBindings = bindingRows.rows.map((row): ProposalSemanticBindingSnapshot => ({ operation: row.operation as "ADD" | "UPDATE" | "REMOVE", binding: (typeof row.binding === "string" ? JSON.parse(row.binding) : row.binding) as import("../domain/workspace/semantic-binding").SemanticBinding, sourceContextId: String(row.source_context_id), ...(row.expected_revision == null ? {} : { expectedRevision: Number(row.expected_revision) }), ...(row.base_fingerprint == null ? {} : { baseFingerprint: String(row.base_fingerprint) }), ...(row.base_binding == null ? {} : { baseBinding: (typeof row.base_binding === "string" ? JSON.parse(row.base_binding) : row.base_binding) as import("../domain/workspace/semantic-binding").SemanticBinding }), ...(row.operation === "REMOVE" ? { bindingId: String(row.binding_id) } : {}) } as ProposalSemanticBindingSnapshot));
+    return { resources, messages, relationships, semanticBindings };
   };
 
   return {
@@ -92,7 +117,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
       const title = input.title.trim();
       if (!title) throw new Error("A proposal title is required.");
       if (!Number.isInteger(input.baseManifestRevision) || input.baseManifestRevision < 0) throw new Error("A new proposal requires a concrete manifest revision.");
-       if (input.selections.length === 0 && (input.retirements?.length ?? 0) === 0) throw new Error("Select at least one private resource or explicit retirement.");
+       if (input.selections.length === 0 && (input.retirements?.length ?? 0) === 0 && (input.semanticBindings?.length ?? 0) === 0) throw new Error("Select at least one resource, retirement, or semantic binding operation.");
         return client.transaction(async (tx) => {
         const ids = input.selections.map((selection) => selection.resourceId);
         const selected = await tx.query(
@@ -163,9 +188,10 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
          }
          const relationships = await tx.query("SELECT source_id, target_id, kind, source_role, target_role FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id = $2 AND source_id = ANY($3::uuid[]) AND target_id = ANY($3::uuid[]) ORDER BY source_id, target_id", [input.projectId, input.sourcePrivateContextId, ids]);
          const requestedRelationships: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }> = input.relationships ?? relationships.rows.map((row) => ({ sourceId: String(row.source_id), targetId: String(row.target_id), kind: row.kind as "complementary-view", ...(row.source_role == null ? {} : { sourceRole: row.source_role as "execution" | "causal" | "other" }), ...(row.target_role == null ? {} : { targetRole: row.target_role as "execution" | "causal" | "other" }) }));
-         for (const relationship of requestedRelationships) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
+          for (const relationship of requestedRelationships) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
+          await snapshotBindings(tx, proposalId, input);
         const storedChildren = await children(tx, proposalId);
-         return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+          return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships, storedChildren.semanticBindings);
        });
      },
      async revise(input) {
@@ -212,10 +238,11 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
              await tx.query("INSERT INTO architectural_proposal_messages (proposal_id, message_id, name, kind, source_context_id, operation, base_name, base_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [proposalId, message.id, name, kind, input.sourcePrivateContextId, message.operation ?? "ADD", message.baseName ?? null, message.baseKind ?? null]);
            }
          }
-         for (const relationship of input.relationships ?? []) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
+          for (const relationship of input.relationships ?? []) await tx.query("INSERT INTO architectural_proposal_relationships (proposal_id, source_id, target_id, kind, source_role, target_role, source_context_id, operation, base_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [proposalId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null, input.sourcePrivateContextId, relationship.operation ?? "ADD", relationship.baseFingerprint ?? null]);
+          await snapshotBindings(tx, proposalId, input);
          await tx.query("UPDATE architectural_proposals SET status = 'superseded', superseded_at = now() WHERE id = $1", [input.supersedesProposalId]);
          const storedChildren = await children(tx, proposalId);
-         return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+          return proposalOf(inserted.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships, storedChildren.semanticBindings);
        });
      },
      async withdraw(proposalId, authorUserId, reason) {
@@ -227,7 +254,7 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
          if (promotion.rows.some((row) => ["COMMITTED_COMPLETION_PENDING", "COMPLETED"].includes(String(row.status)))) throw new Error("A proposal with promotion evidence cannot be withdrawn.");
          const updated = await tx.query("UPDATE architectural_proposals SET status = 'withdrawn', withdrawn_at = now(), withdrawn_by = $2, withdrawal_reason = $3 WHERE id = $1 RETURNING *", [proposalId, authorUserId, reason?.trim() || null]);
          const storedChildren = await children(tx, proposalId);
-         return proposalOf(updated.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+          return proposalOf(updated.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships, storedChildren.semanticBindings);
        });
      },
     async list(projectId) {
@@ -241,13 +268,13 @@ export function createArchitecturalProposalRepository(client: SqlClient, options
       const result = await client.query("SELECT * FROM architectural_proposals WHERE project_id = $1 AND id = $2", [projectId, proposalId]);
       if (!result.rows[0]) return null;
       const storedChildren = await children(client, proposalId);
-      return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+      return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships, storedChildren.semanticBindings);
     },
     async findSuccessor(projectId, proposalId) {
       const result = await client.query("SELECT * FROM architectural_proposals WHERE project_id = $1 AND supersedes_proposal_id = $2 ORDER BY submitted_at DESC, id DESC LIMIT 1", [projectId, proposalId]);
       if (!result.rows[0]) return null;
       const storedChildren = await children(client, String(result.rows[0].id));
-      return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships);
+      return proposalOf(result.rows[0], storedChildren.resources, storedChildren.messages, storedChildren.relationships, storedChildren.semanticBindings);
     },
     async hasForContext(projectId, contextId) {
       const result = await client.query("SELECT 1 FROM architectural_proposals WHERE project_id = $1 AND source_private_context_id = $2 LIMIT 1", [projectId, contextId]);
