@@ -14,6 +14,7 @@ describe("project share authority", () => {
     const conceptual = { ...shared, id: "conceptual-id", path: "model.concept", type: "conceptual" };
     const database = { ...shared, id: "database-id", path: "schema.dbschema", type: "database" };
     const privateResource = { ...database, id: "private-id", contextId: "private-context", path: "secret.dbschema" };
+    const binding = { id: "binding", projectId: "project", left: { version: 1 as const, resourceId: conceptual.id, representation: "conceptual" as const, entityKind: "concept" as const, identity: { kind: "local-id" as const, value: "project" } }, right: { version: 1 as const, resourceId: database.id, representation: "database" as const, entityKind: "table" as const, identity: { kind: "local-id" as const, value: "projects" } }, relation: "represents-in" as const, evidence: { version: 1 as const, rationale: "The approved mapping names this table.", items: [{ kind: "internal" as const, resourceId: "private-id", revision: 1 }] }, revision: 1, status: "ACTIVE" as const, provenance: { authorId: "owner", createdAt: "2026-01-01" } };
     const service = createProjectShareService({
       shares: {
         async create(grant) { rows.set(grant.id, grant); return grant; },
@@ -27,16 +28,22 @@ describe("project share authority", () => {
           async listResources(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return [shared, conceptual, database, privateResource]; },
          async listResourceRelationships(_id: string, contextId: string | null) { expect(contextId).toBeNull(); return []; },
       } as never,
+      semanticBindings: { async list() { return [binding]; } } as never,
       storage: () => ({ async read(path: string) { return { ok: true, value: { path, type: "sequence-diagram", content: path } }; } }) as never,
       newId: () => "123e4567-e89b-12d3-a456-426614174000",
       now: () => currentTime,
     });
-    const created = await service.create(context, "project");
+    const created = await service.create(context, "project", undefined, ["conceptual-id", "database-id"]);
     expect(created.token).toMatch(/^sdshare_.*\.[A-Za-z0-9_-]{43}$/);
     expect(JSON.stringify(await service.list(context, "project"))).not.toContain(created.token);
     expect(JSON.stringify(rows.values().next().value)).not.toContain(created.token);
     const projection = await service.read(created.token);
-    expect(projection?.resources.map(resource => resource.id)).toEqual(["shared-id", "conceptual-id", "database-id"]);
+    expect(projection?.resources.map(resource => resource.id)).toEqual(["conceptual-id", "database-id"]);
+    expect(projection?.catalog.semanticBindings).toHaveLength(1);
+    expect(projection?.catalog.semanticBindings[0].evidence.items).toEqual([{ kind: "unavailable" }]);
+    expect(JSON.stringify(projection)).not.toContain("private-id");
+    const oneEndpoint = await service.create(context, "project", undefined, ["conceptual-id"]);
+    expect((await service.read(oneEndpoint.token))?.catalog.semanticBindings).toEqual([]);
     expect(await service.read("sdshare_123e4567-e89b-12d3-a456-426614174000.invalid")).toBeNull();
     await service.revoke(context, "project", created.grant.id);
     expect(await service.read(created.token)).toBeNull();

@@ -266,8 +266,8 @@ export interface ProjectCatalog {
     expectedManifestRevision: number,
   ): Promise<{ messages: SemanticMessageIdentity[]; manifestRevision: number }>;
   updatePrivateSemanticMessages(context: ApplicationContext, projectId: string, contextId: string, messages: SemanticMessageIdentity[]): Promise<SemanticMessageIdentity[]>;
-  listSemanticBindings(context: ApplicationContext, projectId: string, contextId: string): Promise<SemanticBinding[]>;
-  getSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, id: string): Promise<SemanticBinding>;
+  listSemanticBindings(context: ApplicationContext, projectId: string, contextId?: string | null): Promise<SemanticBinding[]>;
+  getSemanticBinding(context: ApplicationContext, projectId: string, contextId: string | null, id: string): Promise<SemanticBinding>;
   createSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, binding: Omit<SemanticBinding, "projectId" | "revision" | "status" | "provenance">): Promise<SemanticBinding>;
   updateSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, binding: SemanticBinding, expectedRevision: number): Promise<SemanticBinding>;
   removeSemanticBinding(context: ApplicationContext, projectId: string, contextId: string, id: string, expectedRevision: number): Promise<SemanticBinding>;
@@ -812,10 +812,11 @@ export function createProjectCatalog(
       return knowledgeContexts!.updatePrivateMessages(projectId, contextId, messages);
     },
 
-    async listSemanticBindings(context, projectId, contextId) {
+    async listSemanticBindings(context, projectId, contextId = null) {
       await requirePermission(context, projectId, "project:read");
-      await requirePrivateContext(context, projectId, contextId);
       if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
+      if (contextId === null) return options.semanticBindings.list({ projectId, contextId: null });
+      await requirePrivateContext(context, projectId, contextId);
       const [shared, privateBindings] = await Promise.all([
         options.semanticBindings.list({ projectId, contextId: null }),
         options.semanticBindings.list({ projectId, contextId }),
@@ -827,9 +828,9 @@ export function createProjectCatalog(
 
     async getSemanticBinding(context, projectId, contextId, id) {
       await requirePermission(context, projectId, "project:read");
-      await requirePrivateContext(context, projectId, contextId);
       if (!options.semanticBindings) throw new ApplicationError("internal", "Semantic bindings are unavailable.");
-      const binding = await options.semanticBindings.get({ projectId, contextId }, id) ?? await options.semanticBindings.get({ projectId, contextId: null }, id);
+      if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+      const binding = (contextId === null ? null : await options.semanticBindings.get({ projectId, contextId }, id)) ?? await options.semanticBindings.get({ projectId, contextId: null }, id);
       if (!binding) throw notFound(`No semantic binding with id ${id}.`);
       return binding;
     },

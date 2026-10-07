@@ -345,7 +345,8 @@ export function createRouter(dependencies: AppDependencies): Router {
       const body = parseJsonBody(request.body);
       const expiresAt = body.expiresAt === undefined ? undefined : new Date(String(body.expiresAt));
       if (expiresAt && Number.isNaN(expiresAt.getTime())) throw invalid("Share expiration is invalid.");
-      const created = await dependencies.projectShares.create(context, params.projectId, expiresAt);
+      const resourceIds = body.resourceIds === undefined ? undefined : Array.isArray(body.resourceIds) && body.resourceIds.every((id) => typeof id === "string") ? body.resourceIds as string[] : (() => { throw invalid("resourceIds must be an array of resource ids."); })();
+      const created = await dependencies.projectShares.create(context, params.projectId, expiresAt, resourceIds);
       return json(201, { token: created.token, grant: shareGrantView(created.grant) });
     }),
   );
@@ -726,7 +727,8 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(Array.isArray(body.retireResourceIds) && body.retireResourceIds.every((id) => typeof id === "string") ? { retireResourceIds: body.retireResourceIds as string[] } : {}),
         ...(Array.isArray(body.resourceOperations) ? { resourceOperations: body.resourceOperations as ArchitecturalProposalInput["resourceOperations"] } : {}),
         ...(Array.isArray(body.semanticMessages) ? { semanticMessages: body.semanticMessages as ArchitecturalProposalInput["semanticMessages"] } : {}),
-        ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
+         ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
+         ...(Array.isArray(body.semanticBindings) ? { semanticBindings: body.semanticBindings as ArchitecturalProposalInput["semanticBindings"] } : {}),
         title: requireBodyString(body, "title"),
         ...(typeof body.description === "string" ? { description: body.description } : {}),
       });
@@ -745,7 +747,8 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(Array.isArray(body.retireResourceIds) ? { retireResourceIds: body.retireResourceIds as string[] } : {}),
         ...(Array.isArray(body.resourceOperations) ? { resourceOperations: body.resourceOperations as ArchitecturalProposalInput["resourceOperations"] } : {}),
         ...(Array.isArray(body.semanticMessages) ? { semanticMessages: body.semanticMessages as ArchitecturalProposalInput["semanticMessages"] } : {}),
-        ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
+         ...(Array.isArray(body.relationshipOperations) ? { relationshipOperations: body.relationshipOperations as ArchitecturalProposalInput["relationshipOperations"] } : {}),
+         ...(Array.isArray(body.semanticBindings) ? { semanticBindings: body.semanticBindings as ArchitecturalProposalInput["semanticBindings"] } : {}),
         title: requireBodyString(body, "title"), ...(typeof body.description === "string" ? { description: body.description } : {}),
       });
       return json(201, { proposal });
@@ -909,6 +912,41 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(typeof body.targetRole === "string" ? { targetRole: body.targetRole as "execution" | "causal" | "other" } : {}),
       }, typeof body.contextId === "string" ? body.contextId : null);
        return json(201, { relationship });
+    }),
+  );
+
+  router.get("/api/projects/:projectId/semantic-bindings", async (request, params) =>
+    guarded(correlationId(request), async () => json(200, {
+      bindings: await catalog.listSemanticBindings(await contextOf(request), params.projectId, request.query.contextId ?? null),
+    })),
+  );
+  router.get("/api/projects/:projectId/semantic-bindings/:bindingId", async (request, params) =>
+    guarded(correlationId(request), async () => json(200, {
+      binding: await catalog.getSemanticBinding(await contextOf(request), params.projectId, request.query.contextId ?? null, params.bindingId),
+    })),
+  );
+  router.post("/api/projects/:projectId/semantic-bindings", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const body = parseJsonBody(request.body);
+      if (typeof body.contextId !== "string" || typeof body.binding !== "object" || body.binding === null) throw invalid("A MY WORK contextId and binding are required.");
+      return json(201, { binding: await catalog.createSemanticBinding(await contextOf(request), params.projectId, body.contextId, body.binding as never) });
+    }),
+  );
+  router.put("/api/projects/:projectId/semantic-bindings/:bindingId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const body = parseJsonBody(request.body);
+      if (typeof body.contextId !== "string" || typeof body.binding !== "object" || body.binding === null) throw invalid("A MY WORK contextId and binding are required.");
+      const binding = body.binding as Record<string, unknown>;
+      if (binding.id !== params.bindingId) throw invalid("Binding id must match the route.");
+      return json(200, { binding: await catalog.updateSemanticBinding(await contextOf(request), params.projectId, body.contextId, binding as never, requireExpectedRevision(body)) });
+    }),
+  );
+  router.delete("/api/projects/:projectId/semantic-bindings/:bindingId", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const contextId = request.query.contextId;
+      const expectedRevision = Number(request.query.expectedRevision);
+      if (!contextId || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw invalid("contextId and expectedRevision are required.");
+      return json(200, { binding: await catalog.removeSemanticBinding(await contextOf(request), params.projectId, contextId, params.bindingId, expectedRevision) });
     }),
   );
 
@@ -1117,6 +1155,7 @@ function shareGrantView(grant: Omit<import("../../src/domain/project/share-grant
   return {
     id: grant.id,
     projectId: grant.projectId,
+    resourceIds: grant.resourceIds,
     state: grant.state ?? "ACTIVE",
     createdByUserId: grant.createdByUserId,
     createdAt: grant.createdAt.toISOString(),

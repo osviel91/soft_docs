@@ -56,4 +56,4 @@ This adds domain, application, persistence, and host integration at their existi
 
 ## D03.1B boundary
 
-The current application read/query surface requires an owned active MY WORK context and returns SHARED overlaid by that context; one user's other MY WORK contexts remain inaccessible. No public/Share projection exposes SemanticBinding in D03.1A/B. Share filtering and evidence redaction remain D03.2 work; public project projections must not include these records until that authorization filtering is implemented.
+The current application read/query surface requires an owned active MY WORK context and returns SHARED overlaid by that context; one user's other MY WORK contexts remain inaccessible. D03.2 adds read-only SHARED binding projection to anonymous Share only when both endpoint resources are included, and marks internal evidence outside that projection unavailable without loading its resource. See the D03.2 implementation status for remaining product-surface work.

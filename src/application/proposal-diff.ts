@@ -23,7 +23,7 @@ export interface ArchitecturalProposalDiff {
   relationships: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
   semanticIdentities: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
   semanticBindings: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; bindingId: string; endpointDelta: { before: { left: EntityAnchor; right: EntityAnchor } | null; after: { left: EntityAnchor; right: EntityAnchor } | null }; relationDelta: { before: string | null; after: string | null }; evidenceDelta: { before: BindingEvidence | null; after: BindingEvidence | null } }>;
-  impact: { resourcesAdded: number; resourcesModified: number; resourcesDeleted: number; relationshipsChanged: number; semanticIdentitiesChanged: number };
+  impact: { resourcesAdded: number; resourcesModified: number; resourcesDeleted: number; relationshipsChanged: number; semanticIdentitiesChanged: number; semanticBindingsChanged: number };
 }
 
 export async function architecturalProposalDiff(
@@ -60,6 +60,6 @@ export async function architecturalProposalDiff(
     relationships,
     semanticIdentities,
     semanticBindings,
-    impact: { resourcesAdded: resources.filter((entry) => entry.operation === "ADDED").length, resourcesModified: resources.filter((entry) => entry.operation === "MODIFIED").length, resourcesDeleted: resources.filter((entry) => entry.operation === "DELETED").length, relationshipsChanged: relationships.length, semanticIdentitiesChanged: semanticIdentities.length },
+     impact: { resourcesAdded: resources.filter((entry) => entry.operation === "ADDED").length, resourcesModified: resources.filter((entry) => entry.operation === "MODIFIED").length, resourcesDeleted: resources.filter((entry) => entry.operation === "DELETED").length, relationshipsChanged: relationships.length, semanticIdentitiesChanged: semanticIdentities.length, semanticBindingsChanged: semanticBindings.length },
   };
 }

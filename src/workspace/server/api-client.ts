@@ -29,6 +29,7 @@ import type { ResourceDiff } from "../../domain/diff/resource-diff";
 import type { ResourceTrajectoryKind } from "../../domain/workspace/resource-trajectory";
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { SemanticMessageIdentity } from "../../domain/workspace/metadata";
+import type { SemanticBinding, EntityAnchor, BindingEvidence } from "../../domain/workspace/semantic-binding";
 
 /** The signed-in person, as `GET /api/me` reports them. */
 export interface AuthenticatedUser {
@@ -129,6 +130,7 @@ export interface ProjectShareRecord {
   expiresAt: string;
   revokedAt: string | null;
   revokedByUserId: string | null;
+  resourceIds: string[];
   state: "ACTIVE" | "REVOKED" | "EXPIRED";
 }
 
@@ -187,6 +189,7 @@ export interface ServerArchitecturalProposal {
   submittedAt: string;
   resources: Array<{ sourceResourceId: string; path: string; type: ServerResourceType; sourceRevision: number; content: string; operation?: "CREATE" | "UPDATE" | "RETIRE"; baseResourceId?: string; baseRevision?: number }>;
   semanticMessages: Array<{ id: string; name: string; kind: "event" | "command" }>;
+  semanticBindings?: Array<{ operation: "ADD" | "UPDATE" | "REMOVE"; binding: SemanticBinding; baseBinding?: SemanticBinding; bindingId?: string }>;
   relationships: ResourceRelationship[];
   capabilities?: Record<string, ServerCapabilityDecision>;
   lifecycle?: { state: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED"; promotionStatus?: "COMMITTED_COMPLETION_PENDING" | "COMPLETED" };
@@ -214,7 +217,8 @@ export interface ServerArchitecturalProposalDiff {
   resources: ServerArchitecturalProposalDiffResource[];
   relationships: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
   semanticIdentities: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; label: string }>;
-  impact: { resourcesAdded: number; resourcesModified: number; resourcesDeleted: number; relationshipsChanged: number; semanticIdentitiesChanged: number };
+  semanticBindings?: Array<{ operation: "ADDED" | "MODIFIED" | "DELETED"; bindingId: string; endpointDelta: { before: { left: EntityAnchor; right: EntityAnchor } | null; after: { left: EntityAnchor; right: EntityAnchor } | null }; relationDelta: { before: string | null; after: string | null }; evidenceDelta: { before: BindingEvidence | null; after: BindingEvidence | null } }>;
+  impact: { resourcesAdded: number; resourcesModified: number; resourcesDeleted: number; relationshipsChanged: number; semanticIdentitiesChanged: number; semanticBindingsChanged?: number };
 }
 
 export interface ServerProposalReview {
@@ -627,8 +631,8 @@ export class ServerApiClient {
     return body.capabilities;
   }
 
-  async createProjectShare(projectId: string): Promise<{ token: string; grant: ProjectShareRecord }> {
-    return this.request("POST", `/api/projects/${encodeURIComponent(projectId)}/shares`, {});
+  async createProjectShare(projectId: string, resourceIds: string[]): Promise<{ token: string; grant: ProjectShareRecord }> {
+    return this.request("POST", `/api/projects/${encodeURIComponent(projectId)}/shares`, { resourceIds });
   }
 
   async listProjectShares(projectId: string): Promise<ProjectShareRecord[]> {
@@ -668,11 +672,11 @@ export class ServerApiClient {
     return body.proposals ?? [];
   }
 
-  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+  async submitArchitecturalProposal(projectId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; semanticBindings?: Array<{ bindingId: string; operation: "ADD"; sourceRevision: number } | { bindingId: string; operation: "UPDATE"; sourceRevision: number; expectedRevision: number; baseFingerprint: string } | { bindingId: string; operation: "REMOVE"; expectedRevision: number; baseFingerprint: string }>; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals`, input);
     return body.proposal;
   }
-  async reviseArchitecturalProposal(projectId: string, proposalId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
+  async reviseArchitecturalProposal(projectId: string, proposalId: string, input: { sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; semanticBindings?: Array<{ bindingId: string; operation: "ADD"; sourceRevision: number } | { bindingId: string; operation: "UPDATE"; sourceRevision: number; expectedRevision: number; baseFingerprint: string } | { bindingId: string; operation: "REMOVE"; expectedRevision: number; baseFingerprint: string }>; title: string; description?: string }): Promise<ServerArchitecturalProposal> {
     const body = await this.request<{ proposal: ServerArchitecturalProposal }>("POST", `/api/projects/${encodeURIComponent(projectId)}/architectural-proposals/${encodeURIComponent(proposalId)}/revise`, input);
     return body.proposal;
   }
@@ -757,6 +761,34 @@ export class ServerApiClient {
       `/api/projects/${encodeURIComponent(projectId)}/relationships${query}`,
     );
     return body.relationships ?? [];
+  }
+
+  async listSemanticBindings(projectId: string, contextId?: string | null): Promise<SemanticBinding[]> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
+    const body = await this.request<{ bindings: SemanticBinding[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings${query}`);
+    return body.bindings ?? [];
+  }
+
+  async getSemanticBinding(projectId: string, bindingId: string, contextId?: string | null): Promise<SemanticBinding> {
+    const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
+    const body = await this.request<{ binding: SemanticBinding }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings/${encodeURIComponent(bindingId)}${query}`);
+    return body.binding;
+  }
+
+  async createSemanticBinding(projectId: string, contextId: string, binding: Omit<SemanticBinding, "projectId" | "revision" | "status" | "provenance">): Promise<SemanticBinding> {
+    const body = await this.request<{ binding: SemanticBinding }>("POST", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings`, { contextId, binding });
+    return body.binding;
+  }
+
+  async updateSemanticBinding(projectId: string, contextId: string, binding: SemanticBinding, expectedRevision: number): Promise<SemanticBinding> {
+    const body = await this.request<{ binding: SemanticBinding }>("PUT", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings/${encodeURIComponent(binding.id)}`, { contextId, binding, expectedRevision });
+    return body.binding;
+  }
+
+  async removeSemanticBinding(projectId: string, contextId: string, bindingId: string, expectedRevision: number): Promise<SemanticBinding> {
+    const query = new URLSearchParams({ contextId, expectedRevision: String(expectedRevision) });
+    const body = await this.request<{ binding: SemanticBinding }>("DELETE", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings/${encodeURIComponent(bindingId)}?${query}`);
+    return body.binding;
   }
 
   /** Read one resource's record and text. */

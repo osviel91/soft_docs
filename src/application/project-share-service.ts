@@ -7,11 +7,12 @@ import type { ProjectShareRepository } from "./ports/project-share-repository";
 import type { ProjectStorage } from "./project-storage";
 import { shareGrantState, type ProjectShareGrant } from "../domain/project/share-grant";
 import { buildPublicProjectProjection } from "./public-project-projection";
+import type { SemanticBindingRepository } from "./ports/semantic-binding-repository";
 
 const lifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
 const tokenParts = (token: string) => /^sdshare_([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/.exec(token);
-const managed = (grant: ProjectShareGrant) => ({ id: grant.id, projectId: grant.projectId, createdByUserId: grant.createdByUserId, createdAt: grant.createdAt, expiresAt: grant.expiresAt, revokedAt: grant.revokedAt, revokedByUserId: grant.revokedByUserId });
+const managed = (grant: ProjectShareGrant) => ({ id: grant.id, projectId: grant.projectId, resourceIds: grant.resourceIds, createdByUserId: grant.createdByUserId, createdAt: grant.createdAt, expiresAt: grant.expiresAt, revokedAt: grant.revokedAt, revokedByUserId: grant.revokedByUserId });
 
 export interface PublicSharedProject {
   project: { name: string };
@@ -24,6 +25,7 @@ export function createProjectShareService(options: {
   shares: ProjectShareRepository;
   projects: ProjectRepository;
   storage: (projectId: string) => ProjectStorage;
+  semanticBindings?: SemanticBindingRepository;
   now?: () => Date;
   newId?: () => string;
 }) {
@@ -39,14 +41,17 @@ export function createProjectShareService(options: {
     detail: { grantId, ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}) },
   });
   return {
-    async create(context: ApplicationContext, projectId: string, expiresAt?: Date) {
+    async create(context: ApplicationContext, projectId: string, expiresAt?: Date, resourceIds?: string[]) {
       await requireOwner(context, projectId);
       const createdAt = now();
       const expiry = expiresAt ?? new Date(createdAt.getTime() + lifetimeMs);
       if (!(expiry > createdAt)) throw conflict("Share expiration must be in the future.");
+      const available = (await options.projects.listResources(projectId, null)).filter(resource => resource.lifecycle === "ACTIVE" && resource.contextId === undefined).map(resource => resource.id);
+      const allowed = resourceIds === undefined ? available : [...new Set(resourceIds)];
+      if (allowed.length === 0 || allowed.some(id => !available.includes(id))) throw conflict("A ShareGrant must select one or more active SHARED resources from this project.");
       const id = newId();
       const token = `sdshare_${id}.${randomBytes(32).toString("base64url")}`;
-      const grant: ProjectShareGrant = { id, projectId, tokenHash: digest(token), createdByUserId: context.principal.subjectUserId, createdAt, expiresAt: expiry, revokedAt: null, revokedByUserId: null };
+      const grant: ProjectShareGrant = { id, projectId, resourceIds: allowed, tokenHash: digest(token), createdByUserId: context.principal.subjectUserId, createdAt, expiresAt: expiry, revokedAt: null, revokedByUserId: null };
       const stored = await options.shares.create(grant, audit(context, "project.share.created", projectId, id, expiry));
       return { grant: managed(stored), token };
     },
@@ -70,7 +75,7 @@ export function createProjectShareService(options: {
       if (!project) return null;
       const records = (await options.projects.listResources(project.id, null)).filter(
         (resource) => resource.lifecycle === "ACTIVE" && resource.contextId === undefined &&
-          ["sequence-diagram", "event-flow", "markdown-document", "conceptual", "database"].includes(resource.type),
+          grant.resourceIds.includes(resource.id) && ["sequence-diagram", "event-flow", "markdown-document", "conceptual", "database"].includes(resource.type),
       );
       const storage = options.storage(project.id);
       const manifest = await storage.read("project.json");
@@ -94,11 +99,13 @@ export function createProjectShareService(options: {
         (source): source is NonNullable<typeof source> => source !== null,
       );
       const relationships = await options.projects.listResourceRelationships(project.id, null);
+      const semanticBindings = await options.semanticBindings?.list({ projectId: project.id, contextId: null }) ?? [];
       const projection = buildPublicProjectProjection(
         project.id,
         available,
         manifest.value?.content ?? null,
         relationships,
+        semanticBindings,
       );
       return { project: { name: project.name }, ...projection };
     },

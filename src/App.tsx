@@ -72,6 +72,7 @@ import { useVersionHistory } from "./features/history/version-history-factory";
 import { useDiagramHistory } from "./features/history/use-diagram-history";
 import { useServerTrajectory } from "./features/history/use-server-trajectory";
 import type { DiagramFile, NoteFile, Project } from "./domain/workspace/types";
+import type { ProjectIndex } from "./domain/project/project-index";
 import { diffResources } from "./domain/diff/resource-diff";
 import {
   diagramResource,
@@ -206,6 +207,8 @@ import { RevisionConflictError } from "./workspace/server/api-errors";
 import { supportsForcedWrite } from "./workspace/server/server-workspace-repository";
 import ResourceMetadataEditor from "./features/resource/ResourceMetadataEditor";
 import ComplementaryViews from "./features/resource/ComplementaryViews";
+import { SemanticBindingsPanel } from "./features/resource/SemanticBindingsPanel";
+import { entityAnchorKey, type EntityAnchor } from "./domain/workspace/semantic-binding";
 import { ProposalReviewPanel } from "./features/proposals/ProposalReview";
 import { ArchitecturalProposalDetail, ProposalResourceComparison, type ComparisonMode } from "./features/proposals/ArchitecturalProposalDetail";
 import { ArchitecturalProposalSubmit } from "./features/proposals/ArchitecturalProposalSubmit";
@@ -293,6 +296,20 @@ type BrowserLocation = { projectId: string | null; contextId: string | null; res
 function browserLocation(): BrowserLocation {
   const params = new URLSearchParams(window.location.search);
   return { projectId: params.get("project"), contextId: params.get("context"), resourceId: params.get("resource"), proposalId: params.get("proposal") };
+}
+
+function serverIndexedView(index: ProjectIndex | null, files: Array<DiagramFile | NoteFile>) {
+  if (!index) return { entities: [], resources: [] };
+  const fileByPath = new Map(files.map((file) => [file.name, file]));
+  const resourceId = (id: string, path: string) => fileByPath.get(path)?.id ?? id;
+  const resourceIds = new Map(index.resources.map((resource) => [resource.id, resourceId(resource.id, resource.path)]));
+  return {
+    entities: (index.entities ?? []).map((entity) => ({
+      ...entity,
+      anchor: { ...entity.anchor, resourceId: resourceIds.get(entity.anchor.resourceId) ?? entity.anchor.resourceId },
+    })),
+    resources: index.resources.map((resource) => ({ ...resource, id: resourceIds.get(resource.id) ?? resource.id })),
+  };
 }
 
 function locationUrl(location: BrowserLocation): string {
@@ -533,6 +550,7 @@ export default function App() {
   const [caretOffset, setCaretOffset] = useState(0);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [activeSemanticMessageId, setActiveSemanticMessageId] = useState<string | null>(null);
+  const [activeEntityAnchor, setActiveEntityAnchor] = useState<EntityAnchor | null>(null);
   const [traceStart, setTraceStart] = useState<TraceQueryStart | null>(null);
   const [traceDirection, setTraceDirection] = useState<TraceDirection>("both");
   // A find-references result, shown in the same overlay the project search uses
@@ -781,7 +799,7 @@ export default function App() {
     hiddenPaths,
     unhidePath,
   } = workspace;
-  const { diagrams: sharedDiagrams, notes: sharedNotes } = sharedWorkspace;
+  const { diagrams: sharedDiagrams, notes: sharedNotes, metadata: sharedMetadata, resourceIdForFile: sharedResourceIdForFile } = sharedWorkspace;
 
   const loadSharedDiagram = useCallback((diagram: DiagramFile): void => {
     if (server.active?.contextId === null || !server.active) {
@@ -1228,6 +1246,11 @@ export default function App() {
   // reads it rather than recomputing project facts, and it is built here — before
   // the document helpers — because link resolution needs it too.
   const index = useProjectIndex(selectedProjectId, diagrams, notes, metadata);
+  const sharedIndex = useProjectIndex(server.active?.project.id ?? null, sharedDiagrams, sharedNotes, sharedMetadata);
+  const activeBindingView = serverIndexedView(index, [...diagrams, ...notes]);
+  const sharedBindingView = serverIndexedView(sharedIndex, [...sharedDiagrams, ...sharedNotes]);
+  const bindingEntities = [...new Map([...activeBindingView.entities, ...sharedBindingView.entities].map(entity => [entityAnchorKey(entity.anchor), entity])).values()];
+  const bindingResources = [...new Map([...activeBindingView.resources, ...sharedBindingView.resources].map(resource => [resource.id, resource])).values()];
   const complementaryResources = (index?.resources ?? []).map((resource) => ({
     id: resource.id,
     title: resource.title,
@@ -1307,16 +1330,18 @@ export default function App() {
 
   const openResourceById = useCallback(
     (resourceId: string, nodeId?: string): void => {
-      const resource = index?.resources.find((entry) => entry.id === resourceId);
-      if (!resource) return;
-      const diagram = allDiagrams.find((entry) => resourceIdForFile(entry) === resource.id);
+      const resource = index?.resources.find((entry) => entry.id === resourceId) ?? sharedIndex?.resources.find(entry => entry.id === resourceId);
+      const diagram = allDiagrams.find((entry) => entry.id === resourceId || resourceIdForFile(entry) === resource?.id);
       if (diagram) {
         setView("code");
         if (nodeId) setActiveNodeId(nodeId);
         loadDiagram(diagram);
+        return;
       }
+      const sharedDiagram = sharedDiagrams.find(entry => entry.id === resourceId || sharedResourceIdForFile(entry) === resource?.id);
+      if (sharedDiagram) { setView("code"); if (nodeId) setActiveNodeId(nodeId); loadSharedDiagram(sharedDiagram); }
     },
-    [index, allDiagrams, loadDiagram],
+    [index, sharedIndex, allDiagrams, loadDiagram, sharedDiagrams, sharedResourceIdForFile, loadSharedDiagram],
   );
 
   // Every resource a document may link to, in the shared shape the project-link
@@ -1637,6 +1662,13 @@ export default function App() {
     : selectedNote
       ? resourceIdForFile(selectedNote)
       : null;
+  const activeBindingResourceId = workspaceMode === "server"
+    ? selectedDiagram?.id ?? selectedNote?.id ?? activeResourceId
+    : activeResourceId;
+  useEffect(() => {
+    if (!activeEntityAnchor || activeEntityAnchor.resourceId !== activeBindingResourceId || activeEntityAnchor.identity.kind !== "local-id") return;
+    setActiveNodeId(activeEntityAnchor.identity.value);
+  }, [activeBindingResourceId, activeEntityAnchor]);
   const canReviewProposals =
     workspaceMode === "server" &&
     activeResourceId !== null &&
@@ -1874,6 +1906,8 @@ export default function App() {
   // mapping is by node id, never by matching text.
   const onNodeSelect = useCallback(
     (nodeId: string) => {
+      const indexedEntity = bindingEntities.find(entity => entity.anchor.resourceId === activeBindingResourceId && entity.anchor.identity.kind === "local-id" && entity.anchor.identity.value === nodeId);
+      setActiveEntityAnchor(indexedEntity?.anchor ?? null);
       const range = isEventFlow
         ? eventFlow
           ? eventFlowNodeById(eventFlow, nodeId)?.range
@@ -1905,7 +1939,7 @@ export default function App() {
       // node now, and the canvas should say so.
       setActiveNodeId(nodeId);
     },
-    [isEventFlow, activeRepresentation, isSequence, eventFlow, ast, source],
+    [isEventFlow, activeRepresentation, isSequence, eventFlow, ast, source, bindingEntities, activeBindingResourceId],
   );
 
   const onSemanticMessageSelect = useCallback(
@@ -3404,7 +3438,7 @@ export default function App() {
             >
                 {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); setView("changes"); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
                 {architecturalProposalId && view === "changes" && server.active ? (
-                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
+                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { setProposalRefreshKey(key => key + 1); void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setProposalRefreshKey(key => key + 1); setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}
@@ -3796,6 +3830,21 @@ export default function App() {
                       {traceStart && index ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} /> : null}
                     </>
                   )}
+                  {workspaceMode === "server" && server.active && bindingEntities.length ? <SemanticBindingsPanel
+                    key={proposalRefreshKey}
+                    client={apiClient}
+                    projectId={server.active.project.id}
+                    contextId={server.active.contextId}
+                    entities={bindingEntities}
+                    resources={bindingResources}
+                    selectedAnchor={activeEntityAnchor}
+                    writable={server.active.contextId !== null}
+                    onOpenEntity={(anchor) => {
+                      setActiveEntityAnchor(anchor);
+                      const nodeId = anchor.identity.kind === "local-id" ? anchor.identity.value : undefined;
+                      openResourceById(anchor.resourceId, nodeId);
+                    }}
+                  /> : null}
                 </section>
               </>
             )}

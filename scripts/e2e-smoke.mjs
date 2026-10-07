@@ -4089,6 +4089,201 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await reviewerContext.close();
     }
   });
+
+  await scenario("Semantic Binding Workspace authoring, governance, MCP and scoped Share", async () => {
+    const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const reviewerContext = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+    const page = await ownerContext.newPage();
+    const reviewerPage = await reviewerContext.newPage();
+    const projectName = "Semantic Binding D03.2B E2E";
+    const proposalTitle = "Explicit Project persistence representation";
+    const conceptual = 'title "Domain"\nconcept project "Project"\nconcept project_settings "Project settings"\n';
+    const privateConceptual = conceptual.replace('title "Domain"', 'title "MY WORK Domain"');
+    const database = 'title "Persistence"\ntable projects - "projects"\ntable project_settings - "project settings"\n';
+    let projectId = null;
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaceId = (await apiRequest(page, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(page, "/api/projects/bootstrap", { method: "POST", body: JSON.stringify({
+        workspaceId, name: projectName, resources: [
+          { path: "domain.concept", type: "conceptual", content: conceptual },
+          { path: "schema.dbschema", type: "database", content: database },
+          { path: "private-evidence.md", type: "markdown-document", content: "Sensitive evidence text outside the Share grant." },
+        ],
+      }) });
+      if (created.status !== 201) throw new Error(`Semantic Binding project bootstrap failed: ${created.status} ${created.text}`);
+      projectId = created.json.project.id;
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await page.locator('[data-testid="workspace-server-projects-loading"]').waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await openServerProject(page, projectName);
+      await page.getByRole("button", { name: "Load diagram Domain" }).click();
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const panel = page.getByTestId("semantic-bindings");
+      await panel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("initial Project entity has no explicit bindings and no name-based relation is presented", !(await panel.textContent()).includes("represents-in") && (await panel.textContent()).includes("No explicit bindings"));
+
+      const myWorkButton = page.getByTestId("explorer-my-work-create");
+      await myWorkButton.click();
+      await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Draft name").fill("binding-author-work");
+      await page.getByRole("button", { name: "Create draft" }).click();
+      const contexts = await apiRequest(page, `/api/projects/${projectId}/private-work`);
+      const work = contexts.json.contexts.find(entry => entry.name === "binding-author-work");
+      if (!work) throw new Error("Semantic Binding MY WORK context was not created");
+       const privateConcept = await apiRequest(page, `/api/projects/${projectId}/resources`, { method: "POST", body: JSON.stringify({ contextId: work.id, path: "domain-work.concept", type: "conceptual", content: privateConceptual }) });
+      if (privateConcept.status !== 201) throw new Error(`MY WORK Conceptual fixture failed: ${privateConcept.status} ${privateConcept.text}`);
+      const privateDatabase = await apiRequest(page, `/api/projects/${projectId}/resources`, { method: "POST", body: JSON.stringify({ contextId: work.id, path: "schema-work.dbschema", type: "database", content: database }) });
+      if (privateDatabase.status !== 201) throw new Error(`MY WORK Database fixture failed: ${privateDatabase.status} ${privateDatabase.text}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("explorer-private-context").getByRole("button", { name: "Load diagram MY WORK Domain" }).click();
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      if (!(await panel.getByLabel("Exact indexed endpoint").count())) throw new Error(`MY WORK binding editor unavailable: context=${await panel.getAttribute("data-context-id")} writable=${await panel.getAttribute("data-writable")} contextNote=${await page.locator(".explorer__context-note").textContent()}`);
+      const endpointOptions = await panel.getByLabel("Exact indexed endpoint").locator("option").allTextContents();
+      const projectsOption = endpointOptions.find(label => /database table.*projects.*schema-work\.dbschema/i.test(label));
+      if (!projectsOption) throw new Error(`Typed Database endpoint missing from index options: ${JSON.stringify(endpointOptions)}`);
+      await panel.getByLabel("Exact indexed endpoint").selectOption({ label: projectsOption.trim() });
+      await panel.getByLabel("Evidence rationale").fill("The approved domain-to-storage mapping names the projects table.");
+      await panel.getByLabel("Evidence kind").selectOption("internal");
+      await panel.getByLabel("Evidence resource").selectOption({ label: "private-evidence.md · revision 1" });
+      await panel.getByRole("button", { name: "Create binding" }).click();
+      await panel.getByText("represents-in", { exact: true }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("User A explicitly creates Project represents-in projects in MY WORK with Evidence", (await panel.textContent()).includes("private-evidence.md") && (await panel.textContent()).includes("represents-in"));
+       const privateBindings = await apiRequest(page, `/api/projects/${projectId}/semantic-bindings?contextId=${work.id}`);
+       const binding = privateBindings.json.bindings.find(entry => entry.provenance.contextId === work.id);
+       if (!binding) throw new Error("Created MY WORK Semantic Binding was not returned");
+       check("indexed selection preserves server-backed resource IDs in both binding anchors", binding.left.resourceId === privateConcept.json.resource.id && binding.right.resourceId === privateDatabase.json.resource.id, `left=${binding.left.resourceId}, right=${binding.right.resourceId}`);
+       const directSharedWrite = await apiRequest(page, `/api/projects/${projectId}/semantic-bindings`, { method: "POST", body: JSON.stringify({ binding }) });
+       check("direct SHARED binding write remains rejected", directSharedWrite.status >= 400 && directSharedWrite.status < 500, `HTTP ${directSharedWrite.status}`);
+
+       await panel.getByRole("button", { name: "Open related entity" }).click();
+      await page.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.waitForFunction(() => document.querySelector('[data-testid="database-preview-svg"] [data-node-id="projects"]')?.classList.contains("svg-node--active") ?? true, undefined, { timeout: UI_TIMEOUT_MS });
+       check("Conceptual Project navigates to and selects Database projects by stable identity", (await page.getByTestId("resource-header").textContent()).includes("schema-work.dbschema") && (await page.locator('[data-testid="database-preview-svg"] [data-node-id="projects"]').getAttribute("class") ?? "").includes("svg-node--active"));
+      await page.getByTestId("database-preview-svg").locator('[data-node-id="projects"]').dispatchEvent("click");
+      await panel.getByRole("button", { name: "Open related entity" }).click();
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Database projects navigates back to Conceptual Project", (await page.getByTestId("resource-header").textContent()).includes("domain-work.concept"));
+
+      const reviewer = { sub: "e2e-binding-reviewer", name: "Binding Reviewer", email: "binding-reviewer@e2e.test" };
+      await reviewerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(reviewerPage);
+      await signIn(reviewerPage, idp, reviewer);
+      const reviewerId = (await apiRequest(reviewerPage, "/api/me")).json.user.id;
+      const projectDetails = await apiRequest(page, `/api/projects/${projectId}`);
+      await apiRequest(page, `/api/workspaces/${projectDetails.json.project.workspaceId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      await apiRequest(page, `/api/projects/${projectId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+      await openServerProject(reviewerPage, projectName);
+      await reviewerPage.getByRole("button", { name: "Load diagram Domain" }).click();
+      await reviewerPage.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await reviewerPage.getByTestId("semantic-bindings").getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const anotherContext = await apiRequest(reviewerPage, `/api/projects/${projectId}/semantic-bindings?contextId=${work.id}`);
+      check("another user's MY WORK binding is not visible", anotherContext.status === 404);
+
+       const submitted = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, { method: "POST", body: JSON.stringify({
+         sourcePrivateContextId: work.id, resourceIds: [privateConcept.json.resource.id, privateDatabase.json.resource.id], title: proposalTitle,
+         description: "Explicit evidenced domain-to-persistence representation.",
+         semanticBindings: [{ bindingId: binding.id, operation: "ADD", sourceRevision: binding.revision }],
+       }) });
+       if (submitted.status !== 201) throw new Error(`Explicit binding proposal selection failed: ${submitted.status} ${submitted.text}`);
+       check("proposal submission explicitly selects the binding ADD operation", submitted.json.proposal.semanticBindings?.some(entry => entry.operation === "ADD" && entry.binding.id === binding.id));
+      const proposalList = (await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`)).json.proposals;
+      const proposal = proposalList.find(entry => entry.title === proposalTitle);
+      if (!proposal) throw new Error("Semantic Binding proposal was not submitted");
+       const proposalSnapshot = await apiRequest(page, `/api/architectural-proposals/${proposal.id}?projectId=${projectId}`);
+       check("proposal explicitly snapshots the selected binding and leaves SHARED unchanged", proposalSnapshot.json.proposal.semanticBindings?.some(entry => entry.operation === "ADD" && entry.binding.id === binding.id) && (await apiRequest(page, `/api/projects/${projectId}/semantic-bindings`)).json.bindings.length === 0);
+
+       await reviewerPage.reload({ waitUntil: "domcontentloaded" });
+       const reviewerIdentity = await apiRequest(reviewerPage, "/api/me");
+       const reviewerProjectAccess = await apiRequest(reviewerPage, `/api/projects/${projectId}`);
+       const reviewerWorkspaces = await apiRequest(reviewerPage, "/api/workspaces");
+       check("reviewer remains authenticated and authorized after reload", reviewerIdentity.status === 200 && reviewerProjectAccess.status === 200, `me=${reviewerIdentity.status}, project=${reviewerProjectAccess.status}, url=${reviewerPage.url()}, user=${reviewerIdentity.json?.user?.id}, workspaces=${(reviewerWorkspaces.json?.workspaces ?? []).map(entry => entry.id).join(",")}`);
+       await reviewerPage.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+       await reviewerPage.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("reviewer project is restored by its stable project URL", new URL(reviewerPage.url()).searchParams.get("project") === projectId && (await reviewerPage.locator('[data-testid="workspace-active-project"]').textContent()).includes(projectName));
+       const proposalsToggle = reviewerPage.getByTestId("explorer-proposals-toggle");
+       if ((await proposalsToggle.getAttribute("aria-expanded")) !== "true") await proposalsToggle.click();
+       const proposalRow = reviewerPage.getByTestId("explorer-proposal").filter({ hasText: proposalTitle }).filter({ hasText: "OPEN" });
+       await proposalRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await proposalRow.getByTestId("explorer-proposal-open").click();
+       await reviewerPage.waitForURL(url => url.searchParams.get("proposal") === proposal.id, { timeout: UI_TIMEOUT_MS });
+       const detail = reviewerPage.locator('section[aria-label="Architectural Proposal"]');
+       await reviewerPage.getByRole("button", { name: "Show proposal details" }).click();
+       await detail.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await waitForText(detail, text => text.includes(proposalTitle), "binding proposal review detail");
+       await reviewerPage.locator('[aria-label^="Comparison for "]').waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+       await detail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Impact" }).click();
+       await detail.getByText(/ADD.*conceptual concept project.*database table projects/s).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("reviewer reads ADD, both exact endpoints, relation and Evidence without JSON", (await detail.textContent()).includes(binding.evidence.items[0].resourceId) && (await detail.textContent()).includes("represents-in"));
+       await detail.locator('nav[aria-label="Proposal details"] button').filter({ hasText: "Review" }).click();
+       await detail.locator("textarea").fill("Evidence supports the explicit directional representation.");
+      await reviewerPage.locator('section[aria-label="Proposal review"] button').filter({ hasText: "Approve proposal" }).click();
+      await waitForText(reviewerPage.locator('section[aria-label="Proposal review"]'), text => text.includes("1 approvals"), "binding proposal approval");
+       check("approval records review only and does not publish the binding", (await apiRequest(reviewerPage, `/api/projects/${projectId}/semantic-bindings`)).json.bindings.length === 0);
+
+       await page.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+       await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("author project is restored by its stable project URL for promotion", new URL(page.url()).searchParams.get("project") === projectId);
+       const authorProposalsToggle = page.getByTestId("explorer-proposals-toggle");
+       if ((await authorProposalsToggle.getAttribute("aria-expanded")) !== "true") await authorProposalsToggle.click();
+       const authorProposalRow = page.getByTestId("explorer-proposal").filter({ hasText: proposalTitle });
+       await authorProposalRow.getByTestId("explorer-proposal-open").click();
+       await page.waitForURL(url => url.searchParams.get("proposal") === proposal.id, { timeout: UI_TIMEOUT_MS });
+       await page.getByRole("button", { name: "Show proposal details" }).click();
+       const ownerDetail = page.locator('section[aria-label="Architectural Proposal"]');
+       await ownerDetail.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await waitForText(ownerDetail, text => text.includes(proposalTitle), "owner binding proposal detail");
+      await page.getByRole("button", { name: "Preview promotion" }).click();
+      await waitForText(page.locator('section[aria-label="Proposal promotion"]'), text => text.includes("Ready to promote"), "binding promotion preview");
+      await page.getByRole("button", { name: "Promote to SHARED" }).click();
+      await waitForText(ownerDetail, text => text.includes("PROMOTED"), "binding promotion");
+      const sharedBindings = (await apiRequest(page, `/api/projects/${projectId}/semantic-bindings`)).json.bindings;
+      check("explicit promotion publishes the same binding to SHARED", sharedBindings.length === 1 && sharedBindings[0].id === binding.id && sharedBindings[0].provenance.contextId === undefined);
+
+      await page.getByRole("button", { name: "Base status", exact: true }).click();
+      await page.getByRole("button", { name: "Open resulting SHARED knowledge" }).click();
+       await page.locator('[data-testid="explorer-shared-section"] [data-testid="explorer-diagram"]').filter({ hasText: "MY WORK Domain" }).getByTestId("select-diagram-button").click();
+       await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+       const sharedPanel = page.getByTestId("semantic-bindings");
+       await sharedPanel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await sharedPanel.getByText("represents-in", { exact: true }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       const sharedPanelText = await sharedPanel.textContent();
+       check("Workspace SHARED renders the promoted binding, resolved endpoint and Evidence", sharedPanelText.includes("resolved") && sharedPanelText.includes("private-evidence.md"), sharedPanelText);
+
+      const agent = await apiRequest(page, "/api/agents", { method: "POST", body: JSON.stringify({ name: "Binding Query Agent" }) });
+      const credential = await apiRequest(page, `/api/agents/${agent.json.agent.id}/credentials`, { method: "POST", body: JSON.stringify({ name: "binding-query", scopes: ["project:read", "resource:read", "project:search"], allowedProjectIds: [projectId] }) });
+      const conceptResource = (await apiRequest(page, `/api/projects/${projectId}/resources`)).json.resources.find(resource => resource.path === "domain-work.concept");
+      const dbResource = (await apiRequest(page, `/api/projects/${projectId}/resources`)).json.resources.find(resource => resource.path === "schema-work.dbschema");
+      const query = await remoteTool(mcpBase, credential.json.secret, 1, "get_semantic_bindings_for_entity", { projectId, anchor: { version: 1, resourceId: conceptResource.id, representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } } });
+      check("MCP exact-anchor query returns the authoritative Project binding only", query?.structuredContent?.bindings?.length === 1 && query.structuredContent.bindings[0].binding.id === binding.id);
+      check("similar project_settings entity is not presented as a relation", query?.structuredContent?.bindings?.every(entry => entry.binding.right.identity.value !== "project_settings"));
+
+       const completeShare = await apiRequest(page, `/api/projects/${projectId}/shares`, { method: "POST", body: JSON.stringify({ resourceIds: [conceptResource.id, dbResource.id] }) });
+       const completeProjection = await (await fetch(`${BASE_URL}/api/public/projects/shared/${encodeURIComponent(completeShare.json.token)}`)).json();
+       check("Share with both endpoint resources exposes the explicit binding", completeProjection.catalog.semanticBindings?.some(entry => entry.id === binding.id));
+       const partialShare = await apiRequest(page, `/api/projects/${projectId}/shares`, { method: "POST", body: JSON.stringify({ resourceIds: [conceptResource.id] }) });
+       const partialProjection = await (await fetch(`${BASE_URL}/api/public/projects/shared/${encodeURIComponent(partialShare.json.token)}`)).json();
+       check("Share with one endpoint does not expose the binding", partialProjection.catalog.semanticBindings?.length === 0);
+       const sharedBinding = completeProjection.catalog.semanticBindings?.find(entry => entry.id === binding.id);
+       const sharedEvidence = (await apiRequest(page, `/api/projects/${projectId}/resources`)).json.resources.find(resource => resource.path === "private-evidence.md");
+       const serializedPartialProjection = JSON.stringify(partialProjection);
+       check("public Share redacts ungranted Evidence without exposing resource identity or content", sharedBinding?.evidence.items[0]?.kind === "unavailable" && !JSON.stringify(completeProjection).includes(sharedEvidence.id) && !JSON.stringify(completeProjection).includes("private-evidence.md") && !JSON.stringify(completeProjection).includes("Sensitive evidence text") && !serializedPartialProjection.includes(sharedEvidence.id) && !serializedPartialProjection.includes("private-evidence.md") && !serializedPartialProjection.includes("Sensitive evidence text"));
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await ownerContext.close();
+      await reviewerContext.close();
+    }
+  });
 }
 
 async function main() {

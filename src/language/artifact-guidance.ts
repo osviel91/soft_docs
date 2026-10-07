@@ -18,6 +18,12 @@ Purpose and semantic support are independent of renderer maturity. This guide de
 
 Choose according to the user's explicit intent. For “main business concepts and how they relate,” use Conceptual; for “order Checkout calls downstream systems,” Sequence; for “which service publishes and consumes OrderCreated,” Event Flow; for “orders, customers, PKs and FKs,” Database; and for “why this decision exists,” Markdown.
 
+## Explicit Semantic Bindings
+
+Semantic Bindings are explicit, governed assertions between exact bindable entities in Conceptual and Database resources. They are not inferred from names, DSL references, resource relationships, or SemanticMessageIdentity/messageRef. **matching names are discovery hints, never evidence.** Finding a Concept named \`Project\` and a table named \`projects\` does not establish a binding.
+
+Before creating one, inspect the typed ProjectIndex entities and select both exact anchors (resource ID, representation, entity kind, and stable identity). Create the binding only when the user or repository/architecture evidence supports the assertion; use the registered relation kind \`represents-in\` directionally and supply required Evidence plus concise rationale. Keep unresolved historical endpoints visible; never repair them by name. Author in MY WORK, select the binding explicitly into an Architectural Proposal, then review and promote through the existing lifecycle. Approval is not publication. Candidate discovery is not currently available for Semantic Bindings; absent an explicit binding, report “No documented explicit binding.”
+
 ## Conceptual Diagram — \`conceptual\` / \`.concept\`
 
 A Conceptual Diagram documents important concepts in a domain, system, or architectural context and the explicitly authored relationships between those concepts. It answers what concepts matter, how they relate, which relationships are directional, and what vocabulary the context uses.

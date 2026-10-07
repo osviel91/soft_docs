@@ -4,12 +4,38 @@ import { ArchitecturalProposalSubmit } from "../../../src/features/proposals/Arc
 import { ArchitecturalProposalDetail, ProposalResourceComparison } from "../../../src/features/proposals/ArchitecturalProposalDetail";
 import type { ServerApiClient } from "../../../src/workspace/server/api-client";
 import { diffResources } from "../../../src/domain/diff/resource-diff";
+import type { SemanticBinding } from "../../../src/domain/workspace/semantic-binding";
 
 function clientWith(overrides: Partial<ServerApiClient>): ServerApiClient {
   return overrides as ServerApiClient;
 }
 
 describe("governance UI intent", () => {
+  it("submits only the explicitly selected MY WORK binding operation", async () => {
+    const binding: SemanticBinding = {
+      id: "binding-1", projectId: "p1",
+      left: { version: 1, resourceId: "concept-resource", representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } },
+      right: { version: 1, resourceId: "database-resource", representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } },
+      relation: "represents-in", evidence: { version: 1, rationale: "Approved mapping", items: [{ kind: "external", reference: "ADR-8", description: "The approved persistence mapping" }] },
+      revision: 1, status: "ACTIVE", provenance: { authorId: "author", contextId: "work", createdAt: "2026-01-01" },
+    };
+    const submit = vi.fn().mockResolvedValue({});
+    const client = clientWith({
+      listResources: vi.fn().mockResolvedValue([]),
+      listSemanticBindings: vi.fn().mockResolvedValue([binding]),
+      submitArchitecturalProposal: submit,
+    });
+    render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" onCancel={vi.fn()} onDone={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText("Proposal title"), { target: { value: "Project mapping" } });
+    const operation = screen.getByRole("checkbox", { name: /ADD.*conceptual concept project.*database table projects/ });
+    fireEvent.click(operation);
+    fireEvent.click(screen.getByRole("button", { name: "Submit proposal for review" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith("p1", expect.objectContaining({
+      resourceIds: [],
+      semanticBindings: [{ bindingId: "binding-1", operation: "ADD", sourceRevision: 1 }],
+    })));
+  });
+
   it("opens the first canonical proposal change and offers text comparison modes", async () => {
     const base = "# Base\n\nold";
     const proposed = "# Base\n\nnew";
@@ -31,6 +57,7 @@ describe("governance UI intent", () => {
     const submit = vi.fn().mockResolvedValue({});
     const client = clientWith({
       listResources: vi.fn().mockResolvedValue([{ id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 2 }]),
+      listSemanticBindings: vi.fn().mockResolvedValue([]),
       submitArchitecturalProposal: submit,
     });
     render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" onCancel={vi.fn()} onDone={vi.fn()} />);
@@ -66,6 +93,7 @@ describe("governance UI intent", () => {
     const revise = vi.fn().mockResolvedValue({ id: "p2" });
     const client = clientWith({
       listResources: vi.fn().mockResolvedValue([{ id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 3 }]),
+      listSemanticBindings: vi.fn().mockResolvedValue([]),
       reviseArchitecturalProposal: revise,
     });
     const onDone = vi.fn();
@@ -85,6 +113,7 @@ describe("governance UI intent", () => {
         { id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 3 },
         { id: "r2", path: "context.md", type: "markdown-document", revision: 2 },
       ]),
+      listSemanticBindings: vi.fn().mockResolvedValue([]),
     });
     render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" revisionProposalId="p1" initialTitle="Checkout proposal" initialDescription="Keep the migration context." initialResourceIds={["r1", "r2"]} onCancel={vi.fn()} onDone={vi.fn()} />);
 
@@ -103,6 +132,7 @@ describe("governance UI intent", () => {
     const onDone = vi.fn(() => refresh);
     const client = clientWith({
       listResources: vi.fn().mockResolvedValue([{ id: "r1", path: "checkout.seq", type: "sequence-diagram", revision: 3 }]),
+      listSemanticBindings: vi.fn().mockResolvedValue([]),
       reviseArchitecturalProposal: revise,
     });
     render(<ArchitecturalProposalSubmit client={client} projectId="p1" contextId="work" revisionProposalId="p1" onCancel={vi.fn()} onDone={onDone} />);

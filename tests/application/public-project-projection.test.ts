@@ -42,6 +42,23 @@ function source(id: string, path: string, type: PublicProjectSource["type"], con
 }
 
 describe("bounded public project projection", () => {
+  it("shares only active bindings whose two exact endpoint resources are included and redacts outside evidence", () => {
+    const conceptual = source("concept-resource", "domain.concept", "conceptual", 'concept project "Project"');
+    const database = source("database-resource", "schema.dbschema", "database", 'table projects - "projects"');
+    const hidden = source("hidden-resource", "private.dbschema", "database", 'table secret - "secret"');
+    const anchor = (resourceId: string, representation: "conceptual" | "database", entityKind: "concept" | "table", value: string) => ({ version: 1 as const, resourceId, representation, entityKind, identity: { kind: "local-id" as const, value } });
+    const binding = {
+      id: "binding-project-projects", projectId, left: anchor(conceptual.id, "conceptual", "concept", "project"), right: anchor(database.id, "database", "table", "projects"),
+      relation: "represents-in" as const, revision: 1, status: "ACTIVE" as const, provenance: { authorId: "author", createdAt: "2026-01-01" },
+      evidence: { version: 1 as const, rationale: "Architecture decision documents this representation.", items: [{ kind: "internal" as const, resourceId: hidden.id, revision: 1 }] },
+    };
+    const projection = buildPublicProjectProjection(projectId, [conceptual, database], null, [], [binding]);
+    expect(projection.catalog.semanticBindings).toHaveLength(1);
+    expect(projection.catalog.semanticBindings[0].evidence.items).toEqual([{ kind: "unavailable" }]);
+    expect(JSON.stringify(projection)).not.toContain("hidden-resource");
+    expect(buildPublicProjectProjection(projectId, [conceptual], null, [], [binding]).catalog.semanticBindings).toEqual([]);
+  });
+
   it("builds hierarchy, canonical catalog, sequence, event-flow, topology and explicit causal facts from only its sources", () => {
     const result = buildPublicProjectProjection(projectId, [
       source(sequenceId, "architecture/checkout/order.seq", "sequence-diagram", sequence),

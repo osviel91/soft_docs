@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectShareRecord, ServerApiClient } from "../../workspace/server/api-client";
+import type { ServerResource } from "../../workspace/server/api-client";
 
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
 export default function ProjectShareDialog({ projectId, client, onClose }: { projectId: string; client: ServerApiClient; onClose: () => void }) {
   const [grants, setGrants] = useState<ProjectShareRecord[]>([]);
+  const [resources, setResources] = useState<ServerResource[]>([]);
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdExpiry, setCreatedExpiry] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -15,7 +18,7 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
   const dialogRef = useRef<HTMLElement>(null);
 
   const refresh = async () => setGrants(await client.listProjectShares(projectId));
-  useEffect(() => { void refresh().catch(() => { setLoadFailed(true); setError("Could not load shared links. Try again."); }); }, [projectId]);
+  useEffect(() => { void Promise.all([refresh(), client.listResources(projectId)]).then(([, shared]) => { setResources(shared); setSelectedResourceIds(shared.map(resource => resource.id)); }).catch(() => { setLoadFailed(true); setError("Could not load shared links and resources. Try again."); }); }, [projectId, client]);
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = dialogRef.current;
@@ -36,7 +39,7 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
   const create = async () => {
     setBusy(true); setError(""); setCopied(false);
     try {
-      const result = await client.createProjectShare(projectId);
+      const result = await client.createProjectShare(projectId, selectedResourceIds);
       setCreatedUrl(new URL(`/share/${encodeURIComponent(result.token)}`, window.location.origin).href);
       setCreatedExpiry(result.grant.expiresAt);
       await refresh();
@@ -62,13 +65,14 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
       <button type="button" className="share-dialog__close" aria-label="Close share management" onClick={onClose}>×</button>
       <p className="login-card__eyebrow">Project sharing</p><h2 id="share-title">Share project</h2>
       <p>Anyone with this link can view the project's shared documentation. The link does not grant editing or workspace membership.</p>
+      <fieldset><legend>Resources this link may expose</legend><p>Bindings are visible only if both endpoint resources are selected. Evidence referring to an unselected resource is marked unavailable.</p>{resources.map(resource => <label key={resource.id}><input type="checkbox" checked={selectedResourceIds.includes(resource.id)} onChange={event => setSelectedResourceIds(current => event.target.checked ? [...current, resource.id] : current.filter(id => id !== resource.id))} /> {resource.path} [{resource.type}]</label>)}</fieldset>
       {createdUrl ? <section aria-label="New link">
         <h3>Link created</h3><label htmlFor="created-share-url">Read-only link</label>
         <input id="created-share-url" readOnly value={createdUrl} onFocus={(event) => event.currentTarget.select()} />
         <button type="button" className="button button--primary" onClick={() => void copy()}>{copied ? "Copied" : "Copy link"}</button>
         <p>Expires {createdExpiry ? date(createdExpiry) : "as shown in Existing links"}</p>
         <small>Keep this link safe. Anyone with it can view this project's shared documentation.</small>
-      </section> : <button type="button" className="button button--primary" disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create read-only link"}</button>}
+      </section> : <button type="button" className="button button--primary" disabled={busy || selectedResourceIds.length === 0} onClick={() => void create()}>{busy ? "Creating…" : "Create read-only link"}</button>}
       <h3>Existing links</h3>
       {grants.length === 0 ? <p>No links yet.</p> : <ul className="share-link-list">{grants.map((grant) => <li key={grant.id}>
         <strong>{grant.state === "ACTIVE" ? "Active" : grant.state === "EXPIRED" ? "Expired" : "Revoked"}</strong>

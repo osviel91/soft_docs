@@ -17,7 +17,7 @@ describe("architectural proposal diff", () => {
     expect(diff.resources[0].proposedContent).toBe("before\nafter\n");
     expect(diff.resources[0].source.changed).toBe(true);
     expect(diff.staleBase).toBe(true);
-    expect(diff.impact).toEqual({ resourcesAdded: 0, resourcesModified: 1, resourcesDeleted: 0, relationshipsChanged: 1, semanticIdentitiesChanged: 1 });
+    expect(diff.impact).toEqual({ resourcesAdded: 0, resourcesModified: 1, resourcesDeleted: 0, relationshipsChanged: 1, semanticIdentitiesChanged: 1, semanticBindingsChanged: 0 });
   });
 
   it("reports explicitly selected semantic binding operations and evidence changes", async () => {

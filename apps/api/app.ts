@@ -213,7 +213,7 @@ export async function createApp(
     catalog,
     workspaceService: createWorkspaceService(runtime.workspaces),
     invitationService: createWorkspaceInvitationService({ invitations: runtime.invitations, workspaces: runtime.workspaces }),
-    projectShares: createProjectShareService({ shares: runtime.shares, projects: runtime.projects, storage: runtime.storageFor }),
+    projectShares: createProjectShareService({ shares: runtime.shares, projects: runtime.projects, storage: runtime.storageFor, semanticBindings: runtime.semanticBindings }),
     proposals: createChangeProposalService({
       proposals: runtime.proposals,
       projects: runtime.projects,

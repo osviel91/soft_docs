@@ -1009,6 +1009,7 @@ export function createMcpTools(): McpTool[] {
        description: "Submit selected owned MY WORK resources as an immutable, non-authoritative PROPOSAL. Submit is not publish and never changes SHARED; promotion requires a separate explicit authorized command.",
       inputSchema: {
         projectId: projectId(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(),
+        semanticBindings: z.array(z.object({ bindingId: z.string().min(1), operation: z.enum(["ADD", "UPDATE", "REMOVE"]), sourceRevision: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1).optional(), baseFingerprint: z.string().optional() }).strict()).optional(),
         title: z.string().min(1), description: z.string().optional(),
       },
       annotations: { ...WRITE, title: "Submit architectural proposal" },
@@ -1017,7 +1018,8 @@ export function createMcpTools(): McpTool[] {
         const proposal = await toolContext.architecturalProposals.submit(toolContext.context, {
           projectId: stringArg(args, "projectId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"),
            resourceIds: args.resourceIds as string[], title: stringArg(args, "title"),
-           ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}),
+            ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}),
+           ...(Array.isArray(args.semanticBindings) ? { semanticBindings: args.semanticBindings as import("../../../src/application/ports/architectural-proposal-repository").ProposalSemanticBindingSelection[] } : {}),
           ...(typeof args.description === "string" ? { description: args.description } : {}),
         });
         return { text: `Submitted ${proposal.title} as ${proposal.id}; SHARED was not changed.`, structured: { proposal } };
@@ -1027,11 +1029,11 @@ export function createMcpTools(): McpTool[] {
       name: "revise_architectural_proposal",
       title: "Revise architectural proposal",
       description: "Create a new immutable proposal snapshot from current owned MY WORK, superseding the old proposal. This does not modify SHARED and reviews never transfer.",
-      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(), title: z.string().min(1), description: z.string().optional() },
+      inputSchema: { projectId: projectId(), proposalId: z.string().uuid(), sourcePrivateContextId: z.string().uuid(), resourceIds: z.array(z.string().uuid()), retireResourceIds: z.array(z.string().uuid()).optional(), semanticBindings: z.array(z.object({ bindingId: z.string().min(1), operation: z.enum(["ADD", "UPDATE", "REMOVE"]), sourceRevision: z.number().int().min(1).optional(), expectedRevision: z.number().int().min(1).optional(), baseFingerprint: z.string().optional() }).strict()).optional(), title: z.string().min(1), description: z.string().optional() },
       annotations: { ...WRITE, title: "Revise architectural proposal" },
       requiredPermissions: ["resource:update"],
       async run(args, toolContext) {
-        const proposal = await toolContext.architecturalProposals.revise(toolContext.context, { projectId: stringArg(args, "projectId"), proposalId: stringArg(args, "proposalId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"), resourceIds: args.resourceIds as string[], ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}), title: stringArg(args, "title"), ...(typeof args.description === "string" ? { description: args.description } : {}) });
+        const proposal = await toolContext.architecturalProposals.revise(toolContext.context, { projectId: stringArg(args, "projectId"), proposalId: stringArg(args, "proposalId"), sourcePrivateContextId: stringArg(args, "sourcePrivateContextId"), resourceIds: args.resourceIds as string[], ...(Array.isArray(args.retireResourceIds) ? { retireResourceIds: args.retireResourceIds as string[] } : {}), ...(Array.isArray(args.semanticBindings) ? { semanticBindings: args.semanticBindings as import("../../../src/application/ports/architectural-proposal-repository").ProposalSemanticBindingSelection[] } : {}), title: stringArg(args, "title"), ...(typeof args.description === "string" ? { description: args.description } : {}) });
         return { text: `Created revised proposal ${proposal.id}; ${proposal.supersedesProposalId} is superseded and SHARED was not changed.`, structured: { proposal } };
       },
     },
@@ -1960,6 +1962,88 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
          const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null);
         return { text: messages.length ? JSON.stringify(messages) : "No semantic message identities.", structured: { messages } };
+      },
+    },
+    {
+      name: "list_semantic_bindings",
+      title: "List semantic bindings",
+      description: "List explicit active Semantic Bindings in SHARED, or SHARED plus your MY WORK context when contextId is supplied. Matching names are discovery hints, never evidence. Semantic bindings are separate from SemanticMessageIdentity/messageRef.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
+      annotations: { ...READ_ONLY, title: "List semantic bindings" },
+      requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const bindings = await toolContext.catalog.listSemanticBindings(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null);
+        return { text: bindings.length ? `${bindings.length} explicit semantic binding(s).` : "No documented explicit binding.", structured: { bindings, candidates: { available: false }, semanticMessages: "separate" } };
+      },
+    },
+    {
+      name: "get_semantic_binding",
+      title: "Get semantic binding",
+      description: "Get one explicitly stored binding. Resolution is exact by stable resource and entity identity; no name repair is performed.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), bindingId: z.string().min(1) },
+      annotations: { ...READ_ONLY, title: "Get semantic binding" },
+      requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const binding = await toolContext.catalog.getSemanticBinding(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null, stringArg(args, "bindingId"));
+        return { text: `Binding ${binding.id}: ${binding.left.representation} -> ${binding.right.representation} (${binding.relation}).`, structured: { binding } };
+      },
+    },
+    {
+      name: "get_semantic_bindings_for_entity",
+      title: "Get bindings for exact entity",
+      description: "Find explicit bindings for an exact EntityAnchor. It does not search or match by display name; no match means No documented explicit binding.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), anchor: z.record(z.string(), z.unknown()) },
+      annotations: { ...READ_ONLY, title: "Get bindings for exact entity" },
+      requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const id = stringArg(args, "projectId");
+        const contextId = typeof args.contextId === "string" ? args.contextId : null;
+        const anchor = args.anchor as import("../../../src/domain/workspace/semantic-binding").EntityAnchor;
+        const resources = await toolContext.catalog.listResources(toolContext.context, id, contextId);
+        const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId);
+        const metadata = { ...metadataFrom(resources), semanticMessages: messages };
+        const analyses = await Promise.all(resources.slice(0, MAX_INDEXED_DOCUMENTS).map(async resource => {
+          const { content } = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
+          return analyzeResource({ id: resource.id, projectId: id, path: resource.path, type: resource.type, title: resource.path }, content);
+        }));
+        const index = buildProjectIndex(id, analyses, metadata, () => []);
+        const { getSemanticBindingsForEntity } = await import("../../../src/application/semantic-binding-query");
+        const bindings = await toolContext.catalog.listSemanticBindings(toolContext.context, id, contextId);
+        const resolved = getSemanticBindingsForEntity(anchor, bindings, index);
+        return { text: resolved.length ? `${resolved.length} explicit binding(s) for exact anchor.` : "No documented explicit binding.", structured: { bindings: resolved, candidates: { available: false }, unresolved: resolved.filter(entry => entry.resolution.left !== "resolved" || entry.resolution.right !== "resolved") } };
+      },
+    },
+    {
+      name: "create_semantic_binding",
+      title: "Create semantic binding in MY WORK",
+      description: "Create an explicit binding in the caller's owned MY WORK. Endpoints must be exact anchors from typed index entities and evidence is required. Similar names are never evidence. Publication requires proposal and explicit promotion.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid(), binding: z.record(z.string(), z.unknown()) },
+      annotations: { ...WRITE, title: "Create semantic binding" }, requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const binding = await toolContext.catalog.createSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), args.binding as never);
+        return { text: `Created explicit binding ${binding.id} in MY WORK; SHARED was not changed.`, structured: { binding } };
+      },
+    },
+    {
+      name: "update_semantic_binding",
+      title: "Update semantic binding in MY WORK",
+      description: "Update an existing MY WORK binding with optimistic expectedRevision. A stale revision is rejected. This never writes SHARED.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid(), binding: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1) },
+      annotations: { ...WRITE, title: "Update semantic binding" }, requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const binding = await toolContext.catalog.updateSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), args.binding as never, numberArg(args, "expectedRevision")!);
+        return { text: `Updated binding ${binding.id} to revision ${binding.revision}; SHARED was not changed.`, structured: { binding } };
+      },
+    },
+    {
+      name: "delete_semantic_binding",
+      title: "Delete semantic binding from MY WORK",
+      description: "Remove a binding from the caller's MY WORK using expectedRevision. This does not delete or alter a SHARED binding; authoritative retirement uses proposal/promotion.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid(), bindingId: z.string().min(1), expectedRevision: z.number().int().min(1) },
+      annotations: { ...DELETE, title: "Delete semantic binding" }, requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const binding = await toolContext.catalog.removeSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), stringArg(args, "bindingId"), numberArg(args, "expectedRevision")!);
+        return { text: `Removed binding ${binding.id} from MY WORK; SHARED was not changed.`, structured: { binding } };
       },
     },
     {

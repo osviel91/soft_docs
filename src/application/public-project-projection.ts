@@ -8,6 +8,7 @@ import { createEmptyMetadata, parseProjectMetadata, type ProjectMetadata } from 
 import { resourceClassificationOf } from "../domain/workspace/resource-id";
 import { normalizeResourceMetadata } from "../domain/workspace/resource-metadata";
 import type { ResourceRelationship } from "../domain/workspace/resource-relationship";
+import type { SemanticBinding } from "../domain/workspace/semantic-binding";
 
 export interface PublicProjectSource {
   id: string;
@@ -24,6 +25,7 @@ export function buildPublicProjectProjection(
   sources: PublicProjectSource[],
   manifestContent: string | null,
   relationships: ResourceRelationship[],
+  semanticBindings: SemanticBinding[] = [],
 ) {
   let parsed: ProjectMetadata | null = null;
   if (manifestContent !== null) {
@@ -35,6 +37,7 @@ export function buildPublicProjectProjection(
   }
   const empty = createEmptyMetadata();
   const sourceIds = new Set(sources.map((source) => source.id));
+  const visibleBindings = semanticBindings.filter((binding) => binding.status === "ACTIVE" && binding.provenance.contextId === undefined && sourceIds.has(binding.left.resourceId) && sourceIds.has(binding.right.resourceId));
   const analyses = sources.map((source) => {
     const classification = resourceClassificationOf(source.type);
     const descriptor: ResourceDescriptor = {
@@ -110,6 +113,15 @@ export function buildPublicProjectProjection(
     catalog: {
       ...catalog,
       relationships: metadata.relationships,
+      semanticBindings: visibleBindings.map((binding) => ({
+        ...binding,
+        evidence: {
+          ...binding.evidence,
+          items: binding.evidence.items.map((item) => item.kind === "internal" && !sourceIds.has(item.resourceId)
+            ? { kind: "unavailable" as const }
+            : item),
+        },
+      })),
       semanticOccurrences: safeOccurrences,
       eventFlowMessages: safeEventFlowMessages,
       eventFlowCausality: safeCausality,

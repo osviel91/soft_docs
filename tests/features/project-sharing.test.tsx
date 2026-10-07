@@ -46,14 +46,14 @@ describe("project sharing UI", () => {
   });
 
   it("creates an ephemeral copyable URL and confirms revocation", async () => {
-    const grant = { id: "g1", projectId: "p1", createdByUserId: "u1", createdAt: "2026-01-01", expiresAt: "2026-01-31", revokedAt: null, revokedByUserId: null, state: "ACTIVE" as const };
-    const client = api({ listProjectShares: vi.fn().mockResolvedValue([grant]), createProjectShare: vi.fn().mockResolvedValue({ token: "bearer", grant }), revokeProjectShare: vi.fn().mockResolvedValue(undefined) });
+    const grant = { id: "g1", projectId: "p1", resourceIds: ["seq"], createdByUserId: "u1", createdAt: "2026-01-01", expiresAt: "2026-01-31", revokedAt: null, revokedByUserId: null, state: "ACTIVE" as const };
+    const client = api({ listProjectShares: vi.fn().mockResolvedValue([grant]), listResources: vi.fn().mockResolvedValue([{ id: "seq", projectId: "p1", path: "architecture.seq", type: "sequence-diagram", revision: 1 }]), createProjectShare: vi.fn().mockResolvedValue({ token: "bearer", grant }), revokeProjectShare: vi.fn().mockResolvedValue(undefined) });
     render(<ProjectShareDialog projectId="p1" client={client} onClose={vi.fn()} />);
     await screen.findByText("Active");
     fireEvent.click(screen.getByRole("button", { name: "Create read-only link" }));
     const link = await screen.findByLabelText("Read-only link") as HTMLInputElement;
     expect(link.value).toContain("/share/bearer");
-    expect(client.createProjectShare).toHaveBeenCalledWith("p1");
+    expect(client.createProjectShare).toHaveBeenCalledWith("p1", ["seq"]);
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();

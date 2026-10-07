@@ -9,6 +9,8 @@ export interface ProjectShareGrant {
   expiresAt: Date;
   revokedAt: Date | null;
   revokedByUserId: string | null;
+  /** Resource ids this bearer grant is allowed to expose. */
+  resourceIds: string[];
 }
 
 export function shareGrantState(grant: ProjectShareGrant, now: Date): ShareGrantState {

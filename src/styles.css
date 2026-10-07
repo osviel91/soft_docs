@@ -87,6 +87,20 @@ body {
 .proposal-submit__resources li { padding: 9px 0; border-bottom: 1px solid var(--border); }
 .proposal-submit__resources label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--text); }
 .proposal-submit__resources small { flex-basis: 100%; margin-left: 25px; color: var(--text-faint); }
+.proposal-submit > ul:not(.proposal-submit__resources) { padding-left: 20px; }
+.proposal-submit > ul:not(.proposal-submit__resources) li { margin: 8px 0; }
+.proposal-submit > ul:not(.proposal-submit__resources) label { display: flex; align-items: start; gap: 8px; color: var(--text); }
+.proposal-submit > ul:not(.proposal-submit__resources) p { margin: 4px 0 10px 24px; color: var(--text-muted); }
+.semantic-bindings { max-height: 32vh; overflow: auto; padding: 12px 16px; border-top: 1px solid var(--border); color: var(--text); background: var(--bg-panel); }
+.semantic-bindings h3 { margin: 0 0 8px; font-size: 14px; }
+.semantic-bindings ul { padding-left: 20px; }
+.semantic-bindings li { margin: 10px 0; overflow-wrap: anywhere; }
+.semantic-bindings li p { margin: 5px 0; }
+.semantic-bindings fieldset { display: grid; gap: 8px; margin: 12px 0 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.semantic-bindings label { display: grid; gap: 4px; color: var(--text-muted); }
+.semantic-bindings input, .semantic-bindings select, .semantic-bindings textarea { max-width: 100%; padding: 7px; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }
+.semantic-bindings textarea { min-height: 64px; }
+.semantic-bindings button { margin: 4px 6px 4px 0; }
 .proposal-detail__facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
 .proposal-detail__facts dt { color: var(--text-muted); }
 .proposal-detail__facts dd { margin: 0; }
