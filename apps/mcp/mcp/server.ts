@@ -48,6 +48,7 @@ import {
   ARTIFACT_GUIDANCE_URI,
   EVENT_FLOW_DSL_URI,
   GOVERNANCE_GUIDE_URI,
+  SEMANTIC_BINDING_URI,
   SEQUENCE_DSL_URI,
   registerMcpReferences,
 } from "./reference";
@@ -75,7 +76,7 @@ Work in this order:
 2. get_project_capabilities — inspect shared advisory decisions before acting; then list_private_work_contexts and create_private_work_context to find or create your owned MY WORK context.
 3. get_project_index or list_resources — see what exists and what your token may do; these responses include semantic metadata when present.
 3. read_diagram, read_documentation or read_resource — get the text, semantic metadata and current revision. Use get_resource_metadata when you need metadata without reading the contents; search_project also returns matched descriptions and tags.
-4. Read ${ARTIFACT_GUIDANCE_URI} before authoring Conceptual or Database; read ${SEQUENCE_DSL_URI} before a Sequence and ${EVENT_FLOW_DSL_URI} before an Event Flow. Prefer semantic tools where available; use generic create_resource/update_resource for Conceptual and Database.
+4. Read ${ARTIFACT_GUIDANCE_URI} before authoring Conceptual or Database; read ${SEQUENCE_DSL_URI} before a Sequence, ${EVENT_FLOW_DSL_URI} before an Event Flow, and ${SEMANTIC_BINDING_URI} before authoring a semantic binding. Prefer semantic tools where available; use generic create_resource/update_resource for Conceptual and Database.
 5. Every write names the revision it read as \`expectedRevision\`. A stale value is refused with a conflict: re-read, then retry at the new revision. Never invent a revision.
 6. Resource descriptions and tags are documentary metadata. Use get_resource_metadata to inspect them or update_resource_metadata to replace them without changing text; an empty metadata object clears them.
 7. After changing a diagram, call validate_project to see problems; pass the owned MY WORK contextId to validate resources in that private context (without it, validation covers SHARED).

@@ -13,6 +13,7 @@ export { ARTIFACT_GUIDANCE_URI };
 
 export const SEQUENCE_DSL_URI = "seqdocs://reference/sequence-dsl";
 export const EVENT_FLOW_DSL_URI = "seqdocs://reference/event-flow-dsl";
+export const SEMANTIC_BINDING_URI = "seqdocs://reference/semantic-binding";
 // Governance is remote-only: stdio serves the separate local-first contract.
 export const GOVERNANCE_GUIDE_URI = "seqdocs://reference/mcp-governance";
 const GOVERNANCE_GUIDE_PATH = join(
@@ -84,6 +85,52 @@ function sequenceReferenceText(): string {
     SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE,
   ].join("\n");
 }
+
+const SEMANTIC_BINDING_GUIDANCE = `# Semantic binding MCP reference
+
+Semantic bindings connect typed Conceptual/Database entities using explicit evidence. They are separate from semantic message identities and resource relationships. Equal or similar names are discovery hints only, never evidence.
+
+## Discover exact anchors
+
+Call \`get_project_index\` with the project id and the owned MY WORK \`contextId\`:
+
+\`\`\`json
+{ "projectId": "<project-id>", "contextId": "<my-work-context-id>" }
+\`\`\`
+
+Find \`entities\` by \`displayName\`; each result includes \`resourceId\`, \`representation\`, \`entityKind\`, stable \`identity\`, exact \`anchor\`, \`resolution\`, and \`contextId\`. Copy the returned \`anchor\` values literally. Do not reconstruct an anchor from a name, path, or DSL.
+
+## Evidence-backed example
+
+Assume the index returns a Conceptual entity named \`recharge-registry\` and a Database table named \`programmed_recharges_events\`. Use the exact returned anchors below (the values are illustrative; callers must substitute the actual objects returned by the index):
+
+\`\`\`json
+{
+  "left": { "version": 1, "resourceId": "concept-resource-id", "representation": "conceptual", "entityKind": "concept", "identity": { "kind": "local-id", "value": "recharge-registry" } },
+  "right": { "version": 1, "resourceId": "database-resource-id", "representation": "database", "entityKind": "table", "identity": { "kind": "local-id", "value": "programmed_recharges_events" } }
+}
+\`\`\`
+
+Then call \`create_semantic_binding\` with the same \`projectId\` and MY WORK \`contextId\`:
+
+\`\`\`json
+{
+  "binding": {
+    "id": "f4c6d93e-f19c-4f72-a9bc-2966fc9cb5ea",
+    "left": { "version": 1, "resourceId": "concept-resource-id", "representation": "conceptual", "entityKind": "concept", "identity": { "kind": "local-id", "value": "recharge-registry" } },
+    "right": { "version": 1, "resourceId": "database-resource-id", "representation": "database", "entityKind": "table", "identity": { "kind": "local-id", "value": "programmed_recharges_events" } },
+    "relation": "represents-in",
+    "evidence": {
+      "version": 1,
+      "rationale": "BillingMiddleware persists recharge registry events through the ORM mapping to this table.",
+      "items": [{ "kind": "external", "reference": "src/billing/BillingMiddleware.ts and migrations/2024xxxx_programmed_recharges_events.sql", "description": "ORM entity/table mapping and migration define the persisted recharge event records." }]
+    }
+  }
+}
+\`\`\`
+
+The anchor objects in the create request must be copied literally from the entity results; illustrative IDs above are not real identities. Evidence must cite repository, migration, or other observed source material that establishes the mapping. Name coincidence alone does not establish it. Updates also require \`expectedRevision\`, the revision read from \`get_semantic_binding\`; stale revisions return a conflict.
+`;
 
 export function registerMcpReferences(server: {
   registerResource: (
@@ -159,5 +206,15 @@ export function registerMcpReferences(server: {
         { uri: uri.href, mimeType: "text/markdown", text: eventFlowDslText() },
       ],
     }),
+  );
+  server.registerResource(
+    "semantic-binding",
+    SEMANTIC_BINDING_URI,
+    {
+      title: "Semantic binding MCP reference",
+      description: "Discover exact bindable entity anchors and author evidence-backed semantic bindings.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: SEMANTIC_BINDING_GUIDANCE }] }),
   );
 }

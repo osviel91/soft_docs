@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MCP_INSTRUCTIONS } from "../../apps/mcp/mcp/server";
-import { ARTIFACT_GUIDANCE_URI, GOVERNANCE_GUIDE_URI } from "../../apps/mcp/mcp/reference";
+import { ARTIFACT_GUIDANCE_URI, GOVERNANCE_GUIDE_URI, SEMANTIC_BINDING_URI } from "../../apps/mcp/mcp/reference";
 import { createMcpTools } from "../../apps/mcp/mcp/tools";
 import { analyzeResource } from "../../src/domain/project/resource-analysis";
 import { parseDatabase } from "../../src/language/database/analyze";
@@ -320,6 +320,91 @@ describe("the remote MCP service over Streamable HTTP", () => {
         expect.objectContaining({ code: "eventflow.unknown-handler" }),
       ]),
     );
+    await client.close();
+  });
+
+  it("dogfoods exact bindable anchors and evidence-backed binding over MCP", async () => {
+    const client = await connect(token);
+    const { tools } = await client.listTools();
+    const createSchema = tools.find(tool => tool.name === "create_semantic_binding")!.inputSchema as any;
+    const updateSchema = tools.find(tool => tool.name === "update_semantic_binding")!.inputSchema as any;
+    expect(createSchema.properties).toMatchObject({ projectId: expect.any(Object), contextId: expect.any(Object), binding: expect.any(Object) });
+    expect(createSchema.required).toEqual(expect.arrayContaining(["projectId", "contextId", "binding"]));
+    expect(createSchema.properties.binding.required).toEqual(expect.arrayContaining(["id", "left", "right", "relation", "evidence"]));
+    expect(createSchema.properties.binding.properties.left.required).toEqual(expect.arrayContaining(["version", "resourceId", "representation", "entityKind", "identity"]));
+    expect(createSchema.properties.binding.properties.relation.enum).toEqual(["represents-in"]);
+    expect(updateSchema.required).toEqual(expect.arrayContaining(["contextId", "binding", "expectedRevision"]));
+
+    const conceptual = await client.callTool({ name: "create_resource", arguments: {
+      projectId, path: "billing/concepts.concept", type: "conceptual",
+      content: 'concept recharge-registry "recharge-registry"',
+    } });
+    const database = await client.callTool({ name: "create_resource", arguments: {
+      projectId, path: "billing/recharges.dbschema", type: "database",
+      content: 'table programmed_recharges_events - "programmed_recharges_events"',
+    } });
+    expect(conceptual.isError, JSON.stringify(conceptual)).toBeFalsy();
+    expect(database.isError, JSON.stringify(database)).toBeFalsy();
+
+    const listed = await client.callTool({ name: "get_project_index", arguments: { projectId, contextId } });
+    const entities = structured(listed).entities as Array<Record<string, any>>;
+    const concept = entities.find(entity => entity.displayName === "recharge-registry")!;
+    const table = entities.find(entity => entity.displayName === "programmed_recharges_events")!;
+    expect(concept).toMatchObject({ resourceId: structured(conceptual).resource.id, representation: "conceptual", entityKind: "concept", resolution: "resolved", contextId });
+    expect(table).toMatchObject({ resourceId: structured(database).resource.id, representation: "database", entityKind: "table", resolution: "resolved", contextId });
+    expect(concept.anchor).toEqual({ version: 1, resourceId: concept.resourceId, representation: concept.representation, entityKind: concept.entityKind, identity: concept.identity });
+
+    const created = await client.callTool({ name: "create_semantic_binding", arguments: {
+      projectId,
+      contextId,
+      binding: {
+        id: "f4c6d93e-f19c-4f72-a9bc-2966fc9cb5ea", left: concept.anchor, right: table.anchor,
+        relation: "represents-in",
+        evidence: { version: 1, rationale: "BillingMiddleware maps recharge registry events to this persisted table.", items: [{ kind: "external", reference: "src/billing/BillingMiddleware.ts; migrations/2026_programmed_recharges_events.sql", description: "The ORM mapping and migration establish the persisted event table." }] },
+      },
+    } });
+    expect(created.isError, JSON.stringify(created)).toBeFalsy();
+    const byConcept = await client.callTool({ name: "get_semantic_bindings_for_entity", arguments: { projectId, contextId, anchor: concept.anchor } });
+    expect(structured(byConcept).bindings).toEqual([expect.objectContaining({ binding: expect.objectContaining({ id: "f4c6d93e-f19c-4f72-a9bc-2966fc9cb5ea", left: concept.anchor, right: table.anchor, relation: "represents-in" }), resolution: { left: "resolved", right: "resolved" } })]);
+
+    const listedResources = await client.listResources();
+    const reference = listedResources.resources.find(entry => entry.uri === SEMANTIC_BINDING_URI);
+    expect(reference).toBeDefined();
+    const referenceText = (await client.readResource({ uri: reference!.uri })).contents[0] as { text: string };
+    expect(referenceText.text.toLowerCase()).toContain("copy the returned");
+    expect(referenceText.text).toContain("never evidence");
+
+    const bindingValue = structured(created).binding as Record<string, any>;
+    const createBinding = { id: bindingValue.id, left: bindingValue.left, right: bindingValue.right, relation: bindingValue.relation, evidence: bindingValue.evidence };
+    const invalidPayloads = [
+      { ...createBinding, left: undefined },
+      { ...createBinding, right: undefined },
+      { ...createBinding, left: { ...concept.anchor, resourceId: undefined } },
+      { ...createBinding, left: { ...concept.anchor, representation: "sequence" } },
+      { ...createBinding, left: { ...concept.anchor, entityKind: "table" } },
+      { ...createBinding, left: { ...concept.anchor, identity: { kind: "local-id", value: "not-indexed" } } },
+      { ...createBinding, relation: "related-to" },
+      { ...createBinding, evidence: { version: 1, rationale: "", items: [] } },
+    ];
+    for (const [index, invalidBinding] of invalidPayloads.entries()) {
+      const invalidPayload = await client.callTool({ name: "create_semantic_binding", arguments: { projectId, contextId, binding: { ...invalidBinding, id: `a84e63a0-45df-4d51-ae4b-51f073e2e2${String(index).padStart(2, "0")}` } } });
+      expect(invalidPayload.isError).toBe(true);
+      expect(JSON.stringify(invalidPayload)).toMatch(/validation|invalid|left|right|resourceId|representation|entityKind|relation|evidence/i);
+      expect(JSON.stringify(invalidPayload)).not.toMatch(/Cannot read properties|internal TypeError/i);
+    }
+
+    const otherOwner = await harness.aUser("Other binding owner");
+    const otherContext = await harness.aPrivateWork(projectId, otherOwner);
+    const wrongContext = await client.callTool({ name: "create_semantic_binding", arguments: { projectId, contextId: otherContext, binding: createBinding } });
+    expect(wrongContext.isError).toBe(true);
+    expect(JSON.stringify(wrongContext)).toMatch(/forbidden|private|owned|context/i);
+
+    const updated = { ...createBinding, revision: bindingValue.revision, status: bindingValue.status, provenance: bindingValue.provenance, evidence: { ...bindingValue.evidence, rationale: "Clarified ORM and migration evidence." } };
+    const firstUpdate = await client.callTool({ name: "update_semantic_binding", arguments: { projectId, contextId, binding: updated, expectedRevision: 1 } });
+    expect(firstUpdate.isError, JSON.stringify(firstUpdate)).toBeFalsy();
+    const stale = await client.callTool({ name: "update_semantic_binding", arguments: { projectId, contextId, binding: updated, expectedRevision: 1 } });
+    expect(stale.isError).toBe(true);
+    expect(structured(stale).error.code).toBe("conflict");
     await client.close();
   });
 

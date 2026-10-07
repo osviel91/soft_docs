@@ -156,6 +156,40 @@ const cursor = () =>
       "The `nextCursor` from the previous page, or omitted for the first.",
     );
 
+const entityAnchorSchema = z.object({
+  version: z.literal(1),
+  resourceId: z.string().min(1).describe("Stable resource id from the bindable-entity listing."),
+  representation: z.enum(["conceptual", "database"]),
+  entityKind: z.enum(["concept", "conceptual-relationship", "table", "foreign-key", "primary-key", "unique-key", "index", "column"]),
+  identity: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("local-id"), value: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("table-column-name"), tableId: z.string().min(1), name: z.string().min(1) }).strict(),
+  ]),
+}).strict().describe("Copy the exact anchor returned for a bindable entity; do not reconstruct it from its display name.");
+
+const bindingEvidenceSchema = z.object({
+  version: z.literal(1),
+  rationale: z.string().trim().min(1).describe("Why repository or migration evidence establishes this relation."),
+  items: z.array(z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("internal"), resourceId: z.string().min(1), revision: z.number().int().min(1), entity: entityAnchorSchema.optional(), range: z.object({ start: z.object({ line: z.number().int().min(0), column: z.number().int().min(0) }).strict(), end: z.object({ line: z.number().int().min(0), column: z.number().int().min(0) }).strict() }).strict().optional() }).strict(),
+    z.object({ kind: z.literal("external"), reference: z.string().trim().min(1), description: z.string().trim().min(1) }).strict(),
+  ])).min(1),
+}).strict();
+
+const semanticBindingInputSchema = z.object({
+  id: z.string().uuid().describe("Client-generated binding UUID; not an entity or message identity."),
+  left: entityAnchorSchema,
+  right: entityAnchorSchema,
+  relation: z.enum(["represents-in"]),
+  evidence: bindingEvidenceSchema,
+}).strict();
+
+const semanticBindingUpdateSchema = semanticBindingInputSchema.extend({
+  revision: z.number().int().min(1),
+  status: z.enum(["ACTIVE", "RETIRED"]),
+  provenance: z.object({ authorId: z.string().min(1), contextId: z.string().uuid().optional(), proposalId: z.string().uuid().optional(), createdAt: z.string().datetime() }).strict(),
+}).strict();
+
 /** A retry key that makes a mutation happen at most once. */
 const idempotencyKey = () =>
   z
@@ -789,7 +823,7 @@ export function createMcpTools(): McpTool[] {
       name: "get_project_index",
       title: "Get the project index",
       description:
-        "Return a bounded index of a project: every resource with its id, path and type, plus the sequence diagrams' participant and message counts. Use it to understand a project before reading individual documents.",
+        "Return a bounded project index with resources, relationships and bindable Conceptual/Database entities. Each entity includes its exact EntityAnchor; reuse it verbatim for semantic bindings. Pass contextId to inspect SHARED plus your MY WORK context.",
       inputSchema: {
         projectId: projectId(),
          contextId: z.string().uuid().optional(),
@@ -801,11 +835,7 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
         const contextId = typeof args.contextId === "string" ? args.contextId : null;
-        const resources = await toolContext.catalog.listResources(
-          toolContext.context,
-          id,
-          contextId,
-        );
+        const { index, resources } = await semanticIndex(toolContext, id, contextId);
         const { items, nextCursor } = page(
           resources,
           decodeCursor(
@@ -831,6 +861,16 @@ export function createMcpTools(): McpTool[] {
               ...(resource.metadata === undefined
                 ? {}
                 : { metadata: resource.metadata }),
+            })),
+            entities: (index.entities ?? []).map(({ name, anchor }) => ({
+              displayName: name,
+              resourceId: anchor.resourceId,
+              representation: anchor.representation,
+              entityKind: anchor.entityKind,
+              identity: anchor.identity,
+              anchor,
+              resolution: "resolved",
+              contextId: contextId ?? "SHARED",
             })),
             relationships,
             nextCursor,
@@ -1992,7 +2032,7 @@ export function createMcpTools(): McpTool[] {
       name: "get_semantic_bindings_for_entity",
       title: "Get bindings for exact entity",
       description: "Find explicit bindings for an exact EntityAnchor. It does not search or match by display name; no match means No documented explicit binding.",
-      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), anchor: z.record(z.string(), z.unknown()) },
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), anchor: entityAnchorSchema },
       annotations: { ...READ_ONLY, title: "Get bindings for exact entity" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
@@ -2016,11 +2056,13 @@ export function createMcpTools(): McpTool[] {
     {
       name: "create_semantic_binding",
       title: "Create semantic binding in MY WORK",
-      description: "Create an explicit binding in the caller's owned MY WORK. Endpoints must be exact anchors from typed index entities and evidence is required. Similar names are never evidence. Publication requires proposal and explicit promotion.",
-      inputSchema: { projectId: projectId(), contextId: z.string().uuid(), binding: z.record(z.string(), z.unknown()) },
+      description: "Create an explicit binding in the caller's owned MY WORK. Copy left/right anchors from get_project_index.entities. relation is represents-in; evidence requires version 1, rationale and at least one internal or external evidence item. Name matches are discovery hints only, never evidence. Publication requires proposal and explicit promotion.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().describe("Owned MY WORK context id used for entity discovery and binding creation."), binding: semanticBindingInputSchema.describe("Binding with exact left/right anchors, supported relation and required evidence.") },
       annotations: { ...WRITE, title: "Create semantic binding" }, requiredPermissions: ["resource:update"],
       async run(args, toolContext) {
-        const binding = await toolContext.catalog.createSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), args.binding as never);
+        const parsed = semanticBindingInputSchema.safeParse(args.binding);
+        if (!parsed.success) throw invalid("Invalid semantic binding payload.", { fieldErrors: parsed.error.issues.map(issue => ({ field: `binding.${issue.path.join(".")}`, message: issue.message })) });
+        const binding = await toolContext.catalog.createSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), parsed.data as never);
         return { text: `Created explicit binding ${binding.id} in MY WORK; SHARED was not changed.`, structured: { binding } };
       },
     },
@@ -2028,10 +2070,14 @@ export function createMcpTools(): McpTool[] {
       name: "update_semantic_binding",
       title: "Update semantic binding in MY WORK",
       description: "Update an existing MY WORK binding with optimistic expectedRevision. A stale revision is rejected. This never writes SHARED.",
-      inputSchema: { projectId: projectId(), contextId: z.string().uuid(), binding: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1) },
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().describe("Owned MY WORK context id."), binding: semanticBindingUpdateSchema.describe("Complete binding state; left/right anchors and evidence use the same schema as create_semantic_binding."), expectedRevision: z.number().int().min(1).describe("Revision last read from get_semantic_binding; stale revisions return conflict.") },
       annotations: { ...WRITE, title: "Update semantic binding" }, requiredPermissions: ["resource:update"],
       async run(args, toolContext) {
-        const binding = await toolContext.catalog.updateSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), args.binding as never, numberArg(args, "expectedRevision")!);
+        const parsed = semanticBindingUpdateSchema.safeParse(args.binding);
+        if (!parsed.success) throw invalid("Invalid semantic binding payload.", { fieldErrors: parsed.error.issues.map(issue => ({ field: `binding.${issue.path.join(".")}`, message: issue.message })) });
+        const expectedRevision = numberArg(args, "expectedRevision");
+        if (expectedRevision === undefined) throw invalid("expectedRevision is required.", { field: "expectedRevision" });
+        const binding = await toolContext.catalog.updateSemanticBinding(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), parsed.data as never, expectedRevision);
         return { text: `Updated binding ${binding.id} to revision ${binding.revision}; SHARED was not changed.`, structured: { binding } };
       },
     },
