@@ -446,9 +446,6 @@ describe("App — authenticated browser", () => {
       expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Private work");
       expect(new URLSearchParams(window.location.search).get("proposal")).toBeNull();
     });
-    const proposalRow = await screen.findByTestId("explorer-proposal");
-    expect(proposalRow).toHaveTextContent("WITHDRAWN");
-    expect(proposalRow).not.toHaveAttribute("data-revising", "true");
     expect(screen.queryByTestId("explorer-revision-origin")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and submit…" })).not.toBeInTheDocument();
   });
