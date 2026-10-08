@@ -237,8 +237,12 @@ describe("Explorer", () => {
         onLoadDiagram={vi.fn()}
       />,
     );
-    expect(screen.getByTitle("Sequence diagram")).toHaveTextContent("○");
-    expect(screen.getByTitle("Event Flow")).toHaveTextContent("□");
+    expect(screen.getByTitle("Sequence diagram").closest("svg")).toHaveClass(
+      "explorer__diagram-kind--sequence-diagram",
+    );
+    expect(screen.getByTitle("Event flow").closest("svg")).toHaveClass(
+      "explorer__diagram-kind--event-flow",
+    );
   });
 
   it("shows a diagram by the title in its source, not its file name", () => {

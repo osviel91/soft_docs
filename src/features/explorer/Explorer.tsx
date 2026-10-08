@@ -31,7 +31,39 @@ import type {
 } from "../../domain/workspace/types";
 import { diagramDisplayName } from "../../language/diagram-title";
 import { noteDisplayName } from "../../language/markdown/note-title";
+import { resourceTypeOfName } from "../../domain/workspace/resource-id";
 import { proposalLifecycle } from "../proposals/proposal-lifecycle";
+
+const resourceLabels = {
+  "sequence-diagram": "Sequence diagram",
+  "event-flow": "Event flow",
+  conceptual: "Conceptual diagram",
+  database: "Database diagram",
+  "markdown-document": "Note",
+} as const;
+
+function ResourceIcon({ type }: { type: keyof typeof resourceLabels }) {
+  return (
+    <svg
+      className={`explorer__diagram-kind explorer__diagram-kind--${type}`}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.35"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <title>{resourceLabels[type]}</title>
+      {type === "database" ? <><ellipse cx="8" cy="3.5" rx="5.5" ry="2" /><path d="M2.5 3.5v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-8M2.5 7.5c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" /></> : null}
+      {type === "conceptual" ? <><path d="m4 4 4 7 4-7M4 4h8" /><circle cx="4" cy="4" r="1.5" fill="currentColor" /><circle cx="12" cy="4" r="1.5" fill="currentColor" /><circle cx="8" cy="12" r="1.5" fill="currentColor" /></> : null}
+      {type === "sequence-diagram" ? <><path d="M4 2v12M12 2v12M4 5h6M8.5 3.5 10 5 8.5 6.5" /></> : null}
+      {type === "event-flow" ? <><rect x="1.5" y="5.5" width="3" height="3" rx="1" /><rect x="11.5" y="2" width="3" height="3" rx="1" /><rect x="11.5" y="11" width="3" height="3" rx="1" /><path d="M4.5 7h3a2 2 0 0 0 2-2V4M7.5 7a2 2 0 0 1 2 2v2" /></> : null}
+      {type === "markdown-document" ? <><path d="M3 1.5h6l4 4v9H3zM9 1.5v4h4M5.5 8h5M5.5 10.5h5" /></> : null}
+    </svg>
+  );
+}
 
 /** Viewport coordinates for a context menu. */
 export interface MenuPosition {
@@ -160,7 +192,7 @@ function ServerResourceTree({
       {diagrams.map((diagram) => (
         <li key={diagram.id} className={diagram.id === selectedDiagramId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-diagram" onContextMenu={(event) => { if (!onDiagramMenu) return; event.preventDefault(); onDiagramMenu(diagram, { x: event.clientX, y: event.clientY }); }}>
           <button type="button" className="explorer__resource-button" data-testid="select-diagram-button" aria-label={`Load diagram ${diagramDisplayName(diagram.name, diagram.source)}`} onClick={() => onLoadDiagram(diagram)}>
-            <span className="explorer__diagram-kind" aria-hidden="true">{diagram.name.toLowerCase().endsWith(".eventseq") ? "□" : "○"}</span>
+            <ResourceIcon type={resourceTypeOfName(diagram.name)} />
             <span className="explorer__item-name">{diagramDisplayName(diagram.name, diagram.source)}</span>
             {(openProposalCounts?.[diagram.id] ?? 0) > 0 ? <span className="explorer__status-slot" title={`${openProposalCounts?.[diagram.id]} open changes`}>◆</span> : null}
           </button>
@@ -170,7 +202,7 @@ function ServerResourceTree({
       {safeNotes.map((note) => (
         <li key={note.id} className={note.id === selectedNoteId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-note" onContextMenu={(event) => { if (!onNoteMenu) return; event.preventDefault(); onNoteMenu(note, { x: event.clientX, y: event.clientY }); }}>
           <button type="button" className="explorer__resource-button" data-testid="select-note-button" aria-label={`Open note ${noteDisplayName(note.name, note.markdown)}`} onClick={() => onLoadNote?.(note)}>
-            <span className="explorer__item-icon" aria-hidden="true">¶</span>
+            <ResourceIcon type="markdown-document" />
             <span className="explorer__item-name">{noteDisplayName(note.name, note.markdown)}</span>
           </button>
           {onNoteMenu ? <button type="button" className="explorer__note-menu" data-testid="note-menu-button" aria-label={`Actions for note ${noteDisplayName(note.name, note.markdown)}`} onClick={(event) => onNoteMenu(note, positionBelow(event.currentTarget))}>⋯</button> : null}
@@ -619,23 +651,7 @@ function LocalWorkspaceExplorer({
                             aria-label={`Load diagram ${diagramName(diagram)}`}
                             onClick={() => onLoadDiagram(diagram)}
                           >
-                            <span
-                              className={`explorer__diagram-kind ${
-                                diagram.name.toLowerCase().endsWith(".eventseq")
-                                  ? "explorer__diagram-kind--event-flow"
-                                  : "explorer__diagram-kind--sequence"
-                              }`}
-                              aria-hidden="true"
-                              title={
-                                diagram.name.toLowerCase().endsWith(".eventseq")
-                                  ? "Event Flow"
-                                  : "Sequence diagram"
-                              }
-                            >
-                              {diagram.name.toLowerCase().endsWith(".eventseq")
-                                ? "□"
-                                : "○"}
-                            </span>
+                            <ResourceIcon type={resourceTypeOfName(diagram.name)} />
                             <span className="explorer__item-name">
                               {diagramName(diagram)}
                             </span>
@@ -722,12 +738,7 @@ function LocalWorkspaceExplorer({
                             aria-label={`Open note ${noteName(note)}`}
                             onClick={() => onLoadNote?.(note)}
                           >
-                            <span
-                              className="explorer__item-icon"
-                              aria-hidden="true"
-                            >
-                              ¶
-                            </span>
+                            <ResourceIcon type="markdown-document" />
                             <span className="explorer__item-name">
                               {noteName(note)}
                             </span>

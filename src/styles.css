@@ -3705,13 +3705,8 @@ body {
   justify-content: center;
   width: 14px;
   height: 14px;
+  margin-right: 6px;
   color: var(--text-faint);
-  font-size: 15px;
-  line-height: 1;
-}
-
-.explorer__diagram-kind--event-flow {
-  font-size: 13px;
 }
 
 .explorer__diagram-menu,
