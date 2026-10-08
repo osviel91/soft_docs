@@ -16,9 +16,24 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const authResult = new URLSearchParams(window.location.search).get("auth");
+  const recoveryToken = new URLSearchParams(window.location.hash.slice(1)).get("reset");
 
   const submitPassword = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (recoveryToken) {
+      if (!auth.redeemPasswordRecovery) return;
+      setBusy(true);
+      setError(null);
+      void auth.redeemPasswordRecovery(recoveryToken, password)
+        .then(() => {
+          setPassword("");
+          setMessage("Password updated. You can now sign in.");
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        })
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not reset password."))
+        .finally(() => setBusy(false));
+      return;
+    }
     if (!auth.signInLocal || !auth.registerLocal) return;
     setBusy(true);
     setError(null);
@@ -48,8 +63,8 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
           <span>Software Docs Manager</span>
         </div>
         {!invitationMode && <p className="login-card__eyebrow">Workspace platform</p>}
-        <h2 id="login-title">{invitationMode ? "Sign in or create an account" : "Sign in to continue"}</h2>
-        <p className="login-card__lead">
+        <h2 id="login-title">{recoveryToken ? "Choose a new password" : invitationMode ? "Sign in or create an account" : "Sign in to continue"}</h2>
+          <p className="login-card__lead">
           Choose how you want to access your workspaces and projects.
         </p>
 
@@ -88,7 +103,7 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
                 />
               </label>
             )}
-            <label>
+            {!recoveryToken && <label>
               Email
               <input
                 data-testid="login-email"
@@ -98,7 +113,7 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
                 autoComplete="email"
                 required
               />
-            </label>
+            </label>}
             <label>
               Password
               <input
@@ -106,15 +121,16 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={localMode === "register" ? "12+ characters" : undefined}
-                autoComplete={localMode === "register" ? "new-password" : "current-password"}
+                placeholder={localMode === "register" || recoveryToken ? "12+ characters" : undefined}
+                autoComplete={localMode === "login" && !recoveryToken ? "current-password" : "new-password"}
+                minLength={recoveryToken ? 12 : undefined}
                 required
               />
             </label>
             <button type="submit" className="button login-form__submit" disabled={busy}>
-              {busy ? "Working…" : localMode === "login" ? "Sign in" : "Create account"}
+              {busy ? "Working…" : recoveryToken ? "Set new password" : localMode === "login" ? "Sign in" : "Create account"}
             </button>
-            <button
+            {!recoveryToken && <button
               type="button"
               className="login-form__link"
               onClick={() => {
@@ -124,18 +140,18 @@ export default function LoginScreen({ auth, invitationMode = false }: LoginScree
               }}
             >
               {localMode === "login" ? "Create a local account" : "Use an existing account"}
-            </button>
+            </button>}
           </form>
 
-        <div className="login-divider"><span>or</span></div>
-        <button
+        {!recoveryToken && <div className="login-divider"><span>or</span></div>}
+        {!recoveryToken && <button
           type="button"
           className="button login-google"
           data-testid="login-google"
           onClick={auth.signIn}
         >
           Continue with Google
-        </button>
+        </button>}
 
         {error && <p className="login-card__error" data-testid="login-error">{error}</p>}
         {message && <p className="login-card__message" data-testid="login-message">{message}</p>}

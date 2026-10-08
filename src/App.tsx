@@ -431,6 +431,10 @@ export default function App() {
     },
     [apiClient],
   );
+  const createAdminPasswordRecovery = useCallback(
+    (userId: string) => apiClient.createPasswordRecovery(userId),
+    [apiClient],
+  );
   const setWorkspaceMemberRole = useCallback(
     (
       workspaceId: string,
@@ -3264,6 +3268,7 @@ export default function App() {
           ) : undefined}
           adminUsers={adminUsers}
           onSetUserStatus={setAdminUserStatus}
+          onCreatePasswordRecovery={createAdminPasswordRecovery}
           workspaces={serverWorkspaces}
           selectedWorkspaceId={selectedServerWorkspaceId}
           onSelectWorkspace={setSelectedServerWorkspaceId}

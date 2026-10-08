@@ -607,6 +607,53 @@ describe("local account authentication", () => {
     ]);
     expect(events.every((event) => event.actorId === admin.id)).toBe(true);
   });
+
+  it("lets a platform admin issue a one-time recovery link that changes the password and revokes sessions", async () => {
+    const router = createRouter(dependencies);
+    const email = `recovery-${Date.now()}@example.test`;
+    await router.handle(request("POST", "/auth/register", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password-123" }),
+    }));
+    const target = await dependencies.users.findLocalByEmail(email);
+    expect(target).not.toBeNull();
+    await dependencies.users.setStatus(target!.user.id, "ACTIVE");
+
+    const admin = await dependencies.users.findOrCreateByExternalIdentity({
+      issuer: provider.issuer,
+      subject: `recovery-admin-${Date.now()}`,
+      displayName: "Recovery Admin",
+      email: null,
+    });
+    await dependencies.sql.query("UPDATE users SET platform_admin = true WHERE id = $1", [admin.id]);
+    const adminToken = createSessionToken(crypto.randomUUID());
+    await dependencies.sessions.create({ id: sessionIdOf(adminToken)!, userId: admin.id, tokenHash: hashSessionToken(adminToken), expiresAt: new Date(Date.now() + 60_000) });
+    const oldToken = createSessionToken(crypto.randomUUID());
+    await dependencies.sessions.create({ id: sessionIdOf(oldToken)!, userId: target!.user.id, tokenHash: hashSessionToken(oldToken), expiresAt: new Date(Date.now() + 60_000) });
+
+    const issued = await router.handle(request("POST", `/api/admin/users/${target!.user.id}/password-recovery`, {
+      headers: { cookie: `${SESSION_COOKIE}=${encodeURIComponent(adminToken)}` },
+    }));
+    expect(issued.status, issued.body).toBe(200);
+    const { token } = JSON.parse(issued.body) as { token: string };
+    const redeemed = await router.handle(request("POST", "/auth/recovery/redeem", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, password: "replacement-password-456" }),
+    }));
+    expect(redeemed.status).toBe(200);
+    expect((await dependencies.sessions.findById(sessionIdOf(oldToken)!))?.revokedAt).not.toBeNull();
+
+    const replay = await router.handle(request("POST", "/auth/recovery/redeem", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, password: "another-password-789" }),
+    }));
+    expect(replay.status).toBe(400);
+    const login = await router.handle(request("POST", "/auth/local-login", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "replacement-password-456" }),
+    }));
+    expect(login.status).toBe(200);
+  });
 });
 
 describe("ID token claim checking", () => {

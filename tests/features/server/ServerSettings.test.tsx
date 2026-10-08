@@ -5,6 +5,7 @@ import ServerSettings from "../../../src/features/server/ServerSettings";
 function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="agents-panel">Agent access settings</div>) {
   const actions = {
     onSetUserStatus: vi.fn(),
+    onCreatePasswordRecovery: vi.fn().mockResolvedValue("recovery-token"),
     onSelectWorkspace: vi.fn(),
     onSetWorkspaceMemberRole: vi.fn(),
     onSetWorkspaceAuthorSelfReview: vi.fn(),
@@ -32,6 +33,7 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
         platformAdmin: false,
       }]}
       onSetUserStatus={actions.onSetUserStatus}
+      onCreatePasswordRecovery={actions.onCreatePasswordRecovery}
       workspaces={[
         {
           id: "workspace-1",

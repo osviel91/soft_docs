@@ -16,6 +16,7 @@ export interface ServerSettingsProps {
   agentsPanel?: ReactNode;
   adminUsers: ServerAdminUser[];
   onSetUserStatus: (userId: string, status: ServerAdminUser["status"]) => void;
+  onCreatePasswordRecovery: (userId: string) => Promise<string>;
   workspaces: ServerWorkspace[];
   selectedWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
@@ -41,6 +42,7 @@ export default function ServerSettings({
   agentsPanel,
   adminUsers,
   onSetUserStatus,
+  onCreatePasswordRecovery,
   workspaces,
   selectedWorkspaceId,
   onSelectWorkspace,
@@ -71,6 +73,8 @@ export default function ServerSettings({
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [recoveryLink, setRecoveryLink] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const workspace = workspaces.find((item) => item.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
   const invitations = workspace ? workspaceInvitationsByWorkspaceId?.[workspace.id] ?? [] : [];
   const members = workspace ? workspaceMembersByWorkspaceId[workspace.id] ?? [] : [];
@@ -144,8 +148,16 @@ export default function ServerSettings({
             <span className="settings-card__count">{adminUsers.length} accounts</span>
           </div>
           <p className="settings-card__muted">
-            Server-wide access control. Approve accounts before they can use server workspaces, or suspend access.
+            Server-wide access control. Approve accounts before they can use server workspaces, suspend access, or issue a one-time password recovery link.
           </p>
+          {recoveryLink && (
+            <div className="settings-card__muted" role="status">
+              <p>Share this link with the user through a verified channel. It expires in 30 minutes and can be used once.</p>
+              <input aria-label="Password recovery link" readOnly value={recoveryLink} onFocus={(event) => event.currentTarget.select()} />
+              <button type="button" className="button button--small" onClick={() => void navigator.clipboard?.writeText(recoveryLink)}>Copy recovery link</button>
+            </div>
+          )}
+          {recoveryError && <p className="login-card__error" role="alert">{recoveryError}</p>}
           <div className="settings-users" role="list">
             {adminUsers.map((adminUser) => (
               <div className="settings-user" role="listitem" key={adminUser.id}>
@@ -162,6 +174,19 @@ export default function ServerSettings({
                   <option value="ACTIVE">Active</option>
                   <option value="SUSPENDED">Suspended</option>
                 </select>
+                <button
+                  type="button"
+                  className="button button--small"
+                  onClick={() => {
+                    setRecoveryError(null);
+                    setRecoveryLink(null);
+                    void onCreatePasswordRecovery(adminUser.id)
+                      .then((token) => setRecoveryLink(`${window.location.origin}/#reset=${encodeURIComponent(token)}`))
+                      .catch((error: unknown) => setRecoveryError(error instanceof Error ? error.message : "Could not create a recovery link."));
+                  }}
+                >
+                  Reset password
+                </button>
               </div>
             ))}
             {adminUsers.length === 0 && <p className="settings-card__empty">No accounts to manage.</p>}

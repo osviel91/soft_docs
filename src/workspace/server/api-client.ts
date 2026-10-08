@@ -452,6 +452,10 @@ export class ServerApiClient {
     );
   }
 
+  async redeemPasswordRecovery(token: string, password: string): Promise<void> {
+    await this.request<unknown>("POST", "/auth/recovery/redeem", { token, password });
+  }
+
   async listAdminUsers(): Promise<ServerAdminUser[]> {
     const body = await this.request<{ users: ServerAdminUser[] }>(
       "GET",
@@ -470,6 +474,14 @@ export class ServerApiClient {
       { status },
     );
     return body.user;
+  }
+
+  async createPasswordRecovery(userId: string): Promise<string> {
+    const body = await this.request<{ token: string }>(
+      "POST",
+      `/api/admin/users/${encodeURIComponent(userId)}/password-recovery`,
+    );
+    return body.token;
   }
 
   async listWorkspaces(): Promise<ServerWorkspace[]> {

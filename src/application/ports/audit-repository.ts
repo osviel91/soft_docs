@@ -62,6 +62,8 @@ export const AUDIT_ACTIONS = [
   "account.registered",
   "account.activated",
   "account.suspended",
+  "account.password_recovery_issued",
+  "account.password_reset",
   "login.rejected",
 ] as const;
 

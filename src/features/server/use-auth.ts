@@ -37,6 +37,7 @@ export interface AuthHook extends AuthState {
     password: string,
     displayName: string,
   ) => Promise<string>;
+  redeemPasswordRecovery?: (token: string, password: string) => Promise<void>;
   /** Revoke the session server-side and become anonymous. */
   signOut(): Promise<void>;
   /** Ask the server again — after a redirect back from the provider, say. */
@@ -108,6 +109,11 @@ export function useAuth(client: ServerApiClient): AuthHook {
     [client],
   );
 
+  const redeemPasswordRecovery = useCallback(
+    (token: string, password: string) => client.redeemPasswordRecovery(token, password),
+    [client],
+  );
+
   const signOut = useCallback(async (): Promise<void> => {
     try {
       await client.logout();
@@ -119,5 +125,5 @@ export function useAuth(client: ServerApiClient): AuthHook {
     }
   }, [client]);
 
-  return { ...state, signIn, signInLocal, registerLocal, signOut, refresh };
+  return { ...state, signIn, signInLocal, registerLocal, redeemPasswordRecovery, signOut, refresh };
 }

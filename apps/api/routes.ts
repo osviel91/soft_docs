@@ -37,6 +37,7 @@ import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-m
 import type { ArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
 import type { EntityKind } from "../../src/domain/workspace/semantic-binding";
+import { createHash, randomBytes } from "node:crypto";
 
 type ArchitecturalProposalInput = Parameters<ArchitecturalProposalService["submit"]>[1];
 
@@ -84,6 +85,7 @@ export function createRouter(dependencies: AppDependencies): Router {
   router.get("/auth/callback", (request) => auth.callback(request));
   router.post("/auth/register", (request) => auth.register(request));
   router.post("/auth/local-login", (request) => auth.localLogin(request));
+  router.post("/auth/recovery/redeem", (request) => auth.redeemPasswordRecovery(request));
   router.post("/auth/logout", (request) => auth.logout(request));
   router.get("/auth/logout", (request) => auth.endSession(request));
 
@@ -201,6 +203,48 @@ export function createRouter(dependencies: AppDependencies): Router {
           platformAdmin: user.platformAdmin,
         },
       });
+    }),
+  );
+
+  router.post("/api/admin/users/:userId/password-recovery", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      if (context.principal.platformAdmin !== true) {
+        return errorResponse(403, "forbidden", "Platform administrator access is required.");
+      }
+      const user = await dependencies.users.findById(params.userId);
+      if (!user) return errorResponse(404, "not_found", "User not found.");
+      const local = await dependencies.sql.query(
+        "SELECT 1 FROM local_credentials WHERE user_id = $1",
+        [user.id],
+      );
+      if (!local.rows[0]) {
+        return errorResponse(422, "invalid", "This account uses external sign-in and has no local password.");
+      }
+      const token = randomBytes(32).toString("base64url");
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      await dependencies.sql.transaction(async (tx) => {
+        await tx.query(
+          "UPDATE password_recovery_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL",
+          [user.id],
+        );
+        await tx.query(
+          `INSERT INTO password_recovery_tokens (token_hash, user_id, expires_at)
+           VALUES ($1, $2, now() + interval '30 minutes')`,
+          [tokenHash, user.id],
+        );
+      });
+      await dependencies.audit.record({
+        action: "account.password_recovery_issued",
+        subjectUserId: user.id,
+        actorType: "user",
+        actorId: context.principal.subjectUserId,
+        authType: context.principal.authType,
+        requestId: context.requestId,
+      });
+      return json(200, { token, expiresInSeconds: 1800 }, [
+        { name: "cache-control", value: "no-store" },
+      ]);
     }),
   );
 

@@ -22,6 +22,7 @@
  * - **The raw ID token is not kept.** It is verified and discarded; the session
  *   is ours, and the browser holds only our own session cookie.
  */
+import { createHash } from "node:crypto";
 import {
   cookie,
   clearCookie,
@@ -61,6 +62,7 @@ export interface AuthRoutes {
   callback(request: ServerRequest): Promise<ServerResponse>;
   register(request: ServerRequest): Promise<ServerResponse>;
   localLogin(request: ServerRequest): Promise<ServerResponse>;
+  redeemPasswordRecovery(request: ServerRequest): Promise<ServerResponse>;
   logout(request: ServerRequest): Promise<ServerResponse>;
   endSession(request: ServerRequest): Promise<ServerResponse>;
 }
@@ -378,6 +380,54 @@ export function createAuthRoutes(
           record.user.id,
         );
         return json(200, { status: "authenticated" }, [sessionCookie]);
+      });
+    },
+
+    async redeemPasswordRecovery(request) {
+      return guarded(correlationId(request), async () => {
+        const body = parseJsonBody(request.body);
+        const token = typeof body.token === "string" ? body.token : "";
+        const password = typeof body.password === "string" ? body.password : "";
+        if (password.length < 12) {
+          return errorResponse(422, "invalid", "Password must be at least 12 characters.");
+        }
+        const tokenHash = createHash("sha256").update(token).digest("hex");
+        const passwordData = await hashPassword(password);
+        const userId = await dependencies.sql.transaction(async (tx) => {
+          const found = await tx.query(
+            `SELECT user_id FROM password_recovery_tokens
+              WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()
+              FOR UPDATE`,
+            [tokenHash],
+          );
+          if (!found.rows[0]) return null;
+          const id = String(found.rows[0].user_id);
+          const updated = await tx.query(
+            `UPDATE local_credentials SET password_salt = $2, password_hash = $3
+              WHERE user_id = $1`,
+            [id, passwordData.salt, passwordData.hash],
+          );
+          if (updated.rowCount !== 1) return null;
+          await tx.query(
+            "UPDATE password_recovery_tokens SET consumed_at = now() WHERE token_hash = $1",
+            [tokenHash],
+          );
+          await tx.query(
+            "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+            [id],
+          );
+          return id;
+        });
+        if (userId === null) return errorResponse(400, "invalid", "This recovery code is invalid or expired.");
+        await recordAudit({
+          action: "account.password_reset",
+          subjectUserId: userId,
+          actorType: "system",
+          actorId: "system",
+          authType: "local",
+          requestId: correlationId(request),
+        });
+        return json(200, { status: "password_updated" });
       });
     },
 
