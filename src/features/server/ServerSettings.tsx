@@ -9,7 +9,7 @@ import type {
 } from "../../workspace/server/api-client";
 
 type SettingsArea = "workspaces" | "platform" | "agents";
-type WorkspaceTopic = "overview" | "members" | "governance";
+type WorkspaceTopic = "overview" | "members" | "invitations" | "governance";
 
 export interface ServerSettingsProps {
   auth: AuthState;
@@ -282,7 +282,8 @@ export default function ServerSettings({
               </header>
               <nav className="settings-topic-nav" aria-label={`${workspace.name} settings topics`}>
                 <button type="button" aria-current={topic === "overview" ? "page" : undefined} onClick={() => setTopic("overview")}>General</button>
-                <button type="button" aria-current={topic === "members" ? "page" : undefined} onClick={() => setTopic("members")}>Members &amp; roles</button>
+                <button type="button" aria-current={topic === "members" ? "page" : undefined} onClick={() => setTopic("members")}>Members</button>
+                {workspace.role === "ADMIN" && <button type="button" aria-current={topic === "invitations" ? "page" : undefined} onClick={() => setTopic("invitations")}>Invitations</button>}
                 <button type="button" aria-current={topic === "governance" ? "page" : undefined} onClick={() => setTopic("governance")}>Governance</button>
               </nav>
 
@@ -336,7 +337,49 @@ export default function ServerSettings({
                     <span className="settings-card__count">{members.length} members</span>
                   </div>
                   <p className="settings-card__muted">Workspace members and their access level.</p>
-                  {workspace.role === "ADMIN" && <>
+                  {members.length > 0 ? (
+                    <div className="settings-users" role="list">
+                      {members.map((member) => (
+                        <div className="settings-user" role="listitem" key={member.userId}>
+                          <div>
+                            <strong>{member.displayName}</strong>
+                            <span>{member.email ?? "No email address"}</span>
+                          </div>
+                          {workspace.role === "ADMIN" ? (
+                            <div className="settings-user__actions">
+                              <select
+                                aria-label={`Workspace role for ${member.email ?? member.displayName}`}
+                                value={member.role}
+                                onChange={(event) => onSetWorkspaceMemberRole(workspace.id, member.userId, event.target.value as ServerWorkspaceMember["role"])}
+                              >
+                                <option value="ADMIN">Admin</option>
+                                <option value="EDITOR">Editor</option>
+                                <option value="VIEWER">Viewer</option>
+                              </select>
+                              {member.userId !== user?.id && (
+                                <button type="button" className="button button--small button--danger-text" onClick={() => onRemoveWorkspaceMember(workspace.id, member.userId)}>Remove</button>
+                              )}
+                            </div>
+                          ) : <span className="settings-user__role">{member.role}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="settings-card__empty">Member details are available to workspace members.</p>
+                  )}
+                </section>
+              ) : null}
+
+              {topic === "invitations" && workspace.role === "ADMIN" ? (
+                <section className="settings-card" aria-labelledby="settings-invitations-title">
+                  <div className="settings-card__heading">
+                    <div>
+                      <p className="settings-card__eyebrow">Access</p>
+                      <h3 id="settings-invitations-title">Invitations</h3>
+                    </div>
+                    <span className="settings-card__count">{invitations.length} invitations</span>
+                  </div>
+                  <p className="settings-card__muted">Create invitation links and review their status.</p>
                     <form className="settings-inline-form" onSubmit={event => {
                       event.preventDefault(); setInviteError(null); setInviteLink(null); setInviteCopied(false);
                       if (onCreateWorkspaceInvitation) void onCreateWorkspaceInvitation(workspace.id, inviteRole).then(setInviteLink).catch(reason => setInviteError(reason instanceof Error ? reason.message : "Invitation could not be created."));
@@ -370,37 +413,6 @@ export default function ServerSettings({
                       </div>)}
                       {invitations.length === 0 && <p className="settings-card__empty">No invitations yet.</p>}
                     </div>
-                  </>}
-                  {members.length > 0 ? (
-                    <div className="settings-users" role="list">
-                      {members.map((member) => (
-                        <div className="settings-user" role="listitem" key={member.userId}>
-                          <div>
-                            <strong>{member.displayName}</strong>
-                            <span>{member.email ?? "No email address"}</span>
-                          </div>
-                          {workspace.role === "ADMIN" ? (
-                            <div className="settings-user__actions">
-                              <select
-                                aria-label={`Workspace role for ${member.email ?? member.displayName}`}
-                                value={member.role}
-                                onChange={(event) => onSetWorkspaceMemberRole(workspace.id, member.userId, event.target.value as ServerWorkspaceMember["role"])}
-                              >
-                                <option value="ADMIN">Admin</option>
-                                <option value="EDITOR">Editor</option>
-                                <option value="VIEWER">Viewer</option>
-                              </select>
-                              {member.userId !== user?.id && (
-                                <button type="button" className="button button--small button--danger-text" onClick={() => onRemoveWorkspaceMember(workspace.id, member.userId)}>Remove</button>
-                              )}
-                            </div>
-                          ) : <span className="settings-user__role">{member.role}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="settings-card__empty">Member details are available to workspace members.</p>
-                  )}
                 </section>
               ) : null}
 

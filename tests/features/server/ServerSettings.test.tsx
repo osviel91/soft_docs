@@ -9,6 +9,8 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
     onSelectWorkspace: vi.fn(),
     onSetWorkspaceMemberRole: vi.fn(),
     onSetWorkspaceAuthorSelfReview: vi.fn(),
+    onCreateWorkspaceInvitation: vi.fn().mockResolvedValue("invite-token"),
+    onRevokeWorkspaceInvitation: vi.fn(),
   };
   const view = render(
     <ServerSettings
@@ -69,6 +71,20 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
         }],
       }}
       onSetWorkspaceMemberRole={actions.onSetWorkspaceMemberRole}
+      workspaceInvitationsByWorkspaceId={{
+        "workspace-1": [{
+          id: "invitation-1",
+          workspaceId: "workspace-1",
+          workspaceName: "Ada Workspace",
+          inviterName: "Ada",
+          role: "EDITOR",
+          state: "ACTIVE",
+          createdAt: new Date(0).toISOString(),
+          expiresAt: new Date(86400000).toISOString(),
+        }],
+      }}
+      onCreateWorkspaceInvitation={actions.onCreateWorkspaceInvitation}
+      onRevokeWorkspaceInvitation={actions.onRevokeWorkspaceInvitation}
       onRemoveWorkspaceMember={vi.fn()}
       onCreateWorkspace={vi.fn()}
       onRenameWorkspace={vi.fn()}
@@ -81,8 +97,8 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
 }
 
 describe("ServerSettings", () => {
-  it("separates workspace topics from platform-wide account controls", () => {
-    const { onSetUserStatus, onSelectWorkspace, onSetWorkspaceMemberRole, onSetWorkspaceAuthorSelfReview } = renderSettings(true);
+  it("separates workspace topics from platform-wide account controls", async () => {
+    const { onSetUserStatus, onSelectWorkspace, onSetWorkspaceMemberRole, onSetWorkspaceAuthorSelfReview, onCreateWorkspaceInvitation, onRevokeWorkspaceInvitation } = renderSettings(true);
 
     expect(screen.getByTestId("workspace-settings-page")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Ada Workspace" })).toBeInTheDocument();
@@ -90,9 +106,20 @@ describe("ServerSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: /Research/ }));
     expect(onSelectWorkspace).toHaveBeenCalledWith("workspace-2");
 
-    fireEvent.click(screen.getByRole("button", { name: "Members & roles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Members" }));
     fireEvent.change(screen.getByLabelText("Workspace role for grace@example.test"), { target: { value: "VIEWER" } });
     expect(onSetWorkspaceMemberRole).toHaveBeenCalledWith("workspace-1", "pending", "VIEWER");
+    expect(screen.queryByText("Invitation history")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Invitations" }));
+    expect(screen.getByText("Invitation history")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace role for grace@example.test")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation link" }));
+    expect(onCreateWorkspaceInvitation).toHaveBeenCalledWith("workspace-1", "VIEWER");
+    expect(await screen.findByLabelText("One-time invitation link")).toHaveValue("invite-token");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(onRevokeWorkspaceInvitation).toHaveBeenCalledWith("workspace-1", "invitation-1");
 
     fireEvent.click(screen.getByRole("button", { name: "Governance" }));
     fireEvent.click(screen.getByLabelText("Allow authors to approve proposals in Ada Workspace"));
