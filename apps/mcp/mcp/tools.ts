@@ -77,6 +77,8 @@ import type { ToolAnnotations } from "../../../src/shared/mcp/protocol";
 import type { McpConfig } from "../config";
 import { normalizeResourceMetadata } from "../../../src/domain/workspace/resource-metadata";
 import type { ResourceRelationship } from "../../../src/domain/workspace/resource-relationship";
+import { createDiscoverSemanticCandidatesUseCase } from "../../../src/application/discover-semantic-candidates";
+import type { EntityKind } from "../../../src/domain/workspace/semantic-binding";
 
 /** A tool's result before the dispatcher wraps it in an MCP result. */
 export interface ToolOutcome {
@@ -420,13 +422,15 @@ async function semanticIndex(
   contextId: string | null = null,
 ): Promise<{ index: ReturnType<typeof buildProjectIndex>; resources: Awaited<ReturnType<ProjectCatalog["listResources"]>> }> {
   throwIfAborted(toolContext.signal);
-  const resources = await toolContext.catalog.listResources(toolContext.context, projectIdValue, contextId);
+  const resources = contextId === null
+    ? await toolContext.catalog.listResources(toolContext.context, projectIdValue)
+    : await toolContext.catalog.listEffectiveResources(toolContext.context, projectIdValue, contextId);
   const semanticMessages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, projectIdValue, contextId);
   const metadata = { ...metadataFrom(resources), semanticMessages };
   const analyses = [];
   for (const resource of resources.slice(0, MAX_INDEXED_DOCUMENTS)) {
     throwIfAborted(toolContext.signal);
-     const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id, contextId);
+     const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id, resource.contextId ?? null);
     analyses.push(analyzeResource({ id: resource.id, projectId: projectIdValue, path: resource.path, type: resource.type, title: resource.path }, content));
   }
   const perResource = analyses.flatMap((analysis) => analysis.diagnostics);
@@ -2040,18 +2044,40 @@ export function createMcpTools(): McpTool[] {
         const id = stringArg(args, "projectId");
         const contextId = typeof args.contextId === "string" ? args.contextId : null;
         const anchor = args.anchor as import("../../../src/domain/workspace/semantic-binding").EntityAnchor;
-        const resources = await toolContext.catalog.listResources(toolContext.context, id, contextId);
-        const messages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, id, contextId);
-        const metadata = { ...metadataFrom(resources), semanticMessages: messages };
-        const analyses = await Promise.all(resources.slice(0, MAX_INDEXED_DOCUMENTS).map(async resource => {
-          const { content } = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
-          return analyzeResource({ id: resource.id, projectId: id, path: resource.path, type: resource.type, title: resource.path }, content);
-        }));
-        const index = buildProjectIndex(id, analyses, metadata, () => []);
+        const { index } = await semanticIndex(toolContext, id, contextId);
         const { getSemanticBindingsForEntity } = await import("../../../src/application/semantic-binding-query");
         const bindings = await toolContext.catalog.listSemanticBindings(toolContext.context, id, contextId);
         const resolved = getSemanticBindingsForEntity(anchor, bindings, index);
         return { text: resolved.length ? `${resolved.length} explicit binding(s) for exact anchor.` : "No documented explicit binding.", structured: { bindings: resolved, candidates: { available: false }, unresolved: resolved.filter(entry => entry.resolution.left !== "resolved" || entry.resolution.right !== "resolved") } };
+      },
+    },
+    {
+      name: "discover_semantic_candidates",
+      title: "Discover semantic candidates",
+      description: "Find deterministic, unconfirmed Conceptual-to-Database correspondence candidates. Results are suggestions only, never bindings or evidence; no state is changed.",
+      inputSchema: {
+        projectId: projectId(),
+        contextId: z.string().uuid().optional(),
+        leftEntityKind: z.enum(["concept", "conceptual-relationship"]).optional(),
+        rightEntityKind: z.enum(["table", "column", "foreign-key"]).optional(),
+        limit: limit(50, 200),
+        cursor: cursor(),
+      },
+      annotations: { ...READ_ONLY, title: "Discover semantic candidates" },
+      requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const result = await createDiscoverSemanticCandidatesUseCase(toolContext.catalog)(toolContext.context, {
+          projectId: stringArg(args, "projectId"),
+          ...(typeof args.contextId === "string" ? { contextId: args.contextId } : {}),
+          ...(typeof args.leftEntityKind === "string" ? { leftEntityKind: args.leftEntityKind as EntityKind } : {}),
+          ...(typeof args.rightEntityKind === "string" ? { rightEntityKind: args.rightEntityKind as EntityKind } : {}),
+          ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+          ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}),
+        });
+        return {
+          text: JSON.stringify(result, null, 2),
+          structured: result,
+        };
       },
     },
     {

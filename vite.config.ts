@@ -31,6 +31,10 @@ export default defineConfig({
     // assertion — a red suite that says nothing about the code. The assertions
     // themselves keep the default timeout.
     hookTimeout: 30_000,
+    // PGlite suites saturate the machine when Vitest starts one worker per CPU;
+    // two workers keep the full run reproducible without extending test timeouts.
+    minWorkers: 1,
+    maxWorkers: 2,
     include: [
       "tests/**/*.{test,spec}.{ts,tsx}",
       "src/**/*.{test,spec}.{ts,tsx}",

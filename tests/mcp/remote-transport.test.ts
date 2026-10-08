@@ -8,7 +8,7 @@
  * test understands the transport, not that the server does.
  */
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -19,6 +19,8 @@ import { analyzeResource } from "../../src/domain/project/resource-analysis";
 import { parseDatabase } from "../../src/language/database/analyze";
 import { projectDatabase } from "../../src/domain/database/visual-projection";
 import { layoutGeometry } from "../../src/layout/elk-geometry-adapter";
+import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
+import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import { startHarness, type McpHarness } from "./harness";
 
 let harness: McpHarness;
@@ -26,6 +28,7 @@ let ownerId: string;
 let projectId: string;
 let contextId: string;
 let token: string;
+let discoveryProjectToDelete: string | undefined;
 
 beforeAll(async () => {
   harness = await startHarness();
@@ -45,6 +48,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await harness.close();
+});
+
+afterEach(async () => {
+  if (discoveryProjectToDelete !== undefined) {
+    await harness.service.runtime.projects.delete(discoveryProjectToDelete);
+    discoveryProjectToDelete = undefined;
+  }
 });
 
 /** Connect a client with a bearer token. */
@@ -425,6 +435,53 @@ describe("the remote MCP service over Streamable HTTP", () => {
     const stale = await client.callTool({ name: "update_semantic_binding", arguments: { projectId, contextId, binding: updated, expectedRevision: 1 } });
     expect(stale.isError).toBe(true);
     expect(structured(stale).error.code).toBe("conflict");
+    await client.close();
+  });
+
+  it("discovers read-only candidates from SHARED and owned effective knowledge for text-only clients", async () => {
+    const client = await connect(token);
+    const discoveryProjectId = await harness.aProject(ownerId, "Candidate discovery MCP");
+    discoveryProjectToDelete = discoveryProjectId;
+    const workId = await harness.aPrivateWork(discoveryProjectId, ownerId);
+    const addResource = async (privateContextId: string | null, path: string, type: "conceptual" | "database", content: string) => {
+      await harness.service.runtime.projects.createResource(discoveryProjectId, {
+        path,
+        type,
+        ...(privateContextId === null ? {} : { contextId: privateContextId }),
+      });
+      await harness.service.runtime.storageForContext(discoveryProjectId, privateContextId).write(path, content);
+    };
+    await addResource(null, "shared.concept", "conceptual", 'concept account "Account"');
+    await addResource(null, "shared.dbschema", "database", 'table account - "Account"');
+    await addResource(workId, "private.concept", "conceptual", 'concept ledger "Ledger"');
+    await addResource(workId, "private.dbschema", "database", 'table ledger - "Ledger"');
+    const resourcesBefore = await harness.service.runtime.projects.listResources(discoveryProjectId, null);
+    const bindingsBefore = await harness.service.runtime.semanticBindings.list({ projectId: discoveryProjectId, contextId: null });
+
+    const shared = await client.callTool({ name: "discover_semantic_candidates", arguments: { projectId: discoveryProjectId } });
+    expect(shared.isError).toBe(false);
+    expect(structured(shared).status).toBe("unconfirmed");
+    expect(textualResult(shared)).toEqual(structured(shared));
+    expect(textualResult(shared).notice).toContain("not bindings or evidence");
+    expect(structured(shared).total).toBe(1);
+    expect(structured(shared).candidates[0]).toMatchObject({ leftPath: "shared.concept", rightPath: "shared.dbschema" });
+
+    const first = await client.callTool({ name: "discover_semantic_candidates", arguments: { projectId: discoveryProjectId, contextId: workId, limit: 1 } });
+    expect(first.isError).toBe(false);
+    expect(textualResult(first)).toEqual(structured(first));
+    expect(structured(first).total).toBe(2);
+    expect(structured(first).nextCursor).toBeDefined();
+    const commonResult = await createDiscoverSemanticCandidatesUseCase(harness.service.catalog)({
+      requestId: "mcp-discovery-test",
+      principal: { subjectUserId: ownerId, actor: { kind: "user", userId: ownerId }, authType: "session", scopes: [...ALL_PERMISSIONS] },
+    }, { projectId: discoveryProjectId, contextId: workId, limit: 1 });
+    expect(structured(first)).toEqual(commonResult);
+    const second = await client.callTool({ name: "discover_semantic_candidates", arguments: { projectId: discoveryProjectId, contextId: workId, limit: 1, cursor: structured(first).nextCursor as string } });
+    const paged = [...structured(first).candidates, ...structured(second).candidates] as Array<{ id: string }>;
+    expect(new Set(paged.map(candidate => candidate.id)).size).toBe(2);
+    expect(paged).toHaveLength(2);
+    expect(await harness.service.runtime.projects.listResources(discoveryProjectId, null)).toEqual(resourcesBefore);
+    expect(await harness.service.runtime.semanticBindings.list({ projectId: discoveryProjectId, contextId: null })).toEqual(bindingsBefore);
     await client.close();
   });
 
@@ -947,8 +1004,10 @@ describe("the remote MCP service over Streamable HTTP", () => {
   });
 
   it("keeps MCP MY WORK validation aligned with browser analysis for Database and Conceptual", async () => {
+    const validationProjectId = await harness.aProject(ownerId, "Artifact validation");
+    discoveryProjectToDelete = validationProjectId;
     const validationContextId = (await harness.service.runtime.knowledgeContexts.createPrivate({
-      projectId,
+      projectId: validationProjectId,
       ownerUserId: ownerId,
       name: "Artifact validation work",
     })).id;
@@ -963,7 +1022,7 @@ describe("the remote MCP service over Streamable HTTP", () => {
     const created = await client.callTool({
       name: "create_resource",
       arguments: {
-        projectId,
+        projectId: validationProjectId,
         path: "validation/database.dbschema",
         type: "database",
         content: 'table sample - "sample"\ncolumn sample id "id" {uuid} not-null\nprimary-key sample_pk sample (id)',
@@ -973,33 +1032,33 @@ describe("the remote MCP service over Streamable HTTP", () => {
     const resourceId = structured(created).resource.id as string;
     const firstUpdate = await client.callTool({
       name: "update_resource",
-      arguments: { projectId, resource: resourceId, content: invalidDatabase, expectedRevision: 1 },
+      arguments: { projectId: validationProjectId, resource: resourceId, content: invalidDatabase, expectedRevision: 1 },
     });
     expect(firstUpdate.isError).toBeFalsy();
     const secondUpdate = await client.callTool({
       name: "update_resource",
-      arguments: { projectId, resource: resourceId, content: invalidDatabase, expectedRevision: 2 },
+      arguments: { projectId: validationProjectId, resource: resourceId, content: invalidDatabase, expectedRevision: 2 },
     });
     expect(secondUpdate.isError).toBeFalsy();
     expect(structured(secondUpdate).resource.revision).toBe(3);
 
-    const persisted = await client.callTool({ name: "read_resource", arguments: { projectId, resource: resourceId } });
+    const persisted = await client.callTool({ name: "read_resource", arguments: { projectId: validationProjectId, resource: resourceId } });
     expect(structured(persisted).resource.revision).toBe(3);
     expect(structured(persisted).content).toBe(invalidDatabase);
-    const browserDatabase = analyzeResource({ id: resourceId, projectId, path: "validation/database.dbschema", type: "database", title: "Database" }, invalidDatabase);
+    const browserDatabase = analyzeResource({ id: resourceId, projectId: validationProjectId, path: "validation/database.dbschema", type: "database", title: "Database" }, invalidDatabase);
     expect(browserDatabase.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length).toBeGreaterThan(0);
-    const invalidDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    const invalidDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId: validationProjectId } });
     const mcpDatabaseCodes = structured(invalidDatabaseValidation).diagnostics.map((diagnostic: { code: string }) => diagnostic.code);
     expect(mcpDatabaseCodes).toEqual(expect.arrayContaining(browserDatabase.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => String(diagnostic.code))));
 
     const validDatabase = 'table sample - "sample"\ncolumn sample id "id" {uuid} not-null\ncolumn sample note "note" {text} nullable\nprimary-key sample_pk sample (id)';
     const validDatabaseUpdate = await client.callTool({
       name: "update_resource",
-      arguments: { projectId, resource: resourceId, content: validDatabase, expectedRevision: 3 },
+      arguments: { projectId: validationProjectId, resource: resourceId, content: validDatabase, expectedRevision: 3 },
     });
     expect(validDatabaseUpdate.isError).toBeFalsy();
     expect(structured(validDatabaseUpdate).resource.revision).toBe(4);
-    const validDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    const validDatabaseValidation = await client.callTool({ name: "validate_project", arguments: { projectId: validationProjectId } });
     expect(structured(validDatabaseValidation).diagnostics).toEqual([]);
     const parsedDatabase = parseDatabase(validDatabase);
     expect(parsedDatabase.model).not.toBeNull();
@@ -1009,24 +1068,24 @@ describe("the remote MCP service over Streamable HTTP", () => {
     const invalidConceptual = 'concept customer "Customer"\nrelation owns customer -> missing "owns"';
     const conceptualCreated = await client.callTool({
       name: "create_resource",
-      arguments: { projectId, path: "validation/conceptual.concept", type: "conceptual", content: invalidConceptual },
+      arguments: { projectId: validationProjectId, path: "validation/conceptual.concept", type: "conceptual", content: invalidConceptual },
     });
     expect(conceptualCreated.isError).toBeFalsy();
     const conceptualId = structured(conceptualCreated).resource.id as string;
-    const browserConceptual = analyzeResource({ id: conceptualId, projectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, invalidConceptual);
+    const browserConceptual = analyzeResource({ id: conceptualId, projectId: validationProjectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, invalidConceptual);
     expect(browserConceptual.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length).toBeGreaterThan(0);
-    const invalidConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    const invalidConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId: validationProjectId } });
     const mcpConceptualCodes = structured(invalidConceptualValidation).diagnostics.map((diagnostic: { code: string }) => diagnostic.code);
     expect(mcpConceptualCodes).toEqual(expect.arrayContaining(browserConceptual.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => String(diagnostic.code))));
 
     const validConceptual = 'concept customer "Customer"\nconcept account "Account"\nrelation owns customer -> account "owns"';
     const conceptualUpdate = await client.callTool({
       name: "update_resource",
-      arguments: { projectId, resource: conceptualId, content: validConceptual, expectedRevision: 1 },
+      arguments: { projectId: validationProjectId, resource: conceptualId, content: validConceptual, expectedRevision: 1 },
     });
     expect(conceptualUpdate.isError).toBeFalsy();
-    expect(analyzeResource({ id: conceptualId, projectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, validConceptual).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
-    const validConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId } });
+    expect(analyzeResource({ id: conceptualId, projectId: validationProjectId, path: "validation/conceptual.concept", type: "conceptual", title: "Conceptual" }, validConceptual).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    const validConceptualValidation = await client.callTool({ name: "validate_project", arguments: { projectId: validationProjectId } });
     expect(structured(validConceptualValidation).diagnostics).toEqual([]);
     await client.close();
   });

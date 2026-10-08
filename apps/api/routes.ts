@@ -35,6 +35,8 @@ import { invalid } from "../../src/application/errors";
 import type { AppDependencies } from "./app";
 import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-metadata";
 import type { ArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
+import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
+import type { EntityKind } from "../../src/domain/workspace/semantic-binding";
 
 type ArchitecturalProposalInput = Parameters<ArchitecturalProposalService["submit"]>[1];
 
@@ -42,6 +44,7 @@ type ArchitecturalProposalInput = Parameters<ArchitecturalProposalService["submi
 export function createRouter(dependencies: AppDependencies): Router {
   const router = new Router();
   const { config, catalog } = dependencies;
+  const discoverSemanticCandidates = createDiscoverSemanticCandidatesUseCase(catalog);
   const auth = createAuthRoutes(dependencies, oidcClientFor(dependencies));
   const signInConfigured = oidcClientFor(dependencies) !== null;
 
@@ -924,6 +927,22 @@ export function createRouter(dependencies: AppDependencies): Router {
     guarded(correlationId(request), async () => json(200, {
       binding: await catalog.getSemanticBinding(await contextOf(request), params.projectId, request.query.contextId ?? null, params.bindingId),
     })),
+  );
+  router.get("/api/projects/:projectId/semantic-candidates", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const rawLimit = request.query.limit;
+      const limit = rawLimit === undefined ? undefined : Number(rawLimit);
+      if (rawLimit !== undefined && (!Number.isInteger(limit) || limit! < 1 || limit! > 200)) throw invalid("limit must be an integer from 1 to 200.");
+      const result = await discoverSemanticCandidates(await contextOf(request), {
+        projectId: params.projectId,
+        ...(request.query.contextId === undefined ? {} : { contextId: request.query.contextId }),
+        ...(request.query.leftEntityKind === undefined ? {} : { leftEntityKind: request.query.leftEntityKind as EntityKind }),
+        ...(request.query.rightEntityKind === undefined ? {} : { rightEntityKind: request.query.rightEntityKind as EntityKind }),
+        ...(limit === undefined ? {} : { limit }),
+        ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
+      });
+      return json(200, result);
+    }),
   );
   router.post("/api/projects/:projectId/semantic-bindings", async (request, params) =>
     guarded(correlationId(request), async () => {

@@ -26,6 +26,8 @@ import {
   type ServerRequest,
 } from "../../apps/api/http/http";
 import { createTestProvider, type TestProvider } from "./test-provider";
+import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
+import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
 
 let dependencies: AppDependencies;
 let volume: string;
@@ -619,6 +621,84 @@ describe("the access endpoint", () => {
       },
     );
     expect(access.status).toBe(404);
+  });
+});
+
+describe("semantic candidate discovery", () => {
+  it("uses the authorized effective view, suppresses bindings, paginates, and does not write", async () => {
+    const owner = await aProject("Candidate discovery");
+    const other = await signIn();
+    await addWorkspaceMember(owner, other.userId);
+    const otherContext = await dependencies.runtime.knowledgeContexts.createPrivate({
+      projectId: owner.projectId,
+      ownerUserId: other.userId,
+      name: "other private work",
+    });
+    const addResource = async (contextId: string | null, resourcePath: string, type: "conceptual" | "database", content: string) => {
+      await dependencies.runtime.projects.createResource(owner.projectId, {
+        path: resourcePath,
+        type,
+        ...(contextId === null ? {} : { contextId }),
+      });
+      await dependencies.runtime.storageForContext(owner.projectId, contextId).write(resourcePath, content);
+    };
+    await addResource(null, "shared.concept", "conceptual", 'concept account "Account"\nconcept invoice "Invoice"');
+    await addResource(null, "shared.dbschema", "database", 'table account - "Account"\ntable invoice - "Invoice"');
+    await addResource(owner.contextId, "private.concept", "conceptual", 'concept private "PrivateOnly"');
+    await addResource(owner.contextId, "private.dbschema", "database", 'table private - "PrivateOnly"');
+    await addResource(otherContext.id, "secret.concept", "conceptual", 'concept secret "SecretLedger"');
+    await addResource(otherContext.id, "secret.dbschema", "database", 'table secret - "SecretLedger"');
+
+    const sharedRows = await dependencies.runtime.projects.listResources(owner.projectId, null);
+    const accountConcept = { version: 1, resourceId: sharedRows.find((row) => row.path === "shared.concept")!.id, representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "account" } } as const;
+    const accountTable = { version: 1, resourceId: sharedRows.find((row) => row.path === "shared.dbschema")!.id, representation: "database", entityKind: "table", identity: { kind: "local-id", value: "account" } } as const;
+    await dependencies.runtime.semanticBindings.create({
+      id: crypto.randomUUID(),
+      projectId: owner.projectId,
+      left: accountConcept,
+      right: accountTable,
+      relation: "represents-in",
+      evidence: { version: 1, rationale: "Shared schema and concept are explicitly aligned.", items: [{ kind: "external", reference: "test://alignment", description: "Fixture evidence." }] },
+      revision: 1,
+      status: "ACTIVE",
+      provenance: { authorId: owner.userId, contextId: owner.contextId, createdAt: new Date().toISOString() },
+    });
+
+    const resourcesBeforeDiscovery = [
+      ...await dependencies.runtime.projects.listResources(owner.projectId, null),
+      ...await dependencies.runtime.projects.listResources(owner.projectId, owner.contextId),
+    ];
+    const bindingsBeforeDiscovery = await dependencies.runtime.semanticBindings.list({ projectId: owner.projectId, contextId: owner.contextId });
+    const url = `/api/projects/${owner.projectId}/semantic-candidates?contextId=${owner.contextId}&limit=1`;
+    const first = await call("GET", url, { cookie: owner.cookie });
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ status: "unconfirmed", context: "SHARED+MY_WORK", total: 2 });
+    expect(first.body.nextCursor).toBeTruthy();
+    const second = await call("GET", `${url}&cursor=${first.body.nextCursor}`, { cookie: owner.cookie });
+    expect(second.status).toBe(200);
+    const pagedIds = [...first.body.candidates, ...second.body.candidates].map((candidate: { id: string }) => candidate.id);
+    expect(new Set(pagedIds).size).toBe(2);
+    expect([...first.body.candidates, ...second.body.candidates].map((candidate: { leftPath: string }) => candidate.leftPath).sort()).toEqual(["private.concept", "shared.concept"]);
+    expect([...first.body.candidates, ...second.body.candidates].some((candidate: { leftPath: string }) => candidate.leftPath === "secret.concept")).toBe(false);
+
+    const shared = await call("GET", `/api/projects/${owner.projectId}/semantic-candidates`, { cookie: owner.cookie });
+    expect(shared.body.total).toBe(2);
+    expect(shared.body.candidates.every((candidate: { leftPath: string }) => candidate.leftPath.startsWith("shared."))).toBe(true);
+    const contextResponse = await call("GET", `/api/projects/${owner.projectId}/semantic-candidates?contextId=${otherContext.id}`, { cookie: owner.cookie });
+    expect(contextResponse.status).toBe(404);
+    expect(JSON.stringify(contextResponse.body)).not.toContain("SecretLedger");
+
+    const appContext = {
+      requestId: "discovery-test",
+      principal: { subjectUserId: owner.userId, actor: { kind: "user" as const, userId: owner.userId }, authType: "session" as const, scopes: [...ALL_PERMISSIONS] },
+    };
+    const commonResult = await createDiscoverSemanticCandidatesUseCase(dependencies.catalog)(appContext, { projectId: owner.projectId });
+    expect(commonResult).toEqual(shared.body);
+    expect([
+      ...await dependencies.runtime.projects.listResources(owner.projectId, null),
+      ...await dependencies.runtime.projects.listResources(owner.projectId, owner.contextId),
+    ]).toEqual(resourcesBeforeDiscovery);
+    expect(await dependencies.runtime.semanticBindings.list({ projectId: owner.projectId, contextId: owner.contextId })).toEqual(bindingsBeforeDiscovery);
   });
 });
 

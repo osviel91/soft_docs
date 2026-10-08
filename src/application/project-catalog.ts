@@ -740,7 +740,12 @@ export function createProjectCatalog(
         projects.listResources(projectId, null),
         projects.listResources(projectId, contextId),
       ]);
-      return [...shared, ...privateResources].map(toCatalogResource);
+      const effective = new Map(shared.map((resource) => [resource.id, resource]));
+      privateResources.forEach((resource) => effective.set(resource.id, resource));
+      return [...effective.values()].map((resource) => ({
+        ...toCatalogResource(resource),
+        ...(resource.contextId === undefined ? {} : { contextId: resource.contextId }),
+      }));
     },
 
     async listPrivateWorkContexts(context, projectId) {
