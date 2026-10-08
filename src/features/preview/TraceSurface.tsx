@@ -11,6 +11,8 @@ interface Props {
   provenance: string;
   contextProvenance?: AnalysisProvenance;
   onOpenResource: (resourceId: string, nodeId?: string) => void;
+  embedded?: boolean;
+  onClose?: () => void;
 }
 
 type SurfaceMode = "minimized" | "normal" | "expanded";
@@ -21,7 +23,7 @@ function startKey(start: TraceQueryStart): string {
   return "messageId" in start ? `message:${start.messageId}` : `occurrence:${start.resourceId}:${start.name}:${start.step ?? ""}`;
 }
 
-export default function TraceSurface({ index, start, direction, provenance, contextProvenance, onOpenResource }: Props) {
+export default function TraceSurface({ index, start, direction, provenance, contextProvenance, onOpenResource, embedded = false, onClose }: Props) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const [mode, setMode] = useState<SurfaceMode>("normal");
   const [height, setHeight] = useState(420);
@@ -53,16 +55,16 @@ export default function TraceSurface({ index, start, direction, provenance, cont
   };
 
   return (
-    <section ref={surfaceRef} className={`trace-surface trace-surface--${mode}`} style={mode === "normal" ? { flexBasis: height } : undefined} aria-label="Architectural Trace analysis surface" data-testid="trace-surface" data-provenance={provenance}>
-      {mode !== "minimized" ? <div className="trace-surface__splitter" role="separator" tabIndex={0} aria-label="Resize Architectural Trace" aria-orientation="horizontal" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); resize(event.clientY); }} onPointerMove={(event) => { if (resizing) resize(event.clientY); }} onPointerUp={endResize} onPointerCancel={endResize} onKeyDown={resizeWithKeyboard} /> : null}
-      <div className="trace-surface__toolbar">
+    <section ref={surfaceRef} className={`trace-surface trace-surface--${mode}${embedded ? " trace-surface--embedded" : ""}`} style={!embedded && mode === "normal" ? { flexBasis: height } : undefined} aria-label="Architectural Trace analysis surface" data-testid="trace-surface" data-provenance={provenance}>
+      {!embedded && mode !== "minimized" ? <div className="trace-surface__splitter" role="separator" tabIndex={0} aria-label="Resize Architectural Trace" aria-orientation="horizontal" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); resize(event.clientY); }} onPointerMove={(event) => { if (resizing) resize(event.clientY); }} onPointerUp={endResize} onPointerCancel={endResize} onKeyDown={resizeWithKeyboard} /> : null}
+      {!embedded ? <div className="trace-surface__toolbar">
         <span><strong>Architectural Trace</strong> · launched from {provenance}</span>
         <div>
           <button type="button" className="button button--ghost button--small" onClick={() => setMode(mode === "expanded" ? "normal" : "expanded")} aria-label={mode === "expanded" ? "Restore Architectural Trace" : "Maximize Architectural Trace"}>{mode === "expanded" ? "Restore" : "Expand"}</button>
           <button type="button" className="button button--ghost button--small" onClick={() => setMode(mode === "minimized" ? "normal" : "minimized")} aria-label={mode === "minimized" ? "Restore Architectural Trace" : "Minimize Architectural Trace"}>{mode === "minimized" ? "Restore" : "Minimize"}</button>
         </div>
-      </div>
-      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} provenance={contextProvenance} onClose={() => setMode("minimized")} onOpenResource={onOpenResource} /></div>
+      </div> : null}
+      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} provenance={contextProvenance} onClose={onClose ?? (() => setMode("minimized"))} onOpenResource={onOpenResource} /></div>
     </section>
   );
 }

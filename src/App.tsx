@@ -36,6 +36,7 @@ import {
 } from "./features/editor/snippets";
 import Preview from "./features/preview/Preview";
 import SemanticMessageInspector from "./features/preview/SemanticMessageInspector";
+import AnalysisSurface from "./features/preview/AnalysisSurface";
 import TraceSurface from "./features/preview/TraceSurface";
 import type { TraceDirection, TraceQueryStart } from "./domain/project/architecture-trace";
 import Explorer, { type MenuPosition } from "./features/explorer/Explorer";
@@ -1720,6 +1721,11 @@ export default function App() {
     [isEventFlow, source],
   );
   const eventFlow = eventFlowAnalysis?.flow ?? null;
+  const hasActiveSemanticOccurrence = activeSemanticMessageId !== null || (
+    activeNodeId !== null && (isEventFlow
+      ? Boolean(eventFlow && eventsOf(eventFlow).some((event) => nodeIdOf("event", event.range) === activeNodeId))
+      : Boolean(isSequence && ast && semanticMessagesOf(ast).some((message) => nodeIdOf("message", message.range) === activeNodeId)))
+  );
   const canExportActiveDiagram =
     !noteMode && (isEventFlow ? eventFlow !== null : isConceptual ? !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? false : ast !== null && isValid(ast));
 
@@ -3809,61 +3815,59 @@ export default function App() {
                   ) : isDatabase ? (
                     <DatabasePreview source={source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
                   ) : isEventFlow ? (
-                    <>
-                      <EventFlowPreview
-                        source={source}
-                        flow={eventFlow}
-                        view={eventFlowView}
-                        onViewChange={changeEventFlowView}
-                        onNodeSelect={onNodeSelect}
-                        onSemanticMessageSelect={onSemanticMessageSelect}
-                        onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
-                        activeNodeId={activeNodeId}
-                        activeSemanticMessageId={activeSemanticMessageId}
-                        maximized={previewMaximized}
-                        onToggleMaximize={() =>
-                          setPreviewMaximized((value) => !value)
-                        }
-                      />
-                      <SemanticMessageInspector index={index} eventFlow={eventFlow} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
-                      {traceStart && index ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} /> : null}
-                    </>
+                    <EventFlowPreview
+                      source={source}
+                      flow={eventFlow}
+                      view={eventFlowView}
+                      onViewChange={changeEventFlowView}
+                      onNodeSelect={onNodeSelect}
+                      onSemanticMessageSelect={onSemanticMessageSelect}
+                      onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
+                      activeNodeId={activeNodeId}
+                      activeSemanticMessageId={activeSemanticMessageId}
+                      maximized={previewMaximized}
+                      onToggleMaximize={() => setPreviewMaximized((value) => !value)}
+                    />
                   ) : (
-                    <>
-                      <Preview
-                        source={renderedSource || source}
-                        autoUpdate={autoUpdate}
-                        isStale={isStale}
-                        onRender={() => setRenderedSource(source)}
-                        onNodeSelect={onNodeSelect}
-                        onSemanticMessageSelect={onSemanticMessageSelect}
-                        onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
-                        activeNodeId={activeNodeId}
-                        activeSemanticMessageId={activeSemanticMessageId}
-                        maximized={previewMaximized}
-                        onToggleMaximize={() =>
-                          setPreviewMaximized((value) => !value)
-                        }
-                      />
-                      <SemanticMessageInspector index={index} sequence={ast} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
-                      {traceStart && index ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} /> : null}
-                    </>
+                    <Preview
+                      source={renderedSource || source}
+                      autoUpdate={autoUpdate}
+                      isStale={isStale}
+                      onRender={() => setRenderedSource(source)}
+                      onNodeSelect={onNodeSelect}
+                      onSemanticMessageSelect={onSemanticMessageSelect}
+                      onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
+                      activeNodeId={activeNodeId}
+                      activeSemanticMessageId={activeSemanticMessageId}
+                      maximized={previewMaximized}
+                      onToggleMaximize={() => setPreviewMaximized((value) => !value)}
+                    />
                   )}
-                  {workspaceMode === "server" && server.active && bindingEntities.length ? <SemanticBindingsPanel
-                    key={proposalRefreshKey}
-                    client={apiClient}
-                    projectId={server.active.project.id}
-                    contextId={server.active.contextId}
-                    entities={bindingEntities}
-                    resources={bindingResources}
-                    resourceAliases={bindingResourceAliases}
-                    selectedAnchor={activeEntityAnchor?.resourceId === activeBindingResourceId ? activeEntityAnchor : null}
-                    writable={server.active.contextId !== null}
-                    onOpenEntity={(anchor) => {
-                      setActiveEntityAnchor({ ...anchor, resourceId: bindingResourceAliases.get(anchor.resourceId) ?? anchor.resourceId });
-                      const nodeId = anchor.identity.kind === "local-id" ? anchor.identity.value : undefined;
-                      openResourceById(anchor.resourceId, nodeId);
-                    }}
+                  {((!comparisonOpen && hasActiveSemanticOccurrence) || (traceStart && index && (isSequence || isEventFlow)) || (workspaceMode === "server" && server.active && bindingEntities.length > 0)) ? <AnalysisSurface
+                    message={!comparisonOpen && (isEventFlow
+                      ? <SemanticMessageInspector index={index} eventFlow={eventFlow} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
+                      : isSequence
+                        ? <SemanticMessageInspector index={index} sequence={ast} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
+                        : null)}
+                    trace={traceStart && index && (isSequence || isEventFlow)
+                      ? <TraceSurface index={index} start={traceStart} direction={traceDirection} provenance="active viewer" onOpenResource={openResourceById} embedded onClose={() => setTraceStart(null)} />
+                      : null}
+                    relationships={workspaceMode === "server" && server.active && bindingEntities.length > 0 ? <SemanticBindingsPanel
+                      key={proposalRefreshKey}
+                      client={apiClient}
+                      projectId={server.active.project.id}
+                      contextId={server.active.contextId}
+                      entities={bindingEntities}
+                      resources={bindingResources}
+                      resourceAliases={bindingResourceAliases}
+                      selectedAnchor={activeEntityAnchor?.resourceId === activeBindingResourceId ? activeEntityAnchor : null}
+                      writable={server.active.contextId !== null}
+                      onOpenEntity={(anchor) => {
+                        setActiveEntityAnchor({ ...anchor, resourceId: bindingResourceAliases.get(anchor.resourceId) ?? anchor.resourceId });
+                        const nodeId = anchor.identity.kind === "local-id" ? anchor.identity.value : undefined;
+                        openResourceById(anchor.resourceId, nodeId);
+                      }}
+                    /> : null}
                   /> : null}
                 </section>
               </>
