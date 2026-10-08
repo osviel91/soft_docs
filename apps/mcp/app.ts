@@ -15,6 +15,7 @@ import {
   type ServerRuntime,
 } from "../../src/persistence/server-runtime";
 import { createProjectCatalog } from "../../src/application/project-catalog";
+import { createCandidateAssessmentUseCases } from "../../src/application/candidate-assessments";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
@@ -115,6 +116,7 @@ export async function createMcpService(
     projects: runtime.projects,
     mutations: runtime.mutations,
   });
+  const candidateAssessments = createCandidateAssessmentUseCases(catalog, runtime.candidateAssessments);
   const policy = createAuthorizationPolicy<ServerProject>(runtime.projects);
   const workspaceAdmin = createWorkspaceAdminGovernance({ policy, workspaces: runtime.workspaces });
   const workspaceSelfReview = createWorkspaceSelfReviewPolicy({ policy, workspaces: runtime.workspaces });
@@ -138,6 +140,7 @@ export async function createMcpService(
   const deps: McpHandlerDeps = {
     config,
     catalog,
+    candidateAssessments,
     proposals,
     architecturalProposals,
     promotion,

@@ -15,17 +15,25 @@ export interface AssessCandidateInput {
   candidateId: string;
   decision: AssessmentDecision;
   rationale: string;
+  observedFingerprint: string;
   evidence?: BindingEvidence;
   expectedRevision?: number;
+}
+
+export interface ListCandidateAssessmentsInput {
+  decision?: AssessmentDecision;
+  status?: "CURRENT" | "STALE";
+  limit?: number;
+  cursor?: string;
 }
 
 export function createCandidateAssessmentUseCases(catalog: ProjectCatalog, repository: CandidateAssessmentRepository) {
   const discover = createDiscoverSemanticCandidatesUseCase(catalog);
 
-  async function currentCandidate(context: ApplicationContext, input: Pick<AssessCandidateInput, "projectId" | "contextId" | "candidateId">): Promise<DiscoveredSemanticCandidate> {
+  async function currentCandidate(context: ApplicationContext, input: { projectId: string; contextId?: string; candidateId: string }): Promise<DiscoveredSemanticCandidate> {
     let cursor: string | undefined;
     do {
-      const page = await discover(context, { projectId: input.projectId, contextId: input.contextId, limit: 200, ...(cursor === undefined ? {} : { cursor }) });
+      const page = await discover(context, { projectId: input.projectId, ...(input.contextId === undefined ? {} : { contextId: input.contextId }), limit: 200, ...(cursor === undefined ? {} : { cursor }) });
       const candidate = page.candidates.find((entry) => entry.id === input.candidateId);
       if (candidate) return candidate;
       cursor = page.nextCursor;
@@ -53,7 +61,14 @@ export function createCandidateAssessmentUseCases(catalog: ProjectCatalog, repos
       const evidenceResource = candidates.find((resource) => resource.id === item.resourceId);
       if (!evidenceResource || evidenceResource.revision !== item.revision || (item.entity && !(await evidenceEntityResolves(context, assessment.projectId, evidenceResource, item.entity)))) staleReasons.add("evidence-changed");
     }
-    return { ...assessment, status: staleReasons.size ? "STALE" : "CURRENT", staleReasons: [...staleReasons] };
+    const status = staleReasons.size ? "STALE" as const : "CURRENT" as const;
+    return {
+      ...assessment,
+      relation: "represents-in",
+      status,
+      staleReasons: [...staleReasons],
+      nextAction: status === "STALE" ? "Re-discover and reassess before using these anchors; do not create a binding from stale data." : assessment.decision === "READY_FOR_BINDING" ? "Review the Evidence and explicitly call create_semantic_binding if you decide to create the relationship." : "Gather evidence or record a new decision after review.",
+    };
   }
 
   async function evidenceEntityResolves(context: ApplicationContext, projectId: string, resource: CatalogResource, anchor: EntityAnchor): Promise<boolean> {
@@ -67,6 +82,7 @@ export function createCandidateAssessmentUseCases(catalog: ProjectCatalog, repos
     if (!input.contextId?.trim()) throw invalid("Assessment requires an owned MY WORK context.");
     if (!await catalog.can(context, input.projectId, "resource:update")) throw forbidden("The caller cannot assess candidates in this project.");
     const candidate = await currentCandidate(context, input);
+    if (candidate.fingerprint !== input.observedFingerprint) throw conflict("The candidate fingerprint changed; rediscover and reassess without retrying automatically.");
     const scope = { projectId: input.projectId, contextId: input.contextId };
     if (input.evidence) {
       const resources = await catalog.listEffectiveResources(context, input.projectId, input.contextId);
@@ -107,15 +123,37 @@ export function createCandidateAssessmentUseCases(catalog: ProjectCatalog, repos
 
   return {
     assess,
+    async getCandidate(context: ApplicationContext, projectId: string, contextId: string | undefined, candidateId: string) {
+      const assessment = contextId ? await repository.get({ projectId, contextId }, candidateId) : null;
+      try {
+        const candidate = await currentCandidate(context, { projectId, ...(contextId ? { contextId } : {}), candidateId });
+        const resolvedAssessment = assessment ? await resolve(context, assessment) : null;
+        return { candidate, assessment: resolvedAssessment, assessmentStatus: resolvedAssessment?.status ?? "UNASSESSED" as const, assessmentRevision: resolvedAssessment?.revision ?? null, relation: "represents-in" as const, status: "unconfirmed" as const, nextAction: resolvedAssessment?.status === "STALE" ? resolvedAssessment.nextAction : resolvedAssessment?.decision === "READY_FOR_BINDING" ? resolvedAssessment.nextAction : "Review the suggestion and record an explicit assessment in owned MY WORK." };
+      } catch (error) {
+        if (!(error instanceof ApplicationError) || error.code !== "not_found" || !assessment) throw error;
+        const resolved = await resolve(context, assessment);
+        return { candidate: null, assessment: resolved, assessmentStatus: resolved.status, assessmentRevision: resolved.revision, relation: "represents-in" as const, status: "unconfirmed" as const, nextAction: resolved.nextAction };
+      }
+    },
     async get(context: ApplicationContext, projectId: string, contextId: string, candidateId: string) {
       await catalog.listEffectiveResources(context, projectId, contextId);
       const assessment = await repository.get({ projectId, contextId }, candidateId);
       if (!assessment) throw notFound("Candidate assessment not found.");
       return resolve(context, assessment);
     },
-    async list(context: ApplicationContext, projectId: string, contextId: string) {
+    async list(context: ApplicationContext, projectId: string, contextId: string, options: ListCandidateAssessmentsInput = {}) {
       await catalog.listEffectiveResources(context, projectId, contextId);
-      return Promise.all((await repository.list({ projectId, contextId })).map((assessment) => resolve(context, assessment)));
+      if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 200)) throw invalid("limit must be an integer from 1 to 200.");
+      const assessments = await Promise.all((await repository.list({ projectId, contextId })).map((assessment) => resolve(context, assessment)));
+      const filtered = assessments.filter((assessment) =>
+        (options.decision === undefined || assessment.decision === options.decision) &&
+        (options.status === undefined || assessment.status === options.status),
+      ).sort((a, b) => a.candidateId.localeCompare(b.candidateId));
+      const start = options.cursor === undefined ? 0 : filtered.findIndex((assessment) => assessment.candidateId === options.cursor) + 1;
+      if (options.cursor !== undefined && start === 0) throw invalid("cursor does not identify an assessment in this filtered result.");
+      const limit = options.limit ?? 50;
+      const page = filtered.slice(start, start + limit);
+      return { assessments: page, total: filtered.length, ...(start + page.length < filtered.length ? { nextCursor: page.at(-1)!.candidateId } : {}) };
     },
     async history(context: ApplicationContext, projectId: string, contextId: string, candidateId: string) {
       await catalog.listEffectiveResources(context, projectId, contextId);

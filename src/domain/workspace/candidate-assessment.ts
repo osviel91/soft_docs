@@ -24,8 +24,10 @@ export interface CandidateAssessment {
 }
 
 export type ResolvedCandidateAssessment = CandidateAssessment & {
+  relation: "represents-in";
   status: "CURRENT" | "STALE";
   staleReasons: AssessmentStaleReason[];
+  nextAction: string;
 };
 
 export function validateCandidateAssessment(assessment: CandidateAssessment): void {

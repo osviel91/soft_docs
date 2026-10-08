@@ -1,6 +1,6 @@
 # D03.3 — Candidate Discovery & Epistemic Reasoning
 
-**Estado:** D03.3.1 y D03.3.2 implementados; contratos de transporte/UI y fases posteriores requieren aprobación independiente
+**Estado:** D03.3.1, D03.3.2 y D03.3.3 implementados; UI y fases posteriores requieren aprobación independiente
 **Alcance:** sugerencias de correspondencia Conceptual ↔ Database y evaluaciones privadas de esas sugerencias
 **Regla:** Candidate no es SemanticBinding. Solo una acción explícita, con evidencia válida, crea un binding en MY WORK; publicación sigue el flujo de Architectural Proposal.
 
@@ -26,7 +26,7 @@ Las afirmaciones de esta sección describen el código inspeccionado. Las decisi
 - `ProjectCatalog` verifica permisos y ownership de MY WORK. Las lecturas con `contextId` aplican SHARED + ese contexto; los bindings privados tienen overlay por ID sobre SHARED. `requireBindingEndpoints` indexa recursos efectivos y exige ambos anchors exactos.
 - El repositorio de bindings está separado de `project.json`, con scope project/context, revisiones optimistas e historial; server usa tablas `semantic_bindings`/`semantic_binding_revisions`, local usa `.semantic-bindings.json`.
 - Architectural Proposal captura operaciones seleccionadas ADD/UPDATE/REMOVE de bindings como snapshot, junto a recursos, identidades y relaciones. Review es separado de publicación. Promotion valida base, anchors/evidencia/permisos y aplica cambios SHARED atómicamente.
-- `SemanticCandidate` es derivado y no persistido. D03.3.1 añade discovery read-only HTTP/MCP remoto. D03.3.2 añade evaluación privada versionada y casos de uso, todavía sin endpoint HTTP/MCP ni UI.
+- `SemanticCandidate` es derivado y no persistido. D03.3.1 añade discovery read-only HTTP/MCP remoto; D03.3.2 añade evaluación privada versionada; D03.3.3 expone los casos de uso mediante HTTP y MCP remoto, sin UI.
 
 ### HTTP, MCP y UI
 
@@ -134,21 +134,25 @@ Regla de materialización inicial: `READY_FOR_BINDING` requiere `BindingEvidence
 
 **Implementado:** `GET /api/projects/{projectId}/semantic-candidates`; es read-only y usa la misma lógica de caso de uso que MCP. Admite `contextId?`, `leftEntityKind?` (Conceptual), `rightEntityKind?` (Database), `limit` (default 50, máximo 200) y `cursor?` (ID del último candidato de la página anterior). Devuelve `status: "unconfirmed"`, aviso explícito, candidatos con ID/fingerprint, anchors exactos, nombres/tipos/paths, señales, ranking ordinal y ambigüedad, `policyVersion`, scope, total y `nextCursor?`. Cursor inválido o filtros fuera de dirección son rechazados; el orden estable del dominio es por candidate ID.
 
-MCP remoto publica `discover_semantic_candidates` con anotación read-only y permiso `resource:read`. Devuelve el mismo objeto en `structuredContent` y como JSON completo en el bloque textual, con estado/aviso que aclara que los candidatos no son bindings ni evidencia. No se implementan get/assessment ni mutaciones. La ruta local-first stdio se difiere: no ofrece identidad autenticada ni MY WORK server-backed equivalente.
+MCP remoto publica `discover_semantic_candidates`, `get_semantic_candidate`, `assess_semantic_candidate` y `list_candidate_assessments`. Las tres lecturas usan `resource:read` y anotación read-only; `assess_semantic_candidate` usa `resource:update`, anotación de escritura y exige el MY WORK propio. Todas las respuestas contienen JSON completo en texto además de `structuredContent`; los candidatos se identifican como sugerencias no confirmadas. La ruta local-first stdio se difiere: no ofrece identidad autenticada ni MY WORK server-backed equivalente.
 
-**Discovery:** entrada `contextId?`, `leftRepresentation?`/`rightRepresentation?` (solo conceptual/database, normalizados al sentido), `decision?`, `limit` (default 50, max 200), `cursor?`, `includeAssessed?` (default true), `minRankingScore?` (optativo). Respuesta `{ candidates, nextCursor, context, policyVersion }`; cada candidato incluye ID, anchors/nombres/tipos/path actual, señales, rankingScore, estado/resolution y evaluación asociada visible al caller. Orden estable: score descendente, anchor key ascendente.
+- `GET /api/projects/{projectId}/semantic-candidates/{candidateId}` y `get_semantic_candidate` exponen candidateId, fingerprint, anchors exactos, relación `represents-in`, señales, evaluación visible, estado y acción siguiente. Si no hay evaluación previa, status es `unconfirmed`; cualquier evaluación incluida conserva `CURRENT|STALE` y `staleReasons`.
+- La evaluación incluye decisión, rationale, Evidence visible, autor/revisión/fechas y nextAction. La respuesta declara que Evidence no fue verificada automáticamente en cuanto a verdad o suficiencia. Texto MCP es JSON completo equivalente a `structuredContent`; no se agrega preámbulo fuera de la estructura ni se truncan datos.
+- `list_candidate_assessments` pagina de forma estable con cursor candidateId y filtra por decisión/estado; cursor fuera del conjunto filtrado y límites inválidos se rechazan. Assessment no tiene operación de borrado ni muta SHARED.
 
-**Get candidate:** acepta context opcional y candidate ID derivado. Recalcula el candidato bajo contexto actual; si no existe, devuelve not-found o `stale` solo cuando existe evaluación accesible. Incluye señales, ambos extremos y evaluación propia. Debe distinguir contexto/evaluación ajena como not-found.
+**Discovery:** conserva entrada `contextId?`, filtros por tipo, `limit` y `cursor`; sus candidatos son sugerencias y no Evidence.
 
-**Assess:** entrada obligatoria `{ contextId, decision, rationale, evidence?, expectedRevision? }`. Primera evaluación espera ausencia/revisión 0; repetición exige revisión actual. READY requiere rationale y Evidence válida; NEEDS_EVIDENCE/REJECTED requieren rationale y no materializan binding. Respuesta Assessment, fingerprint, estado stale/current y `bindingCreated: false`. No hay decisión `APPROVE` para evitar confusión con review de Proposal.
+**Get candidate:** acepta context opcional y candidate ID derivado. Recalcula el candidato bajo contexto actual; si no existe, devuelve la evaluación accesible como `STALE` o not-found. Incluye señales y ambos anchors exactos.
 
-**List assessments:** `contextId` obligatorio; filtros por decision/status/cursor/limit. Devuelve snapshots accesibles, referencias a candidate ID y staleReasons. No acepta un `contextId` distinto al poseído; errores de autorización no revelan existencia del otro contexto.
+**Assess:** entrada obligatoria `{ contextId, decision, rationale, fingerprint, evidence?, expectedRevision? }`. Primera evaluación espera ausencia/revisión 0; actualizaciones requieren la revisión actual. READY requiere Evidence v1 válida y rationale; NEEDS_EVIDENCE/REJECTED requieren rationale y no materializan binding. El fingerprint se compara antes de persistir. Respuesta incluye Assessment, estado `CURRENT|STALE` y `bindingCreated: false`. No hay decisión `APPROVE` para evitar confusión con review de Proposal.
 
-**Errores:** 400 payload/anchor/filtro inválido; 404 proyecto, recurso, candidato vigente o contexto no visible (con política anti-enumeración); 409 revisión obsoleta, fingerprint cambiado o binding exacto ya existente al materializar; 422 par fuera de Conceptual↔Database, candidato ambiguo/no vigente, evidencia READY inválida o intento directo a SHARED; 403 permiso insuficiente cuando la API actual lo distingue. Al conflicto, releer; no reintentar a ciegas.
+**List assessments:** `contextId` obligatorio; filtros por decision/status/cursor/limit. Devuelve snapshots accesibles, referencias a candidate ID y staleReasons, aunque el candidato haya desaparecido. No acepta un `contextId` distinto al poseído; errores de autorización no revelan existencia del otro contexto.
+
+**Errores:** HTTP `422 invalid` para payload/decisión/evidencia/filtro inválido o `contextId` ausente; `404 not_found` para proyecto/candidato/contexto no visible (sin revelar contextos privados); `409 conflict` para revisión o fingerprint obsoletos; `403 forbidden` para permiso insuficiente cuando el catálogo lo distingue. MCP expone esos mismos códigos mediante su error de herramienta y texto legible. En conflicto, releer; no reintentar automáticamente.
 
 `create_semantic_binding` sigue siendo la operación de materialización: el cliente copia anchors exactos y entrega Evidence. Para idempotencia/duplicado, debe comprobarse el par exacto activo antes de crear y responder con binding existente o conflicto explícito; no transformar la evaluación en binding en el servidor. READY representa una evaluación humana de suficiencia, no certeza calculada. Evidence v1 permanece sin modificaciones.
 
-Para fases posteriores, MCP remoto añadirá get/assess/list con schemas claros y permisos consistentes; solo se evaluará en un contextId propiedad del usuario. D03.3.1 ya publica `discover_semantic_candidates`, paginado por cursor y con texto completo para clientes text-only. MCP local podría ofrecer discovery puro, pero Assessment persistente requiere contrato de contexto/autorización disponible en ese host; si no existe, diferir escritura local en vez de fingir MY WORK.
+MCP remoto ofrece get/assess/list en D03.3.3 sobre los mismos casos de uso autorizados que HTTP. MCP local sigue diferido porque no ofrece identidad autenticada ni MY WORK server-backed equivalente.
 
 **Revisión de decisión API:** el HTTP existente usa rutas de bindings y expectedRevision, y MCP remoto deriva de la aplicación común. Mantener la lógica de dominio/application común para paridad; adaptadores solo validan/serializan.
 
@@ -183,15 +187,15 @@ Implementa igualdad normalizada y compatibilidad de tipos, ID independiente de p
 
 Agrega modelo/validación, puerto, repositorios SQL/local, revisiones optimistas, ownership y casos de uso compartidos de alta, consulta, listado, resolución de vigencia e historial. El estado stale se calcula sin reparar anchors: recursos ausentes, candidatos/huellas cambiados o revisiones internas de evidencia obsoletas. No toca SemanticBinding/Evidence v1 ni SHARED; no expone todavía endpoints.
 
-### D03.3.3 — Contratos de Assessment API/MCP (diferido)
+### D03.3.3 — Contratos de Assessment API/MCP (implementado)
 
-Exponer get/assess/list de evaluaciones en API y MCP remoto; adaptar MCP local únicamente si tiene contexto privado persistente equivalente. Discovery ya está disponible desde D03.3.1. Alinear filtros, errores, paginación y texto text-only. Reutilizar `create_semantic_binding` por separado.
+Expone get/assess/list en API y MCP remoto sobre casos de uso compartidos. Las evaluaciones incluyen CURRENT/STALE y causas; las escrituras validan el fingerprint antes de persistir y nunca crean binding. `create_semantic_binding` permanece separado y no requiere CandidateAssessment.
 
 ### D03.3.4 — Workspace y gobernanza
 
 Agregar revisión/navegación UI, creación explícita de binding desde assessment vigente, después proposal operation explícita y promotion sin cambios de atajo. E2E desde discovery hasta SHARED, verificando que assessment no aparece en SHARED ni en Proposal como autoridad.
 
-Cada fase posterior requiere aprobación independiente. Este encargo autoriza exclusivamente D03.3.2; D03.3.3 no queda autorizado.
+Cada fase posterior requiere aprobación independiente. Este encargo autoriza exclusivamente D03.3.3; D03.3.4 no queda autorizado.
 
 ## 10. Pruebas de aceptación y cierre
 

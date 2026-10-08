@@ -44,11 +44,13 @@ import type { Observability } from "../observability";
 import { traceContextOf } from "../observability";
 import { checkModernHeaders } from "./headers";
 import { createMcpServerForPrincipal } from "./server";
+import { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
 
 /** Everything the handler needs. */
 export interface McpHandlerDeps {
   config: McpConfig;
   catalog: ProjectCatalog;
+  candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
   promotion: PromotionService;
@@ -484,6 +486,7 @@ export async function handleMcpRequest(
   const { server } = createMcpServerForPrincipal({
     context,
     catalog: deps.catalog,
+    candidateAssessments: deps.candidateAssessments,
     proposals: deps.proposals,
     architecturalProposals: deps.architecturalProposals,
     promotion: deps.promotion,

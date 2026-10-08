@@ -20,6 +20,7 @@ import {
   type ServerRuntime,
 } from "../../src/persistence/server-runtime";
 import { createProjectCatalog } from "../../src/application/project-catalog";
+import { createCandidateAssessmentUseCases } from "../../src/application/candidate-assessments";
 import { createWorkspaceService } from "../../src/application/workspace-service";
 import { createWorkspaceInvitationService } from "../../src/application/workspace-invitation-service";
 import { createProjectShareService } from "../../src/application/project-share-service";
@@ -61,6 +62,7 @@ export interface AppDependencies {
    * so one instance serves every request.
    */
   catalog: ReturnType<typeof createProjectCatalog>;
+  candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
   invitationService: ReturnType<typeof createWorkspaceInvitationService>;
   projectShares: ReturnType<typeof createProjectShareService>;
@@ -211,6 +213,7 @@ export async function createApp(
     // The catalog runs resource mutations through the *same* service the MCP
     // host uses, so there is one implementation of "update a resource".
     catalog,
+    candidateAssessments: createCandidateAssessmentUseCases(catalog, runtime.candidateAssessments),
     workspaceService: createWorkspaceService(runtime.workspaces),
     invitationService: createWorkspaceInvitationService({ invitations: runtime.invitations, workspaces: runtime.workspaces }),
     projectShares: createProjectShareService({ shares: runtime.shares, projects: runtime.projects, storage: runtime.storageFor, semanticBindings: runtime.semanticBindings }),

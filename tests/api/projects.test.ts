@@ -681,6 +681,31 @@ describe("semantic candidate discovery", () => {
     expect([...first.body.candidates, ...second.body.candidates].map((candidate: { leftPath: string }) => candidate.leftPath).sort()).toEqual(["private.concept", "shared.concept"]);
     expect([...first.body.candidates, ...second.body.candidates].some((candidate: { leftPath: string }) => candidate.leftPath === "secret.concept")).toBe(false);
 
+    const candidate = first.body.candidates[0];
+    const candidateRead = await call("GET", `/api/projects/${owner.projectId}/semantic-candidates/${candidate.id}?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(candidateRead.status).toBe(200);
+    expect(candidateRead.body.candidate).toMatchObject({ status: "unconfirmed", candidate: { id: candidate.id, fingerprint: candidate.fingerprint, left: candidate.left, right: candidate.right }, assessment: null });
+    const assessed = await call("PUT", `/api/projects/${owner.projectId}/semantic-candidates/${candidate.id}/assessment`, { cookie: owner.cookie, body: { contextId: owner.contextId, decision: "NEEDS_EVIDENCE", rationale: "Inspect the schema migration.", fingerprint: candidate.fingerprint } });
+    expect(assessed.status).toBe(200);
+    expect(assessed.body).toMatchObject({ bindingCreated: false, assessment: { candidateId: candidate.id, revision: 1, decision: "NEEDS_EVIDENCE", status: "CURRENT" } });
+    const assessmentList = await call("GET", `/api/projects/${owner.projectId}/candidate-assessments?contextId=${owner.contextId}&decision=NEEDS_EVIDENCE`, { cookie: owner.cookie });
+    expect(assessmentList.status).toBe(200);
+    expect(assessmentList.body.assessments).toHaveLength(1);
+    const sharedAssessmentRead = await call("GET", `/api/projects/${owner.projectId}/candidate-assessments`, { cookie: owner.cookie });
+    expect(sharedAssessmentRead.status).toBe(422);
+    const foreignAssessmentRead = await call("GET", `/api/projects/${owner.projectId}/candidate-assessments?contextId=${otherContext.id}`, { cookie: owner.cookie });
+    expect(foreignAssessmentRead.status).toBe(404);
+    expect(JSON.stringify(foreignAssessmentRead.body)).not.toContain("Inspect the schema migration");
+    const repeatedCreate = await call("PUT", `/api/projects/${owner.projectId}/semantic-candidates/${candidate.id}/assessment`, { cookie: owner.cookie, body: { contextId: owner.contextId, decision: "REJECTED", rationale: "Changed my mind.", fingerprint: candidate.fingerprint } });
+    expect(repeatedCreate.status).toBe(422);
+    const updatedAssessment = await call("PUT", `/api/projects/${owner.projectId}/semantic-candidates/${candidate.id}/assessment`, { cookie: owner.cookie, body: { contextId: owner.contextId, decision: "REJECTED", rationale: "Wrong correspondence.", fingerprint: candidate.fingerprint, expectedRevision: 1 } });
+    expect(updatedAssessment.status).toBe(200);
+    expect(updatedAssessment.body.assessment).toMatchObject({ revision: 2, decision: "REJECTED" });
+    const fingerprintConflict = await call("PUT", `/api/projects/${owner.projectId}/semantic-candidates/${candidate.id}/assessment`, { cookie: owner.cookie, body: { contextId: owner.contextId, decision: "READY_FOR_BINDING", rationale: "Evidence will be supplied.", fingerprint: "outdated-fingerprint", expectedRevision: 2 } });
+    expect(fingerprintConflict.status).toBe(409);
+    const unchangedAssessment = await call("GET", `/api/projects/${owner.projectId}/candidate-assessments?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(unchangedAssessment.body.assessments[0]).toMatchObject({ revision: 2, decision: "REJECTED" });
+
     const shared = await call("GET", `/api/projects/${owner.projectId}/semantic-candidates`, { cookie: owner.cookie });
     expect(shared.body.total).toBe(2);
     expect(shared.body.candidates.every((candidate: { leftPath: string }) => candidate.leftPath.startsWith("shared."))).toBe(true);

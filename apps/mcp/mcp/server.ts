@@ -32,6 +32,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ApplicationContext } from "../../../src/application/context";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
+import type { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
@@ -108,6 +109,7 @@ A token carries scopes. A read-only token cannot write; project membership alway
 export interface McpServerForPrincipalOptions {
   context: ApplicationContext;
   catalog: ProjectCatalog;
+  candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
   promotion: PromotionService;
@@ -243,6 +245,7 @@ export function createMcpServerForPrincipal(
           const toolContext: ToolContext = {
             context,
              catalog,
+             candidateAssessments: options.candidateAssessments,
              proposals,
              architecturalProposals,
               promotion: options.promotion,

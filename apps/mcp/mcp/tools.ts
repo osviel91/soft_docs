@@ -79,6 +79,7 @@ import { normalizeResourceMetadata } from "../../../src/domain/workspace/resourc
 import type { ResourceRelationship } from "../../../src/domain/workspace/resource-relationship";
 import { createDiscoverSemanticCandidatesUseCase } from "../../../src/application/discover-semantic-candidates";
 import type { EntityKind } from "../../../src/domain/workspace/semantic-binding";
+import type { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
 
 /** A tool's result before the dispatcher wraps it in an MCP result. */
 export interface ToolOutcome {
@@ -90,6 +91,7 @@ export interface ToolOutcome {
 export interface ToolContext {
   context: ApplicationContext;
   catalog: ProjectCatalog;
+  candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
   promotion: PromotionService;
@@ -2078,6 +2080,42 @@ export function createMcpTools(): McpTool[] {
           text: JSON.stringify(result, null, 2),
           structured: result,
         };
+      },
+    },
+    {
+      name: "get_semantic_candidate",
+      title: "Get semantic candidate",
+      description: "Inspect an unconfirmed candidate suggestion and this caller's optional private assessment. May return an accessible STALE assessment when discovery no longer contains the candidate. Errors: not_found, forbidden, invalid.",
+      inputSchema: { projectId: projectId(), candidateId: z.string().min(1), contextId: z.string().uuid().optional() },
+      annotations: { ...READ_ONLY, title: "Get semantic candidate" }, requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const candidate = await toolContext.candidateAssessments.getCandidate(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : undefined, stringArg(args, "candidateId"));
+        const result = { ...candidate, notice: "This is an unconfirmed candidate suggestion, not a binding or verified relationship." };
+        return { text: JSON.stringify(result, null, 2), structured: result };
+      },
+    },
+    {
+      name: "assess_semantic_candidate",
+      title: "Assess semantic candidate",
+      description: "Create or optimistically update an assessment in the caller's owned MY WORK. First creation uses expectedRevision 0 or omission; repeats require the current expectedRevision. Fingerprint mismatch/revision conflict is not retried. READY requires Evidence v1 and rationale. No binding is created. Errors: invalid, forbidden, not_found, conflict.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().describe("Required owned MY WORK context."), candidateId: z.string().min(1), decision: z.enum(["NEEDS_EVIDENCE", "REJECTED", "READY_FOR_BINDING"]), rationale: z.string().trim().min(1), fingerprint: z.string().min(1).describe("Exact candidate fingerprint observed from discovery/get."), evidence: bindingEvidenceSchema.optional(), expectedRevision: z.number().int().min(0).optional().describe("Omit or use 0 only on first creation; use the revision read for updates.") },
+      annotations: { ...WRITE, title: "Assess semantic candidate" }, requiredPermissions: ["resource:update"],
+      async run(args, toolContext) {
+        const assessment = await toolContext.candidateAssessments.assess(toolContext.context, { projectId: stringArg(args, "projectId"), contextId: stringArg(args, "contextId"), candidateId: stringArg(args, "candidateId"), decision: stringArg(args, "decision") as "NEEDS_EVIDENCE" | "REJECTED" | "READY_FOR_BINDING", rationale: stringArg(args, "rationale"), observedFingerprint: stringArg(args, "fingerprint"), ...(args.evidence === undefined ? {} : { evidence: args.evidence as import("../../../src/domain/workspace/semantic-binding").BindingEvidence }), ...(typeof args.expectedRevision === "number" ? { expectedRevision: args.expectedRevision } : {}) });
+        const result = { assessment, bindingCreated: false, evidenceVerification: "References and freshness are checked; evidence truth or sufficiency is not automatically verified.", notice: "Assessment is private to MY WORK and does not create a SemanticBinding.", nextAction: assessment.status === "CURRENT" && assessment.decision === "READY_FOR_BINDING" ? "Review Evidence and explicitly call create_semantic_binding only if intended." : "Review the assessment and gather evidence or reassess; no binding was created." };
+        return { text: JSON.stringify(result, null, 2), structured: result };
+      },
+    },
+    {
+      name: "list_candidate_assessments",
+      title: "List candidate assessments",
+      description: "List only the caller's assessments in the required owned MY WORK context, including STALE records whose candidates disappeared. Filters: decision, CURRENT/STALE; deterministic candidateId cursor pagination. Errors: invalid, forbidden, not_found.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().describe("Required owned MY WORK context."), decision: z.enum(["NEEDS_EVIDENCE", "REJECTED", "READY_FOR_BINDING"]).optional(), status: z.enum(["CURRENT", "STALE"]).optional(), limit: limit(50, 200), cursor: cursor() },
+      annotations: { ...READ_ONLY, title: "List candidate assessments" }, requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const result = await toolContext.candidateAssessments.list(toolContext.context, stringArg(args, "projectId"), stringArg(args, "contextId"), { ...(typeof args.decision === "string" ? { decision: args.decision as "NEEDS_EVIDENCE" | "REJECTED" | "READY_FOR_BINDING" } : {}), ...(typeof args.status === "string" ? { status: args.status as "CURRENT" | "STALE" } : {}), ...(typeof args.limit === "number" ? { limit: args.limit } : {}), ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}) });
+        const resultWithNotice = { ...result, notice: "Every assessment is a private evaluation of an unconfirmed candidate suggestion, not a binding.", nextAction: "Inspect each assessment; reassess STALE records before any explicit SemanticBinding request." };
+        return { text: JSON.stringify(resultWithNotice, null, 2), structured: resultWithNotice };
       },
     },
     {

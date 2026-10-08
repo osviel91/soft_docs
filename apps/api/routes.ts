@@ -45,6 +45,7 @@ export function createRouter(dependencies: AppDependencies): Router {
   const router = new Router();
   const { config, catalog } = dependencies;
   const discoverSemanticCandidates = createDiscoverSemanticCandidatesUseCase(catalog);
+  const candidateAssessments = dependencies.candidateAssessments;
   const auth = createAuthRoutes(dependencies, oidcClientFor(dependencies));
   const signInConfigured = oidcClientFor(dependencies) !== null;
 
@@ -942,6 +943,45 @@ export function createRouter(dependencies: AppDependencies): Router {
         ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
       });
       return json(200, result);
+    }),
+  );
+  router.get("/api/projects/:projectId/semantic-candidates/:candidateId", async (request, params) =>
+    guarded(correlationId(request), async () => json(200, {
+      candidate: await candidateAssessments.getCandidate(await contextOf(request), params.projectId, request.query.contextId, params.candidateId),
+    })),
+  );
+  router.put("/api/projects/:projectId/semantic-candidates/:candidateId/assessment", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const body = parseJsonBody(request.body);
+      if (typeof body.contextId !== "string" || !body.contextId.trim()) throw invalid("contextId MY WORK is required.");
+      if (body.decision !== "NEEDS_EVIDENCE" && body.decision !== "REJECTED" && body.decision !== "READY_FOR_BINDING") throw invalid("decision must be NEEDS_EVIDENCE, REJECTED or READY_FOR_BINDING.");
+      if (typeof body.rationale !== "string") throw invalid("rationale is required.");
+      if (typeof body.fingerprint !== "string" || !body.fingerprint) throw invalid("observed fingerprint is required.");
+      const assessment = await candidateAssessments.assess(await contextOf(request), {
+        projectId: params.projectId, contextId: body.contextId, candidateId: params.candidateId, observedFingerprint: body.fingerprint,
+        decision: body.decision, rationale: body.rationale,
+        ...(body.evidence === undefined ? {} : { evidence: body.evidence as import("../../src/domain/workspace/semantic-binding").BindingEvidence }),
+        ...(body.expectedRevision === undefined ? {} : { expectedRevision: requireExpectedRevision(body) }),
+      });
+      return json(200, { assessment, bindingCreated: false, evidenceVerification: "References and freshness are checked; evidence truth or sufficiency is not automatically verified.", nextAction: assessment.status === "CURRENT" && assessment.decision === "READY_FOR_BINDING" ? "Review Evidence and explicitly create a SemanticBinding only if intended." : "Review the assessment and gather evidence or reassess; no binding was created." });
+    }),
+  );
+  router.get("/api/projects/:projectId/candidate-assessments", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const contextId = request.query.contextId;
+      if (!contextId) throw invalid("contextId MY WORK is required.");
+      const rawLimit = request.query.limit;
+      const pageSize = rawLimit === undefined ? undefined : Number(rawLimit);
+      if (pageSize !== undefined && (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200)) throw invalid("limit must be an integer from 1 to 200.");
+      if (request.query.decision !== undefined && !["NEEDS_EVIDENCE", "REJECTED", "READY_FOR_BINDING"].includes(request.query.decision)) throw invalid("decision filter is invalid.");
+      if (request.query.status !== undefined && request.query.status !== "CURRENT" && request.query.status !== "STALE") throw invalid("status filter must be CURRENT or STALE.");
+      const result = await candidateAssessments.list(await contextOf(request), params.projectId, contextId, {
+        ...(request.query.decision === undefined ? {} : { decision: request.query.decision as import("../../src/domain/workspace/candidate-assessment").AssessmentDecision }),
+        ...(request.query.status === undefined ? {} : { status: request.query.status as "CURRENT" | "STALE" }),
+        ...(pageSize === undefined ? {} : { limit: pageSize }),
+        ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
+      });
+      return json(200, { ...result, nextAction: "Inspect each assessment; reassess STALE records before any explicit SemanticBinding request." });
     }),
   );
   router.post("/api/projects/:projectId/semantic-bindings", async (request, params) =>

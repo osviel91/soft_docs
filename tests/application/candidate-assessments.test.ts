@@ -55,12 +55,15 @@ describe("candidate assessment use cases", () => {
       listSemanticBindings: async () => [],
     } as unknown as ProjectCatalog)(owner, { projectId, contextId }));
     const id = discovered.candidates[0]!.id;
-    await expect(useCases.assess(owner, { projectId, contextId, candidateId: id, decision: "READY_FOR_BINDING", rationale: "Ready." })).rejects.toThrow("requires valid version 1 evidence");
-    const ready = await useCases.assess(owner, { projectId, contextId, candidateId: id, decision: "READY_FOR_BINDING", rationale: "Reviewed against the contract.", evidence: { version: 1, rationale: "Migration is explicit.", items: [{ kind: "internal", resourceId: leftId, revision: 1 }] } });
+    const fingerprint = discovered.candidates[0]!.fingerprint;
+    await expect(useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: fingerprint, decision: "READY_FOR_BINDING", rationale: "Ready." })).rejects.toThrow("requires valid version 1 evidence");
+    const ready = await useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: fingerprint, decision: "READY_FOR_BINDING", rationale: "Reviewed against the contract.", evidence: { version: 1, rationale: "Migration is explicit.", items: [{ kind: "internal", resourceId: leftId, revision: 1 }] } });
     expect(ready).toMatchObject({ decision: "READY_FOR_BINDING", revision: 1, status: "CURRENT" });
-    const changed = await useCases.assess(owner, { projectId, contextId, candidateId: id, decision: "NEEDS_EVIDENCE", rationale: "Need an additional source.", expectedRevision: 1 });
+    await expect(useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: "old-fingerprint", decision: "REJECTED", rationale: "Wrong." })).rejects.toThrow("fingerprint changed");
+    expect(await useCases.history(owner, projectId, contextId, id)).toHaveLength(1);
+    const changed = await useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: fingerprint, decision: "NEEDS_EVIDENCE", rationale: "Need an additional source.", expectedRevision: 1 });
     expect(changed).toMatchObject({ decision: "NEEDS_EVIDENCE", revision: 2 });
-    await expect(useCases.assess(owner, { projectId, contextId, candidateId: id, decision: "REJECTED", rationale: "Wrong mapping.", expectedRevision: 1 })).rejects.toThrow("current revision 2");
+    await expect(useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: fingerprint, decision: "REJECTED", rationale: "Wrong mapping.", expectedRevision: 1 })).rejects.toThrow("current revision 2");
     expect(await useCases.history(owner, projectId, contextId, id)).toHaveLength(2);
     expect(await useCases.get(owner, projectId, contextId, id)).toMatchObject({ revision: 2, decision: "NEEDS_EVIDENCE" });
   });
@@ -75,14 +78,16 @@ describe("candidate assessment use cases", () => {
       listSemanticBindings: async () => [],
     } as unknown as ProjectCatalog)(owner, { projectId, contextId }));
     const id = candidate.candidates[0]!.id;
+    const fingerprint = candidate.candidates[0]!.fingerprint;
     const evidenceEntity = { version: 1 as const, resourceId: leftId, representation: "conceptual" as const, entityKind: "concept" as const, identity: { kind: "local-id" as const, value: "other" } };
-    await useCases.assess(owner, { projectId, contextId, candidateId: id, decision: "READY_FOR_BINDING", rationale: "Evidence checked.", evidence: { version: 1, rationale: "Source revision.", items: [{ kind: "internal", resourceId: leftId, revision: 1, entity: evidenceEntity }] } });
+    await useCases.assess(owner, { projectId, contextId, candidateId: id, observedFingerprint: fingerprint, decision: "READY_FOR_BINDING", rationale: "Evidence checked.", evidence: { version: 1, rationale: "Source revision.", items: [{ kind: "internal", resourceId: leftId, revision: 1, entity: evidenceEntity }] } });
     resources[0] = { ...resources[0]!, revision: 2 };
     expect(await useCases.get(owner, projectId, contextId, id)).toMatchObject({ status: "STALE", staleReasons: ["evidence-changed"] });
     resources[0] = { ...resources[0]!, revision: 1 };
     content.set(leftId, 'concept account "Account"');
     const unresolvedEvidence = await useCases.get(owner, projectId, contextId, id);
     expect(unresolvedEvidence.staleReasons).toContain("evidence-changed");
+    expect(await useCases.list(owner, projectId, contextId, { status: "STALE", limit: 1 })).toMatchObject({ total: 1, assessments: [{ status: "STALE" }] });
     content.set(leftId, 'concept account "Account"\nconcept other "Other"');
     content.set(leftId, 'concept account "ACCOUNT"\nconcept other "Other"');
     content.set(rightId, 'table account - "Account"');
@@ -91,6 +96,7 @@ describe("candidate assessment use cases", () => {
     const missingAnchor = await useCases.get(owner, projectId, contextId, id);
     expect(missingAnchor.status).toBe("STALE");
     expect(missingAnchor.staleReasons).toContain("anchor-unavailable");
+    expect(await useCases.getCandidate(owner, projectId, contextId, id)).toMatchObject({ candidate: null, assessment: { status: "STALE", staleReasons: expect.arrayContaining(["anchor-unavailable"]) } });
     expect(await useCases.history(owner, projectId, contextId, id)).toHaveLength(1);
   });
 });

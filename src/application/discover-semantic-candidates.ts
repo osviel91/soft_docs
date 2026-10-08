@@ -62,6 +62,7 @@ export function createDiscoverSemanticCandidatesUseCase(catalog: ProjectCatalog)
     return {
       status: "unconfirmed" as const,
       notice: "Candidates are suggestions only; they are not bindings or evidence.",
+      nextAction: "Inspect exact anchors and source evidence; use get_semantic_candidate, then assess in owned MY WORK if appropriate.",
       candidates,
       ...(nextCursor === undefined ? {} : { nextCursor }),
       context: input.contextId === undefined ? "SHARED" as const : "SHARED+MY_WORK" as const,
