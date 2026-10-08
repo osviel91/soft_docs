@@ -30,6 +30,17 @@ import type { ResourceTrajectoryKind } from "../../domain/workspace/resource-tra
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { SemanticMessageIdentity } from "../../domain/workspace/metadata";
 import type { SemanticBinding, EntityAnchor, BindingEvidence } from "../../domain/workspace/semantic-binding";
+import type { AssessmentDecision, ResolvedCandidateAssessment } from "../../domain/workspace/candidate-assessment";
+
+export interface ServerSemanticCandidate {
+  id: string; relation: "represents-in"; left: EntityAnchor; right: EntityAnchor;
+  leftName: string; rightName: string; leftType: string; rightType: string;
+  leftPath: string; rightPath: string; fingerprint: string; policyVersion: string;
+  ranking: number; ambiguity: { ambiguous: boolean; alternativeCount: number };
+  signals: Array<{ code: string; description: string }>;
+}
+
+export type ServerCandidateAssessment = ResolvedCandidateAssessment;
 
 /** The signed-in person, as `GET /api/me` reports them. */
 export interface AuthenticatedUser {
@@ -767,6 +778,27 @@ export class ServerApiClient {
     const query = contextId ? `?contextId=${encodeURIComponent(contextId)}` : "";
     const body = await this.request<{ bindings: SemanticBinding[] }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-bindings${query}`);
     return body.bindings ?? [];
+  }
+
+  async listSemanticCandidates(projectId: string, options: { contextId?: string | null; limit?: number; cursor?: string } = {}) {
+    const query = new URLSearchParams();
+    if (options.contextId) query.set("contextId", options.contextId);
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.cursor) query.set("cursor", options.cursor);
+    const suffix = query.size ? `?${query}` : "";
+    return this.request<{ status: "unconfirmed"; notice: string; candidates: ServerSemanticCandidate[]; total: number; nextCursor?: string }>("GET", `/api/projects/${encodeURIComponent(projectId)}/semantic-candidates${suffix}`);
+  }
+
+  async listCandidateAssessments(projectId: string, contextId: string, options: { limit?: number; cursor?: string; status?: "CURRENT" | "STALE" } = {}) {
+    const query = new URLSearchParams({ contextId });
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.cursor) query.set("cursor", options.cursor);
+    if (options.status) query.set("status", options.status);
+    return this.request<{ assessments: ServerCandidateAssessment[]; total: number; nextCursor?: string }>("GET", `/api/projects/${encodeURIComponent(projectId)}/candidate-assessments?${query}`);
+  }
+
+  async assessSemanticCandidate(projectId: string, contextId: string, candidateId: string, input: { decision: AssessmentDecision; rationale: string; fingerprint: string; evidence?: BindingEvidence; expectedRevision?: number }) {
+    return this.request<{ assessment: ServerCandidateAssessment; bindingCreated: false }>("PUT", `/api/projects/${encodeURIComponent(projectId)}/semantic-candidates/${encodeURIComponent(candidateId)}/assessment`, { contextId, ...input });
   }
 
   async getSemanticBinding(projectId: string, bindingId: string, contextId?: string | null): Promise<SemanticBinding> {

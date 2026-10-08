@@ -4126,7 +4126,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await panel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
       await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      check("initial Project entity has no explicit bindings and no name-based relation is presented", !(await panel.textContent()).includes("represents-in") && (await panel.textContent()).includes("No explicit bindings"));
+      check("initial Project has no explicit binding while any suggestion remains labeled unconfirmed", (await panel.getByTestId("semantic-candidates").textContent()).includes("Candidate · not a binding") && (await panel.locator('[data-testid^="semantic-binding-"]').count()) === 0 && (await panel.textContent()).includes("No explicit bindings"));
 
       const myWorkButton = page.getByTestId("explorer-my-work-create");
       await myWorkButton.click();

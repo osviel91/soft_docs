@@ -1,6 +1,6 @@
 # D03.3 — Candidate Discovery & Epistemic Reasoning
 
-**Estado:** D03.3.1, D03.3.2 y D03.3.3 implementados; UI y fases posteriores requieren aprobación independiente
+**Estado:** D03.3.1–D03.3.4 implementados; la aceptación externa de pilotos sigue pendiente
 **Alcance:** sugerencias de correspondencia Conceptual ↔ Database y evaluaciones privadas de esas sugerencias
 **Regla:** Candidate no es SemanticBinding. Solo una acción explícita, con evidencia válida, crea un binding en MY WORK; publicación sigue el flujo de Architectural Proposal.
 
@@ -193,9 +193,35 @@ Expone get/assess/list en API y MCP remoto sobre casos de uso compartidos. Las e
 
 ### D03.3.4 — Workspace y gobernanza
 
-Agregar revisión/navegación UI, creación explícita de binding desde assessment vigente, después proposal operation explícita y promotion sin cambios de atajo. E2E desde discovery hasta SHARED, verificando que assessment no aparece en SHARED ni en Proposal como autoridad.
+La UI de SemanticBindings ahora incluye sugerencias paginadas, señales/ambigüedad, navegación por anchors, estado y rationale/evidence de evaluaciones, y acciones de evaluación solo en MY WORK. READY vigente ofrece creación confirmada de un SemanticBinding explícito mediante el endpoint existente; assessment y binding permanecen separados. Las evaluaciones STALE se etiquetan con sus causas cuando el candidato está en la página visible. No se modificaron contratos de Proposal/Promotion ni renderers.
 
-Cada fase posterior requiere aprobación independiente. Este encargo autoriza exclusivamente D03.3.3; D03.3.4 no queda autorizado.
+La implementación no incorpora evaluaciones a Proposal. El binding creado queda en MY WORK; su selección para Proposal, review y promotion continúan siendo acciones gobernadas separadas.
+
+### Informe de implementación D03.3.4
+
+- Cliente browser: métodos tipados para listar candidatos, listar evaluaciones y escribir evaluaciones con fingerprint/revisión optimista.
+- Workspace: candidatos rotulados “Candidate · not a binding”, anchors navegables, ranking descrito como ordinal, señales, ambigüedad, filtros, paginación y formularios explícitos de decisión/Evidence. SHARED es read-only.
+- Materialización: confirmación muestra anchors y relación `represents-in`; usa `createSemanticBinding` con la Evidence guardada. Conflictos y errores piden recarga; no hay retry ciego. Los bindings exactos existentes evitan materialización duplicada y permanecen en la sección de relaciones explícitas.
+- Tests sintéticos: descubrimiento separado de bindings, navegación exacta, READY/Evidence y controles read-only de SHARED.
+- Límites observados: la pantalla solo presenta evaluaciones que correspondan a candidatos en la página cargada; assessments huérfanos (candidato desaparecido) son accesibles por API pero no se listan en esta UI. El listado de UI solicita hasta 200 evaluaciones en una sola página. No se amplió el contrato para cubrir estos casos.
+
+### Informe de aceptación externa D03.3.4
+
+**No ejecutado.** No se dispone en esta sesión de un cliente MCP externo autorizado ni de credenciales/acceso a los proyectos BillingMiddleware y Data Transactions Consumer. No se simularon resultados ni se fabricaron evaluaciones READY/bindings. Por tanto D03.3 no se declara completamente aceptada: queda pendiente el piloto externo especificado en el encargo, incluyendo la comprobación de los siete bindings, aislamiento MY WORK y ausencia de cambios SHARED.
+
+### Validación D03.3.4
+
+- `npm run lint`: PASS.
+- `npm run typecheck`: PASS.
+- `npm test -- tests/features/resource/SemanticBindingsPanel.test.tsx`: PASS, 5/5.
+- `npm test -- --minWorkers=1 --maxWorkers=2`: PASS, 203 archivos, 2285/2285.
+- `npm run test:mcp`: PASS, smoke + 56 tests.
+- `npm run test:e2e`: PASS. El primer intento detectó una aserción preexistente incompatible con mostrar candidatos; se actualizó para comprobar que la sugerencia sigue separada de bindings y se repitió la suite con éxito.
+- `git diff --check`: PASS.
+
+El build E2E conserva el warning existente de chunk JavaScript mayor de 500 kB. Los warnings React `act(...)` en pruebas de App también aparecen en el log, sin fallos asociados.
+
+Las fases requieren aprobación independiente. El encargo D03.3.4 autoriza el alcance descrito en este informe; no autoriza ampliar el contrato de Proposal/Promotion ni declarar aceptado el piloto externo pendiente.
 
 ## 10. Pruebas de aceptación y cierre
 

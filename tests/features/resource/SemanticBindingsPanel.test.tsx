@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SemanticBindingsPanel } from "../../../src/features/resource/SemanticBindingsPanel";
 import type { EntityAnchor, IndexedEntity, SemanticBinding } from "../../../src/domain/workspace/semantic-binding";
+import type { ServerSemanticCandidate } from "../../../src/workspace/server/api-client";
 
 const concept: EntityAnchor = { version: 1, resourceId: "concept-resource", representation: "conceptual", entityKind: "concept", identity: { kind: "local-id", value: "project" } };
 const projects: EntityAnchor = { version: 1, resourceId: "database-resource", representation: "database", entityKind: "table", identity: { kind: "local-id", value: "projects" } };
@@ -9,7 +10,8 @@ const projectSettings: EntityAnchor = { ...projects, identity: { kind: "local-id
 const entities: IndexedEntity[] = [{ anchor: concept, name: "Project" }, { anchor: projects, name: "projects" }, { anchor: projectSettings, name: "project settings" }];
 const resources = [{ id: "concept-resource", path: "domain.concept", type: "conceptual" }, { id: "database-resource", path: "schema.dbschema", type: "database" }];
 const binding: SemanticBinding = { id: "binding-1", projectId: "project", left: concept, right: projects, relation: "represents-in", evidence: { version: 1, rationale: "The data architecture names this representation.", items: [{ kind: "external", reference: "ADR-8", description: "Approved persistence mapping" }] }, revision: 1, status: "ACTIVE", provenance: { authorId: "user-a", contextId: "work-a", createdAt: "2026-01-01" } };
-const client = () => ({ listSemanticBindings: vi.fn<() => Promise<SemanticBinding[]>>(async () => []), listResources: vi.fn(async () => [] as never[]), createSemanticBinding: vi.fn(async () => binding), updateSemanticBinding: vi.fn(async (_project: string, _context: string, value: SemanticBinding) => ({ ...value, revision: 2 })), removeSemanticBinding: vi.fn(async () => binding) });
+const candidate: ServerSemanticCandidate = { id: "candidate-1", relation: "represents-in", left: concept, right: projects, leftName: "Project", rightName: "Project", leftType: "concept", rightType: "table", leftPath: "domain.concept", rightPath: "schema.dbschema", fingerprint: "fingerprint-1", policyVersion: "v1", ranking: 1, ambiguity: { ambiguous: false, alternativeCount: 0 }, signals: [{ code: "normalized-name-exact", description: "Names match after normalization." }] };
+const client = () => ({ listSemanticBindings: vi.fn<() => Promise<SemanticBinding[]>>(async () => []), listResources: vi.fn(async () => [] as never[]), listSemanticCandidates: vi.fn(async () => ({ status: "unconfirmed" as const, notice: "Candidates are suggestions only", candidates: [candidate], total: 1 })), listCandidateAssessments: vi.fn(async () => ({ assessments: [], total: 0 })), assessSemanticCandidate: vi.fn(async () => ({ assessment: { candidateId: candidate.id } as never, bindingCreated: false as const })), createSemanticBinding: vi.fn(async () => binding), updateSemanticBinding: vi.fn(async (_project: string, _context: string, value: SemanticBinding) => ({ ...value, revision: 2 })), removeSemanticBinding: vi.fn(async () => binding) });
 
 function mount(api = client(), initial: SemanticBinding[] = []) {
   api.listSemanticBindings.mockResolvedValue(initial);
@@ -22,7 +24,7 @@ describe("SemanticBindingsPanel", () => {
   it("does not infer a relationship from similar names and creates only the exact selected indexed anchor", async () => {
     const { api } = mount();
     expect(await screen.findByText("No explicit bindings for this entity.")).toBeTruthy();
-    expect(screen.queryByText(/represents-in/)).toBeNull();
+    expect(screen.queryByTestId("semantic-binding-binding-1")).toBeNull();
     fireEvent.change(screen.getByLabelText("Exact indexed endpoint"), { target: { value: JSON.stringify([1, "database-resource", "database", "table", { kind: "local-id", value: "projects" }]) } });
     fireEvent.change(screen.getByLabelText("Evidence rationale"), { target: { value: "Approved mapping" } });
     fireEvent.change(screen.getByLabelText("Evidence reference"), { target: { value: "ADR-8" } });
@@ -59,5 +61,27 @@ describe("SemanticBindingsPanel", () => {
     api.updateSemanticBinding.mockResolvedValue({ ...binding, revision: 2 });
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(api.removeSemanticBinding).toHaveBeenCalledWith("project", "work-a", binding.id, 1));
+  });
+
+  it("keeps discovery distinct from bindings, supports explicit assessment and materialization in MY WORK", async () => {
+    const api = client();
+    api.assessSemanticCandidate.mockResolvedValue({ assessment: { candidateId: candidate.id, candidate: { left: concept, right: projects }, decision: "READY_FOR_BINDING", status: "CURRENT", staleReasons: [], rationale: "Migration confirms the mapping.", evidence: { version: 1, rationale: "Migration confirms the mapping.", items: [{ kind: "external", reference: "migration-42", description: "Defines the project table." }] }, revision: 1 } as never, bindingCreated: false });
+    const { onOpenEntity } = mount(api);
+    expect(await screen.findByText("Candidate · not a binding")).toBeTruthy();
+    expect(screen.queryByText(/No explicit bindings for this entity\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open Database entity" }));
+    expect(onOpenEntity).toHaveBeenCalledWith(projects);
+    fireEvent.change(screen.getByLabelText("Rationale", { selector: "textarea" }), { target: { value: "Migration confirms the mapping." } });
+    fireEvent.change(screen.getByLabelText("Evidence reference for READY"), { target: { value: "migration-42" } });
+    fireEvent.change(screen.getByLabelText("Evidence description for READY"), { target: { value: "Defines the project table." } });
+    fireEvent.click(screen.getByRole("button", { name: "Ready for binding" }));
+    await waitFor(() => expect(api.assessSemanticCandidate).toHaveBeenCalledWith("project", "work-a", "candidate-1", expect.objectContaining({ decision: "READY_FOR_BINDING", fingerprint: "fingerprint-1", expectedRevision: 0, evidence: expect.objectContaining({ items: [{ kind: "external", reference: "migration-42", description: "Defines the project table." }] }) })));
+  });
+
+  it("disables candidate decisions in SHARED", async () => {
+    render(<SemanticBindingsPanel client={client() as never} projectId="project" contextId={null} entities={entities} resources={resources} selectedAnchor={concept} writable={false} onOpenEntity={vi.fn()} />);
+    expect(await screen.findByText("Candidate · not a binding")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByText(/SHARED \(read-only\)/)).toBeTruthy();
   });
 });
