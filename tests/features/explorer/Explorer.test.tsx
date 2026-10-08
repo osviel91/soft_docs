@@ -152,6 +152,22 @@ describe("Explorer", () => {
     expect(screen.getByTestId("explorer-private-context-open-work-1").closest("li")?.querySelector(".explorer__context-children [data-testid='explorer-resources']")).toBeInTheDocument();
   });
 
+  it("keeps archived MY WORK contexts behind a collapsed disclosure", () => {
+    render(<Explorer projects={[project]} diagrams={[diagram]} selectedProjectId={project.id} selectedDiagramId={diagram.id} isLoading={false} onCreateProject={vi.fn()} onLoadDiagram={vi.fn()} serverMode privateWorkContexts={[{ id: "work-1", name: "Current draft", lifecycle: "active" }, { id: "work-2", name: "Old draft", lifecycle: "archived" }]} />);
+
+    expect(screen.getByTestId("explorer-private-context-open-work-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("explorer-private-context-open-work-2")).toBeNull();
+    fireEvent.click(screen.getByTestId("explorer-archived-work-toggle"));
+    expect(screen.getByTestId("explorer-private-context-open-work-2")).toBeInTheDocument();
+  });
+
+  it("keeps an active archived context visible in the archived group", () => {
+    render(<Explorer projects={[project]} diagrams={[diagram]} selectedProjectId={project.id} selectedDiagramId={diagram.id} isLoading={false} onCreateProject={vi.fn()} onLoadDiagram={vi.fn()} serverMode activeContextId="work-2" privateWorkContexts={[{ id: "work-1", name: "Old draft", lifecycle: "archived" }, { id: "work-2", name: "Open archived draft", lifecycle: "archived" }]} />);
+
+    expect(screen.getByTestId("explorer-private-context-open-work-2")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByTestId("explorer-archived-work-toggle")).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("opens a proposal by its stable id without depending on its status", () => {
     const onOpenArchitecturalProposal = vi.fn();
     render(

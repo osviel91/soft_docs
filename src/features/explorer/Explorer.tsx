@@ -244,6 +244,7 @@ function ServerWorkspaceExplorer({
   const [search, setSearch] = useState("");
   const [sharedExpanded, setSharedExpanded] = useState(true);
   const [myWorkExpanded, setMyWorkExpanded] = useState(false);
+  const [archivedWorkExpanded, setArchivedWorkExpanded] = useState(false);
   const [proposalsExpanded, setProposalsExpanded] = useState(false);
   const [localExpanded, setLocalExpanded] = useState(false);
   const [sectionChoicesTouched, setSectionChoicesTouched] = useState({ shared: false, myWork: false, proposals: false });
@@ -255,6 +256,14 @@ function ServerWorkspaceExplorer({
   const visibleDiagrams = diagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery));
   const visibleNotes = notes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery));
   const activeProject = projects.find((project) => project.id === selectedProjectId);
+  const activeWork = privateWorkContexts.find((work) => work.id === activeContextId);
+  const activeWorkIsArchived = activeWork?.lifecycle === "archived";
+  const activeWorkContexts = privateWorkContexts.filter((work) => work.lifecycle === "active");
+  const archivedWorkContexts = privateWorkContexts.filter((work) => work.lifecycle === "archived");
+  const renderWorkContext = (work: NonNullable<ExplorerProps["privateWorkContexts"]>[number]) => <li key={work.id} data-testid="explorer-private-context" className={work.id === activeContextId ? "explorer__context-item--selected" : undefined}>
+    <div className="explorer__context-row"><button type="button" data-testid={`explorer-private-context-open-${work.id}`} aria-current={work.id === activeContextId ? "true" : undefined} onClick={() => onOpenMyWork?.(work.id)}>{work.name}</button>{onMyWorkMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-private-context-menu" aria-label={`Actions for MY WORK ${work.name}`} onClick={(event) => onMyWorkMenu(work, positionBelow(event.currentTarget))}>⋯</button> : null}</div>
+    {work.id === activeContextId ? <div className="explorer__context-children"><p className="explorer__context-note">Private draft. Changes are not authoritative.</p>{!isLoading ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}</div> : null}
+  </li>;
 
   return (
     <nav className="explorer explorer--project" data-testid="explorer" aria-label="Project explorer">
@@ -271,10 +280,11 @@ function ServerWorkspaceExplorer({
            <section className="explorer__provenance-section" data-testid="explorer-my-work-section">
             <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, myWork: true })); setMyWorkExpanded((expanded) => !expanded); }}>MY WORK <span className="explorer__section-meta">private · editable</span><span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{activeContextId !== null && activeProject && onAddMenu ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={(event) => onAddMenu(activeProject, positionBelow(event.currentTarget))}>+</button> : onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create MY WORK draft" title="Create MY WORK draft" onClick={() => onCreateMyWork()}>+</button> : null}{activeContextId !== null && onMyWorkMenu ? <button type="button" className="explorer__section-add explorer__section-add--menu" data-testid="explorer-my-work-actions" aria-label="MY WORK actions" title="MY WORK actions" onClick={(event) => { const work = privateWorkContexts.find((entry) => entry.id === activeContextId); if (work) onMyWorkMenu(work, positionBelow(event.currentTarget)); }}>⋯</button> : null}</h2>
               {myWorkExpanded ? <>
-                <ul className="explorer__context-list">{privateWorkContexts.length > 0 ? privateWorkContexts.map((work) => <li key={work.id} data-testid="explorer-private-context" className={work.id === activeContextId ? "explorer__context-item--selected" : undefined}>
-                  <div className="explorer__context-row"><button type="button" data-testid={`explorer-private-context-open-${work.id}`} aria-current={work.id === activeContextId ? "true" : undefined} onClick={() => onOpenMyWork?.(work.id)}>{work.name}{work.lifecycle === "archived" ? " (archived)" : ""}</button>{onMyWorkMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-private-context-menu" aria-label={`Actions for MY WORK ${work.name}`} onClick={(event) => onMyWorkMenu(work, positionBelow(event.currentTarget))}>⋯</button> : null}</div>
-                  {work.id === activeContextId ? <div className="explorer__context-children"><p className="explorer__context-note">Private draft. Changes are not authoritative.</p>{!isLoading ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}</div> : null}
-                </li>) : activeContextId === null ? <li className="explorer__diagram-empty">No private work yet. Create a draft to propose changes without modifying SHARED.</li> : null}</ul>
+                <ul className="explorer__context-list">{activeWorkContexts.length > 0 ? activeWorkContexts.map(renderWorkContext) : archivedWorkContexts.length === 0 && activeContextId === null ? <li className="explorer__diagram-empty">No private work yet. Create a draft to propose changes without modifying SHARED.</li> : null}</ul>
+                {archivedWorkContexts.length > 0 ? <>
+                  <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-work-toggle" aria-expanded={archivedWorkExpanded || activeWorkIsArchived} onClick={() => setArchivedWorkExpanded((expanded) => !expanded)}>Archived · {archivedWorkContexts.length} <span aria-hidden="true">{archivedWorkExpanded || activeWorkIsArchived ? "▾" : "▸"}</span></button>
+                  {archivedWorkExpanded || activeWorkIsArchived ? <ul className="explorer__context-list" data-testid="explorer-archived-work-list">{archivedWorkContexts.map(renderWorkContext)}</ul> : null}
+                </> : null}
               </> : null}
         </section>
         <section className="explorer__provenance-section">

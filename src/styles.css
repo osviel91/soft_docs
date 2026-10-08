@@ -4638,6 +4638,9 @@ body {
 .explorer__context-list li[data-testid="explorer-private-context"] { display: block; padding: 4px 0; border-radius: var(--radius-sm); }
 .explorer__context-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 3px 8px; }
 .explorer__context-row > button:first-child { flex: 1 1 auto; }
+.explorer__archived-toggle { display: flex; align-items: center; gap: 5px; margin: 2px 16px 6px; padding: 2px 0; color: var(--text-faint); background: transparent; border: 0; font: inherit; font-size: 10px; cursor: pointer; }
+.explorer__archived-toggle:hover,
+.explorer__archived-toggle:focus-visible { color: var(--text-muted); }
 .explorer__context-list li[data-testid="explorer-private-context"].explorer__context-item--selected { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
 .explorer__context-list li[data-testid="explorer-private-context"].explorer__context-item--selected .explorer__context-row > button:first-child { color: var(--accent); font-weight: 600; }
 .explorer__context-children { margin: 2px 0 0 12px; padding: 2px 0 2px 5px; border-left: 1px solid var(--border-strong); }
