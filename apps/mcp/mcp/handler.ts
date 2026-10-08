@@ -30,6 +30,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { ApplicationContext } from "../../../src/application/context";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
+import type { WorkspaceService } from "../../../src/application/workspace-service";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
@@ -50,6 +51,7 @@ import { createCandidateAssessmentUseCases } from "../../../src/application/cand
 export interface McpHandlerDeps {
   config: McpConfig;
   catalog: ProjectCatalog;
+  workspaces: WorkspaceService;
   candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
@@ -486,6 +488,7 @@ export async function handleMcpRequest(
   const { server } = createMcpServerForPrincipal({
     context,
     catalog: deps.catalog,
+    workspaces: deps.workspaces,
     candidateAssessments: deps.candidateAssessments,
     proposals: deps.proposals,
     architecturalProposals: deps.architecturalProposals,

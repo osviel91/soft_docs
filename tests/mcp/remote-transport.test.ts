@@ -820,6 +820,7 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(created.isError).toBeFalsy();
     expect(structured(created).project.name).toBe("Created through MCP");
     expect(structured(created).role).toBe("OWNER");
+    expect(structured(created).project.workspaceId).toBeTruthy();
 
     const listed = await client.callTool({
       name: "list_projects",
@@ -830,6 +831,38 @@ describe("the remote MCP service over Streamable HTTP", () => {
         expect.objectContaining({ name: "Created through MCP", role: "OWNER" }),
       ]),
     );
+    await client.close();
+  });
+
+  it("lists accessible workspaces and requires explicit selection when there are several", async () => {
+    const userId = await harness.aUser("Multi-workspace owner");
+    await harness.service.runtime.workspaces.setMember(userId, userId, "ADMIN");
+    const second = await harness.service.runtime.workspaces.create({ ownerId: userId, name: "Second workspace" });
+    await harness.service.runtime.workspaces.setMember(second.id, userId, "ADMIN");
+    const bearer = (await harness.aToken(userId, ["project:create", "project:read"])).token;
+    const client = await connect(bearer);
+
+    const workspaceResult = await client.callTool({ name: "list_workspaces", arguments: {} });
+    expect(workspaceResult.isError).toBeFalsy();
+    const available = structured(workspaceResult).workspaces;
+    expect(available).toHaveLength(2);
+    expect(available).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: second.id, name: "Second workspace", role: "ADMIN" }),
+      expect.objectContaining({ isDefault: true }),
+    ]));
+
+    const ambiguous = await client.callTool({ name: "create_project", arguments: { name: "Must choose" } });
+    expect(ambiguous.isError).toBe(true);
+    expect(JSON.stringify(ambiguous)).toContain("Choose a workspace");
+    const listedWithoutChoice = await client.callTool({ name: "list_projects", arguments: {} });
+    expect(listedWithoutChoice.isError).toBe(true);
+
+    const created = await client.callTool({ name: "create_project", arguments: { name: "In second", workspaceId: second.id } });
+    expect(created.isError).toBeFalsy();
+    expect(structured(created).project.workspaceId).toBe(second.id);
+    const projects = await client.callTool({ name: "list_projects", arguments: { workspaceId: second.id } });
+    expect(structured(projects).workspace).toMatchObject({ id: second.id, name: "Second workspace" });
+    expect(structured(projects).projects).toEqual([expect.objectContaining({ name: "In second", workspaceId: second.id, workspaceName: "Second workspace" })]);
     await client.close();
   });
 

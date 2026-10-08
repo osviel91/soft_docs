@@ -15,6 +15,7 @@ import {
   type ServerRuntime,
 } from "../../src/persistence/server-runtime";
 import { createProjectCatalog } from "../../src/application/project-catalog";
+import { createWorkspaceService } from "../../src/application/workspace-service";
 import { createCandidateAssessmentUseCases } from "../../src/application/candidate-assessments";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
@@ -111,6 +112,7 @@ export async function createMcpService(
     architecturalProposals: runtime.architecturalProposals,
     semanticBindings: runtime.semanticBindings,
   });
+  const workspaces = createWorkspaceService(runtime.workspaces);
   const proposals = createChangeProposalService({
     proposals: runtime.proposals,
     projects: runtime.projects,
@@ -140,6 +142,7 @@ export async function createMcpService(
   const deps: McpHandlerDeps = {
     config,
     catalog,
+    workspaces,
     candidateAssessments,
     proposals,
     architecturalProposals,

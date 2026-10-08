@@ -39,6 +39,7 @@ import { z } from "zod";
 import type { ApplicationContext } from "../../../src/application/context";
 import type { Permission } from "../../../src/domain/access/permissions";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
+import type { WorkspaceService } from "../../../src/application/workspace-service";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ArchitecturalProposalService } from "../../../src/application/architectural-proposal-service";
 import type { PromotionService } from "../../../src/application/promotion-service";
@@ -91,6 +92,7 @@ export interface ToolOutcome {
 export interface ToolContext {
   context: ApplicationContext;
   catalog: ProjectCatalog;
+  workspaces: WorkspaceService;
   candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
@@ -294,6 +296,25 @@ function stringArg(args: Record<string, unknown>, name: string): string {
     throw invalid(`The "${name}" argument is required.`);
   }
   return value;
+}
+
+async function selectedWorkspaceId(
+  args: Record<string, unknown>,
+  toolContext: ToolContext,
+): Promise<string> {
+  const requested = typeof args.workspaceId === "string" ? args.workspaceId : undefined;
+  const workspaces = await toolContext.workspaces.listWorkspaces(toolContext.context);
+  if (requested !== undefined) {
+    if (!workspaces.some((workspace) => workspace.id === requested)) {
+      throw notFound(`No accessible workspace with id ${requested}. Call list_workspaces to see available workspaces.`);
+    }
+    return requested;
+  }
+  if (workspaces.length === 1) return workspaces[0].id;
+  if (workspaces.length === 0) throw notFound("No accessible workspace is available.");
+  throw invalid("Choose a workspace before continuing. Call list_workspaces, then pass its workspaceId.", {
+    workspaces: workspaces.map(({ id, name, isDefault }) => ({ id, name, isDefault })),
+  });
 }
 
 /** Read an optional number argument. */
@@ -561,12 +582,27 @@ export function createMcpTools(): McpTool[] {
     // ---- Level 0: bootstrap -------------------------------------------------
 
     {
+      name: "list_workspaces",
+      title: "List accessible workspaces",
+      description: "List the workspaces this user can access, including workspace id, name, role, and whether it is the default. Use workspaceId from this result when listing or creating projects; creation will not silently choose a default when multiple workspaces exist.",
+      inputSchema: {},
+      annotations: { ...READ_ONLY, title: "List accessible workspaces" },
+      requiredPermissions: ["project:read"],
+      async run(_args, toolContext) {
+        const workspaces = await toolContext.workspaces.listWorkspaces(toolContext.context);
+        const items = workspaces.map(({ id, name, role, isDefault }) => ({ id, name, role, isDefault }));
+        return { text: items.length ? items.map((workspace) => `- ${workspace.name} (id: ${workspace.id}, role: ${workspace.role}${workspace.isDefault ? ", default" : ""})`).join("\n") : "No accessible workspaces.", structured: { workspaces: items } };
+      },
+    },
+
+    {
       name: "create_project",
       title: "Create a project",
       description:
-        "Create a server project owned by this credential's user. Use this when list_projects is empty; the resulting project is immediately available to this credential.",
+        "Create a server project owned by this credential's user in workspaceId. If there are multiple accessible workspaces, workspaceId is required; call list_workspaces to choose one. The resulting project is immediately available to this credential.",
       inputSchema: {
         name: z.string().min(1).describe("The new project's name."),
+        workspaceId: z.string().uuid().optional().describe("Workspace id from list_workspaces. Required when more than one workspace is accessible."),
       },
       annotations: { ...WRITE, title: "Create a project" },
       requiredPermissions: ["project:create"],
@@ -575,9 +611,7 @@ export function createMcpTools(): McpTool[] {
           toolContext.context,
           {
             name: stringArg(args, "name"),
-            workspaceId: await toolContext.catalog.defaultWorkspaceId(
-              toolContext.context,
-            ),
+            workspaceId: await selectedWorkspaceId(args, toolContext),
           },
         );
         return {
@@ -587,6 +621,7 @@ export function createMcpTools(): McpTool[] {
               id: listing.project.id,
               name: listing.project.name,
               slug: listing.project.slug,
+              workspaceId: listing.project.workspaceId,
               ownerId: listing.project.ownerId,
               resourceCount: listing.resourceCount,
             },
@@ -602,15 +637,14 @@ export function createMcpTools(): McpTool[] {
       name: "list_projects",
       title: "List projects",
       description:
-        "List every server project this token can see, with the caller's role and resource count. Call this first: the project ids it returns are what every other tool addresses.",
-      inputSchema: {},
+        "List projects in workspaceId, with caller role, resource count, and workspace membership. If there are multiple accessible workspaces, workspaceId is required; call list_workspaces first.",
+      inputSchema: { workspaceId: z.string().uuid().optional().describe("Workspace id from list_workspaces. Required when more than one workspace is accessible.") },
       annotations: { ...READ_ONLY, title: "List projects" },
       requiredPermissions: ["project:read"],
       async run(_args, toolContext) {
-        const listings = await toolContext.catalog.listProjects(
-          toolContext.context,
-          await toolContext.catalog.defaultWorkspaceId(toolContext.context),
-        );
+        const workspaceId = await selectedWorkspaceId(_args, toolContext);
+        const workspace = (await toolContext.workspaces.listWorkspaces(toolContext.context)).find((entry) => entry.id === workspaceId)!;
+        const listings = await toolContext.catalog.listProjects(toolContext.context, workspaceId);
         const text =
           listings.length === 0
             ? "This account has no projects."
@@ -623,10 +657,13 @@ export function createMcpTools(): McpTool[] {
         return {
           text,
           structured: {
+            workspace: { id: workspace.id, name: workspace.name, role: workspace.role, isDefault: workspace.isDefault },
             projects: listings.map((entry) => ({
               id: entry.project.id,
               name: entry.project.name,
               slug: entry.project.slug,
+              workspaceId: entry.project.workspaceId,
+              workspaceName: workspace.name,
               role: entry.role,
               resourceCount: entry.resourceCount,
             })),

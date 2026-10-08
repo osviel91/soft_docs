@@ -32,6 +32,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ApplicationContext } from "../../../src/application/context";
 import type { ProjectCatalog } from "../../../src/application/project-catalog";
+import type { WorkspaceService } from "../../../src/application/workspace-service";
 import type { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
 import type { ChangeProposalService } from "../../../src/application/change-proposal-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
@@ -77,7 +78,7 @@ export const MCP_INSTRUCTIONS = `This server exposes Software Docs Manager proje
 A project contains Markdown (\`.md\`), Sequence (\`.seq\`), Event Flow (\`.eventseq\`), Conceptual Diagram (\`.concept\`), and Database Diagram (\`.dbschema\`) resources. Read ${ARTIFACT_GUIDANCE_URI} for their purposes, valid authoring examples, inference boundaries, and truthful current capability matrix. Read ${GOVERNANCE_GUIDE_URI} for the reusable governance contract.
 
 Work in this order:
-1. list_projects — the project ids every other tool addresses. If it is empty and the credential has project:create, call create_project.
+1. list_workspaces — choose the workspace first when more than one is accessible; pass its workspaceId to list_projects or create_project. Then use list_projects to discover project ids.
 2. get_project_capabilities — inspect shared advisory decisions before acting; then list_private_work_contexts and create_private_work_context to find or create your owned MY WORK context.
 3. get_project_index or list_resources — see what exists and what your token may do; these responses include semantic metadata when present.
 3. read_diagram, read_documentation or read_resource — get the text, semantic metadata and current revision. Use get_resource_metadata when you need metadata without reading the contents; search_project also returns matched descriptions and tags.
@@ -109,6 +110,7 @@ A token carries scopes. A read-only token cannot write; project membership alway
 export interface McpServerForPrincipalOptions {
   context: ApplicationContext;
   catalog: ProjectCatalog;
+  workspaces: WorkspaceService;
   candidateAssessments: ReturnType<typeof createCandidateAssessmentUseCases>;
   proposals: ChangeProposalService;
   architecturalProposals: ArchitecturalProposalService;
@@ -191,7 +193,7 @@ function withDeadline(
 export function createMcpServerForPrincipal(
   options: McpServerForPrincipalOptions,
 ): McpServerForPrincipal {
-  const { context, catalog, proposals, architecturalProposals, trajectory, config, observability } = options;
+  const { context, catalog, workspaces, proposals, architecturalProposals, trajectory, config, observability } = options;
   const server = new McpServer(
     {
       name: MCP_SERVER_NAME,
@@ -245,6 +247,7 @@ export function createMcpServerForPrincipal(
           const toolContext: ToolContext = {
             context,
              catalog,
+             workspaces,
              candidateAssessments: options.candidateAssessments,
              proposals,
              architecturalProposals,
