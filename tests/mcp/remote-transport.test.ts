@@ -525,6 +525,41 @@ describe("the remote MCP service over Streamable HTTP", () => {
     await client.close();
   });
 
+  it("binds private Sequence and Event Flow occurrences to a SHARED identity", async () => {
+    const identity = { id: "a7d03b12-0004-4a11-8111-000000000004", name: "UpOneTransactionRaisedEvent", kind: "event" as const };
+    const storage = harness.service.runtime.storageFor(projectId);
+    const manifestFile = await storage.read("project.json");
+    const manifest = manifestFile.ok && manifestFile.value ? JSON.parse(manifestFile.value.content) : {};
+    await storage.write("project.json", JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [], ...manifest, semanticMessages: [identity] }));
+
+    const client = await connect(token);
+    const sequence = structured(await client.callTool({
+      name: "upsert_sequence_diagram",
+      arguments: { projectId, path: "upone-account-fanout.seq", content: "participant Producer\nparticipant Consumer\nProducer ->> Consumer: PriorEvent\nsemantic event publish PriorEvent\nProducer ->> Consumer: UpOneTransactionRaisedEvent\nsemantic event publish UpOneTransactionRaisedEvent" },
+    }));
+    const flow = structured(await client.callTool({
+      name: "upsert_event_flow",
+      arguments: { projectId, path: "shared-binding.eventseq", content: `event ${identity.name}\n` },
+    }));
+    const sequenceResource = sequence.resource as { id: string; revision: number };
+    const flowResource = flow.resource as { id: string; revision: number };
+
+    const boundSequence = await client.callTool({ name: "bind_semantic_message", arguments: { projectId, resource: sequenceResource.id, messageId: identity.id, name: identity.name, step: 2, expectedRevision: sequenceResource.revision } });
+    expect(boundSequence.isError, JSON.stringify(boundSequence)).toBeFalsy();
+    const boundFlow = await client.callTool({ name: "bind_semantic_message", arguments: { projectId, resource: flowResource.id, messageId: identity.id, name: identity.name, expectedRevision: flowResource.revision } });
+    expect(boundFlow.isError, JSON.stringify(boundFlow)).toBeFalsy();
+
+    const trace = await client.callTool({ name: "get_semantic_message", arguments: { projectId, messageId: identity.id } });
+    expect(structured(trace).occurrences).toEqual(expect.arrayContaining([expect.objectContaining({ messageRef: identity.id })]));
+    expect(structured(trace).eventFlowEntities).toEqual(expect.arrayContaining([expect.objectContaining({ messageRef: identity.id })]));
+    const validation = structured(await client.callTool({ name: "validate_project", arguments: { projectId } }));
+    expect(validation.diagnostics).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "project.dangling-semantic-message-ref" })]));
+    expect(await harness.service.runtime.knowledgeContexts.listPrivateMessages(projectId, contextId)).toEqual([]);
+    const unchangedManifest = await storage.read("project.json");
+    expect(unchangedManifest.ok && unchangedManifest.value ? JSON.parse(unchangedManifest.value.content).semanticMessages : []).toEqual([identity]);
+    await client.close();
+  });
+
   it("resolves block-form Event Flow bindings through the remote trace", async () => {
     const client = await connect(token);
     const sequence = await client.callTool({

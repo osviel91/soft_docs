@@ -2250,7 +2250,7 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
          const contextId = stringArg(args, "contextId");
-         const identity = (await toolContext.catalog.listPrivateSemanticMessages(toolContext.context, id, contextId)).find((entry) => entry.id === stringArg(args, "messageId"));
+          const identity = (await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, id, contextId)).find((entry) => entry.id === stringArg(args, "messageId"));
         if (!identity) throw notFound(`No semantic message "${stringArg(args, "messageId")}" exists.`);
          const resource = await resolveResource(toolContext, id, stringArg(args, "resource"), contextId);
          const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
