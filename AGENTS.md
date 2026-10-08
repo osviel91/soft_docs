@@ -16,8 +16,10 @@
 
 ## Human Oversight Direction
 
+- This repository's Software Docs project is `Software Docs Manager` (`01a0c9ba-95f4-77b9-9e5b-5be3d483a8d7`) in the `UpSpain Workspace` workspace.
 - Treat MCP as an architectural knowledge surface, not CRUD for diagrams. Agents should discover existing knowledge before editing, enrich legacy artifacts, bind concepts only when evidence exists, trace consequences, and preserve uncertainty otherwise.
 - Prefer conservative enrichment over speculative completion. The human/agent loop is implementation -> architectural knowledge -> semantic/causal analysis -> human evaluation -> architectural decision -> implementation or publication.
+- For every feature change or refactor, assess which Software Docs artifacts need to be created or updated to keep the project's holistic architectural view alongside the code. Discover existing knowledge first, make evidence-backed artifact changes in MY WORK when warranted, and report the proposed artifact scope; do not invent documentation or submit a team-visible PROPOSAL without explicit user intent.
 - Server knowledge contexts are explicit: LOCAL is machine-local, SHARED is authoritative project knowledge, and MY WORK is private tentative knowledge owned by one user inside a shared project. MY WORK may read SHARED; SHARED must not read MY WORK. The server/MCP boundary, not Explorer filtering, enforces privacy.
 - PROPOSAL is team-visible submitted knowledge, still non-authoritative. It is an immutable snapshot selected from MY WORK, never a live alias or SHARED. Review evidence is separate from publication; explicit, independently authorized promotion is the only ArchitecturalProposal path that mutates SHARED.
 - Current Analysis Workspace capabilities include two-context inspection, cross-resource and multi-perspective discovery, semantic comparison where evidence supports it, and the Proposal Decision Workspace. D04/D05 broader semantic impact and evolution analysis remain future work.
