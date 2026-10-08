@@ -1255,6 +1255,13 @@ export default function App() {
   const sharedBindingView = serverIndexedView(sharedIndex, [...sharedDiagrams, ...sharedNotes]);
   const bindingEntities = [...new Map([...activeBindingView.entities, ...sharedBindingView.entities].map(entity => [entityAnchorKey(entity.anchor), entity])).values()];
   const bindingResources = [...new Map([...activeBindingView.resources, ...sharedBindingView.resources].map(resource => [resource.id, resource])).values()];
+  const bindingResourceAliases = new Map<string, string>();
+  for (const [resourceIndex, files] of [[index, [...diagrams, ...notes]], [sharedIndex, [...sharedDiagrams, ...sharedNotes]]] as const) {
+    for (const resource of resourceIndex?.resources ?? []) {
+      const file = files.find(candidate => candidate.name === resource.path);
+      if (file && file.id !== resource.id) bindingResourceAliases.set(resource.id, file.id);
+    }
+  }
   const complementaryResources = (index?.resources ?? []).map((resource) => ({
     id: resource.id,
     title: resource.title,
@@ -1338,12 +1345,12 @@ export default function App() {
       const diagram = allDiagrams.find((entry) => entry.id === resourceId || resourceIdForFile(entry) === resource?.id);
       if (diagram) {
         setView("code");
-        if (nodeId) setActiveNodeId(nodeId);
+        setActiveNodeId(nodeId ?? null);
         loadDiagram(diagram);
         return;
       }
       const sharedDiagram = sharedDiagrams.find(entry => entry.id === resourceId || sharedResourceIdForFile(entry) === resource?.id);
-      if (sharedDiagram) { setView("code"); if (nodeId) setActiveNodeId(nodeId); loadSharedDiagram(sharedDiagram); }
+      if (sharedDiagram) { setView("code"); setActiveNodeId(nodeId ?? null); loadSharedDiagram(sharedDiagram); }
     },
     [index, sharedIndex, allDiagrams, loadDiagram, sharedDiagrams, sharedResourceIdForFile, loadSharedDiagram],
   );
@@ -1669,6 +1676,12 @@ export default function App() {
   const activeBindingResourceId = workspaceMode === "server"
     ? selectedDiagram?.id ?? selectedNote?.id ?? activeResourceId
     : activeResourceId;
+  const previousBindingResourceId = useRef(activeBindingResourceId);
+  useEffect(() => {
+    if (previousBindingResourceId.current === activeBindingResourceId) return;
+    previousBindingResourceId.current = activeBindingResourceId;
+    setActiveEntityAnchor(anchor => anchor?.resourceId === activeBindingResourceId ? anchor : null);
+  }, [activeBindingResourceId]);
   useEffect(() => {
     if (!activeEntityAnchor || activeEntityAnchor.resourceId !== activeBindingResourceId || activeEntityAnchor.identity.kind !== "local-id") return;
     setActiveNodeId(activeEntityAnchor.identity.value);
@@ -1910,7 +1923,8 @@ export default function App() {
   // mapping is by node id, never by matching text.
   const onNodeSelect = useCallback(
     (nodeId: string) => {
-      const indexedEntity = bindingEntities.find(entity => entity.anchor.resourceId === activeBindingResourceId && entity.anchor.identity.kind === "local-id" && entity.anchor.identity.value === nodeId);
+      const matchingEntities = bindingEntities.filter(entity => entity.anchor.representation === activeRepresentation && entity.anchor.identity.kind === "local-id" && entity.anchor.identity.value === nodeId);
+      const indexedEntity = matchingEntities.find(entity => entity.anchor.resourceId === activeBindingResourceId) ?? (matchingEntities.length === 1 ? matchingEntities[0] : undefined);
       setActiveEntityAnchor(indexedEntity?.anchor ?? null);
       const range = isEventFlow
         ? eventFlow
@@ -3842,10 +3856,11 @@ export default function App() {
                     contextId={server.active.contextId}
                     entities={bindingEntities}
                     resources={bindingResources}
-                    selectedAnchor={activeEntityAnchor}
+                    resourceAliases={bindingResourceAliases}
+                    selectedAnchor={activeEntityAnchor?.resourceId === activeBindingResourceId ? activeEntityAnchor : null}
                     writable={server.active.contextId !== null}
                     onOpenEntity={(anchor) => {
-                      setActiveEntityAnchor(anchor);
+                      setActiveEntityAnchor({ ...anchor, resourceId: bindingResourceAliases.get(anchor.resourceId) ?? anchor.resourceId });
                       const nodeId = anchor.identity.kind === "local-id" ? anchor.identity.value : undefined;
                       openResourceById(anchor.resourceId, nodeId);
                     }}

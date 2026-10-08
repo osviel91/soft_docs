@@ -101,6 +101,9 @@ export default function EventFlowPreview({
   const topology = useMemo(() => projectEventFlowToTopology(flow), [flow]);
   const [topologyDetailsOpen, setTopologyDetailsOpen] = useState(false);
   const causal = useMemo(() => projectEventFlowToCausalView(flow), [flow]);
+  const activeCausalNodeId = activeNodeId
+    ? [...causal.messages, ...causal.handlers, ...causal.effects, ...(causal.failures ?? []), ...(causal.retries ?? [])].find(item => item.sourceNodeIds.includes(activeNodeId))?.id ?? null
+    : null;
   const [, setCausalLayoutState] = useState<"loading" | "ready" | "error">("loading");
   const [causalError, setCausalError] = useState<string | null>(null);
   const topologyDocument = useMemo(
@@ -415,7 +418,7 @@ export default function EventFlowPreview({
             </p>
           ) : (
             <>
-              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} />}
+              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} selectedNodeId={activeCausalNodeId} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} />}
               {selected && causalDetailsOpen && (
                 <CausalDetails item={selected} view={causal} onSourceSelect={onNodeSelect} />
               )}

@@ -8,6 +8,7 @@ import "./causal-flow.css";
 
 export interface CausalFlowViewProps {
   view: CausalViewModel;
+  selectedNodeId?: CausalNodeId | null;
   onNodeSelect?: (nodeId: CausalNodeId) => void;
   onSourceSelect?: (nodeId: string) => void;
   onLayoutState?: (state: "loading" | "ready" | "error") => void;
@@ -15,7 +16,7 @@ export interface CausalFlowViewProps {
   workerFactory?: CausalWorkerFactory;
 }
 
-export default function CausalFlowView({ view, onNodeSelect, onSourceSelect, onLayoutState, onLayoutError, workerFactory }: CausalFlowViewProps) {
+export default function CausalFlowView({ view, selectedNodeId = null, onNodeSelect, onSourceSelect, onLayoutState, onLayoutError, workerFactory }: CausalFlowViewProps) {
   const [graph, setGraph] = useState<CausalFlowGraph | null>(null);
   const [selected, setSelected] = useState<CausalNodeId | null>(null);
   const clientRef = useRef<ReturnType<typeof createCausalElkLayout> | null>(null);
@@ -38,6 +39,8 @@ export default function CausalFlowView({ view, onNodeSelect, onSourceSelect, onL
     });
     return () => { active = false; client.dispose(); };
   }, [onLayoutState, onLayoutError, view, workerFactory]);
+
+  useEffect(() => setSelected(selectedNodeId), [selectedNodeId]);
 
   const highlighted = useMemo(() => {
     if (!selected) return null;

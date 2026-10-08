@@ -16,11 +16,26 @@ const client = () => ({ listSemanticBindings: vi.fn<() => Promise<SemanticBindin
 function mount(api = client(), initial: SemanticBinding[] = []) {
   api.listSemanticBindings.mockResolvedValue(initial);
   const onOpenEntity = vi.fn();
-  const result = render(<SemanticBindingsPanel client={api as never} projectId="project" contextId="work-a" entities={entities} resources={resources} selectedAnchor={concept} writable onOpenEntity={onOpenEntity} />);
+  const result = render(<SemanticBindingsPanel client={api as never} projectId="project" contextId="work-a" entities={entities} resources={resources} resourceAliases={new Map()} selectedAnchor={concept} writable onOpenEntity={onOpenEntity} />);
   return { ...result, api, onOpenEntity };
 }
 
 describe("SemanticBindingsPanel", () => {
+  it("shows Account -> accounts when indexed IDs are local aliases of server IDs", async () => {
+    const account: EntityAnchor = { ...concept, identity: { kind: "local-id", value: "account" } };
+    const accounts: EntityAnchor = { ...projects, identity: { kind: "local-id", value: "accounts" } };
+    const serverAccount = { ...account, resourceId: "server-concept-resource" };
+    const serverAccounts = { ...accounts, resourceId: "server-database-resource" };
+    const serverBinding = { ...binding, left: serverAccount, right: serverAccounts };
+    const api = client();
+    api.listSemanticBindings.mockResolvedValue([serverBinding]);
+    render(<SemanticBindingsPanel client={api as never} projectId="project" contextId="work-a" entities={[{ anchor: account, name: "Account" }, { anchor: accounts, name: "accounts" }]} resources={resources} resourceAliases={new Map([["server-concept-resource", "concept-resource"], ["server-database-resource", "database-resource"]])} selectedAnchor={account} writable={false} onOpenEntity={vi.fn()} />);
+
+    expect(await screen.findByText(/conceptual concept Account · account · domain\.concept/)).toBeInTheDocument();
+    expect(screen.getByText("database table accounts · accounts · schema.dbschema")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open related entity" })).toBeInTheDocument();
+  });
+
   it("does not infer a relationship from similar names and creates only the exact selected indexed anchor", async () => {
     const { api } = mount();
     expect(await screen.findByText("No explicit bindings for this entity.")).toBeTruthy();
@@ -47,6 +62,18 @@ describe("SemanticBindingsPanel", () => {
     expect(screen.getByText(/Evidence: The data architecture names this representation/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open related entity" })).toBeNull();
     expect(view.onOpenEntity).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the prior resource selection when navigation supplies no selected entity", async () => {
+    const api = client();
+    api.listSemanticBindings.mockResolvedValue([binding]);
+    const view = render(<SemanticBindingsPanel client={api as never} projectId="project" contextId="work-a" entities={entities} resources={resources} resourceAliases={new Map()} selectedAnchor={concept} writable={false} onOpenEntity={vi.fn()} />);
+    await screen.findByTestId("semantic-binding-binding-1");
+
+    view.rerender(<SemanticBindingsPanel client={api as never} projectId="project" contextId="work-a" entities={entities} resources={resources} resourceAliases={new Map()} selectedAnchor={null} writable={false} onOpenEntity={vi.fn()} />);
+
+    expect(screen.getByText(/Select a Conceptual or Database entity/)).toBeInTheDocument();
+    expect(screen.queryByTestId("semantic-binding-binding-1")).toBeNull();
   });
 
   it("updates and removes with the revision read from the binding; stale writes remain visible", async () => {
@@ -79,7 +106,7 @@ describe("SemanticBindingsPanel", () => {
   });
 
   it("disables candidate decisions in SHARED", async () => {
-    render(<SemanticBindingsPanel client={client() as never} projectId="project" contextId={null} entities={entities} resources={resources} selectedAnchor={concept} writable={false} onOpenEntity={vi.fn()} />);
+    render(<SemanticBindingsPanel client={client() as never} projectId="project" contextId={null} entities={entities} resources={resources} resourceAliases={new Map()} selectedAnchor={concept} writable={false} onOpenEntity={vi.fn()} />);
     expect(await screen.findByText("Candidate · not a binding")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
     expect(screen.getByText(/SHARED \(read-only\)/)).toBeTruthy();
