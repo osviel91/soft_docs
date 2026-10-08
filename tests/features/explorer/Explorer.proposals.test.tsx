@@ -38,6 +38,7 @@ describe("Explorer proposal indicators", () => {
       { id: "withdrawn", title: "Withdrawn", authorUserId: "u", status: "withdrawn", baseSharedRevision: "r", lifecycle: { state: "WITHDRAWN" } },
       { id: "superseded", title: "Superseded", authorUserId: "u", status: "superseded", baseSharedRevision: "r", lifecycle: { state: "SUPERSEDED" } },
     ]} />);
+    fireEvent.click(screen.getByTestId("explorer-archived-proposals-toggle"));
     expect(screen.getByText("OPEN")).toBeInTheDocument();
     expect(screen.getByText("PROMOTED")).toBeInTheDocument();
     expect(screen.getByText("WITHDRAWN")).toBeInTheDocument();
@@ -54,6 +55,7 @@ describe("Explorer proposal indicators", () => {
     expect(screen.queryByRole("button", { name: "Submit new proposal" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actions for MY WORK Draft" }));
     expect(onMyWorkMenu).toHaveBeenCalledWith(expect.objectContaining({ id: "work" }), expect.any(Object));
+    fireEvent.click(screen.getByTestId("explorer-archived-proposals-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "Actions for proposal Withdrawn" }));
     expect(onProposalMenu).toHaveBeenCalledWith(expect.objectContaining({ id: "withdrawn" }), expect.any(Object));
     expect(screen.getByTestId("explorer-proposal")).not.toHaveAttribute("data-revising", "true");
@@ -84,5 +86,20 @@ describe("Explorer proposal indicators", () => {
     expect(screen.getByTestId("explorer-proposals-toggle")).toHaveAttribute("aria-expanded", "false");
     view.rerender(<Explorer {...props} serverMode architecturalProposals={[{ ...proposal, title: "Updated" }]} />);
     expect(screen.getByTestId("explorer-proposals-toggle")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps terminal proposals archived and reveals the selected archived proposal", () => {
+    const proposals = [
+      { id: "open", title: "Open", authorUserId: "u", status: "open" as const, baseSharedRevision: "r" },
+      { id: "promoted", title: "Promoted", authorUserId: "u", status: "open" as const, baseSharedRevision: "r", lifecycle: { state: "PROMOTED" as const } },
+      { id: "withdrawn", title: "Withdrawn", authorUserId: "u", status: "withdrawn" as const, baseSharedRevision: "r" },
+    ];
+    const view = render(<Explorer {...props} serverMode architecturalProposals={proposals} />);
+
+    expect(screen.getAllByTestId("explorer-proposal")).toHaveLength(1);
+    expect(screen.getByTestId("explorer-archived-proposals-toggle")).toHaveTextContent("Archived · 2");
+    view.rerender(<Explorer {...props} serverMode architecturalProposals={proposals} selectedProposalId="withdrawn" />);
+    expect(screen.getAllByTestId("explorer-proposal")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Open proposal Withdrawn" })).toHaveAttribute("aria-current", "true");
   });
 });

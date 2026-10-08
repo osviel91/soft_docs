@@ -277,6 +277,7 @@ function ServerWorkspaceExplorer({
   const [sharedExpanded, setSharedExpanded] = useState(true);
   const [myWorkExpanded, setMyWorkExpanded] = useState(false);
   const [archivedWorkExpanded, setArchivedWorkExpanded] = useState(false);
+  const [archivedProposalsExpanded, setArchivedProposalsExpanded] = useState(false);
   const [proposalsExpanded, setProposalsExpanded] = useState(false);
   const [localExpanded, setLocalExpanded] = useState(false);
   const [sectionChoicesTouched, setSectionChoicesTouched] = useState({ shared: false, myWork: false, proposals: false });
@@ -292,10 +293,21 @@ function ServerWorkspaceExplorer({
   const activeWorkIsArchived = activeWork?.lifecycle === "archived";
   const activeWorkContexts = privateWorkContexts.filter((work) => work.lifecycle === "active");
   const archivedWorkContexts = privateWorkContexts.filter((work) => work.lifecycle === "archived");
+  const proposals = architecturalProposals.map((proposal) => ({
+    proposal,
+    lifecycle: proposalLifecycle(proposal, proposal.reviewStatus ? { status: proposal.reviewStatus } : null),
+  }));
+  const activeProposals = proposals.filter(({ lifecycle }) => !["PROMOTED", "WITHDRAWN", "SUPERSEDED"].includes(lifecycle));
+  const archivedProposals = proposals.filter(({ lifecycle }) => ["PROMOTED", "WITHDRAWN", "SUPERSEDED"].includes(lifecycle));
+  const selectedProposalIsArchived = archivedProposals.some(({ proposal }) => proposal.id === selectedProposalId);
   const renderWorkContext = (work: NonNullable<ExplorerProps["privateWorkContexts"]>[number]) => <li key={work.id} data-testid="explorer-private-context" className={work.id === activeContextId ? "explorer__context-item--selected" : undefined}>
     <div className="explorer__context-row"><button type="button" data-testid={`explorer-private-context-open-${work.id}`} aria-current={work.id === activeContextId ? "true" : undefined} onClick={() => onOpenMyWork?.(work.id)}>{work.name}</button>{onMyWorkMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-private-context-menu" aria-label={`Actions for MY WORK ${work.name}`} onClick={(event) => onMyWorkMenu(work, positionBelow(event.currentTarget))}>⋯</button> : null}</div>
     {work.id === activeContextId ? <div className="explorer__context-children"><p className="explorer__context-note">Private draft. Changes are not authoritative.</p>{!isLoading ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}</div> : null}
   </li>;
+  const renderProposal = (proposal: NonNullable<ExplorerProps["architecturalProposals"]>[number], lifecycle: ReturnType<typeof proposalLifecycle>) => {
+    const revising = proposal.status === "open" && !["PROMOTING", "PROMOTED"].includes(lifecycle) && proposal.id === revisingProposalId;
+    return <li key={proposal.id} data-testid="explorer-proposal" className={proposal.id === selectedProposalId ? "explorer__context-item explorer__context-item--selected" : "explorer__context-item"} data-revising={revising ? "true" : undefined}><button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-current={proposal.id === selectedProposalId ? "true" : undefined} aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{lifecycle}</span><small>{proposal.submittedAt ? new Date(proposal.submittedAt).toLocaleDateString() : "undated"} · {proposal.id.slice(0, 8)}</small>{revising ? <small data-testid="explorer-revision-origin">REVISING</small> : null}{onProposalMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-proposal-menu" aria-label={`Actions for proposal ${proposal.title}`} onClick={(event) => onProposalMenu(proposal, positionBelow(event.currentTarget))}>⋯</button> : null}</li>;
+  };
 
   return (
     <nav className="explorer explorer--project" data-testid="explorer" aria-label="Project explorer">
@@ -321,7 +333,13 @@ function ServerWorkspaceExplorer({
         </section>
         <section className="explorer__provenance-section">
             <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, proposals: true })); setProposalsExpanded((expanded) => !expanded); }}>PROPOSALS <span className="explorer__section-meta">team review · non-authoritative</span><span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button></h2>
-               {proposalsExpanded ? <ul className="explorer__context-list">{architecturalProposals.length > 0 ? architecturalProposals.map((proposal) => { const lifecycle = proposalLifecycle(proposal, proposal.reviewStatus ? { status: proposal.reviewStatus } : null); const revising = proposal.status === "open" && !["PROMOTING", "PROMOTED"].includes(lifecycle) && proposal.id === revisingProposalId; return <li key={proposal.id} data-testid="explorer-proposal" className={proposal.id === selectedProposalId ? "explorer__context-item explorer__context-item--selected" : "explorer__context-item"} data-revising={revising ? "true" : undefined}><button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-current={proposal.id === selectedProposalId ? "true" : undefined} aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{lifecycle}</span><small>{proposal.submittedAt ? new Date(proposal.submittedAt).toLocaleDateString() : "undated"} · {proposal.id.slice(0, 8)}</small>{revising ? <small data-testid="explorer-revision-origin">REVISING</small> : null}{onProposalMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-proposal-menu" aria-label={`Actions for proposal ${proposal.title}`} onClick={(event) => onProposalMenu(proposal, positionBelow(event.currentTarget))}>⋯</button> : null}</li>; }) : <li className="explorer__diagram-empty">No proposals yet. Submit work from MY WORK for review.</li>}</ul> : null}
+                {proposalsExpanded ? <>
+                  <ul className="explorer__context-list">{activeProposals.map(({ proposal, lifecycle }) => renderProposal(proposal, lifecycle))}{architecturalProposals.length === 0 ? <li className="explorer__diagram-empty">No proposals yet. Submit work from MY WORK for review.</li> : null}</ul>
+                  {archivedProposals.length > 0 ? <>
+                    <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-proposals-toggle" aria-expanded={archivedProposalsExpanded || selectedProposalIsArchived} onClick={() => setArchivedProposalsExpanded((expanded) => !expanded)}>Archived · {archivedProposals.length} <span aria-hidden="true">{archivedProposalsExpanded || selectedProposalIsArchived ? "▾" : "▸"}</span></button>
+                    {archivedProposalsExpanded || selectedProposalIsArchived ? <ul className="explorer__context-list" data-testid="explorer-archived-proposals-list">{archivedProposals.map(({ proposal, lifecycle }) => renderProposal(proposal, lifecycle))}</ul> : null}
+                  </> : null}
+                </> : null}
         </section>
         {folderName ? <section className="explorer__provenance-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-local-toggle" aria-expanded={localExpanded} onClick={() => setLocalExpanded((expanded) => !expanded)}>LOCAL <span aria-hidden="true">{localExpanded ? "▾" : "▸"}</span></button></h2>
