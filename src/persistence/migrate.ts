@@ -47,6 +47,7 @@ import { up as semanticBindings } from "./migrations/0031-semantic-bindings";
 import { up as proposalSemanticBindings } from "./migrations/0032-proposal-semantic-bindings";
 import { up as promotionSemanticBindings } from "./migrations/0033-promotion-semantic-bindings";
 import { up as shareGrantResourceScope } from "./migrations/0034-share-grant-resource-scope";
+import { up as candidateAssessments } from "./migrations/0035-candidate-assessments";
 
 /** One migration: a stable name and the SQL that applies it. */
 export interface Migration {
@@ -94,6 +95,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 32, name: "proposal-semantic-bindings", sql: proposalSemanticBindings },
   { version: 33, name: "promotion-semantic-bindings", sql: promotionSemanticBindings },
   { version: 34, name: "share-grant-resource-scope", sql: shareGrantResourceScope },
+  { version: 35, name: "candidate-assessments", sql: candidateAssessments },
 ];
 
 /**

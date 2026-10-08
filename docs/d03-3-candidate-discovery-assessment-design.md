@@ -1,6 +1,6 @@
 # D03.3 — Candidate Discovery & Epistemic Reasoning
 
-**Estado:** D03.3.1 implementado; Assessment y fases posteriores requieren aprobación independiente
+**Estado:** D03.3.1 y D03.3.2 implementados; contratos de transporte/UI y fases posteriores requieren aprobación independiente
 **Alcance:** sugerencias de correspondencia Conceptual ↔ Database y evaluaciones privadas de esas sugerencias
 **Regla:** Candidate no es SemanticBinding. Solo una acción explícita, con evidencia válida, crea un binding en MY WORK; publicación sigue el flujo de Architectural Proposal.
 
@@ -26,7 +26,7 @@ Las afirmaciones de esta sección describen el código inspeccionado. Las decisi
 - `ProjectCatalog` verifica permisos y ownership de MY WORK. Las lecturas con `contextId` aplican SHARED + ese contexto; los bindings privados tienen overlay por ID sobre SHARED. `requireBindingEndpoints` indexa recursos efectivos y exige ambos anchors exactos.
 - El repositorio de bindings está separado de `project.json`, con scope project/context, revisiones optimistas e historial; server usa tablas `semantic_bindings`/`semantic_binding_revisions`, local usa `.semantic-bindings.json`.
 - Architectural Proposal captura operaciones seleccionadas ADD/UPDATE/REMOVE de bindings como snapshot, junto a recursos, identidades y relaciones. Review es separado de publicación. Promotion valida base, anchors/evidencia/permisos y aplica cambios SHARED atómicamente.
-- `SemanticCandidate` es derivado y no persistido. D03.3.1 añade discovery read-only HTTP/MCP remoto; no existen `CandidateAssessment`, repositorio ni mutaciones de evaluación.
+- `SemanticCandidate` es derivado y no persistido. D03.3.1 añade discovery read-only HTTP/MCP remoto. D03.3.2 añade evaluación privada versionada y casos de uso, todavía sin endpoint HTTP/MCP ni UI.
 
 ### HTTP, MCP y UI
 
@@ -43,7 +43,7 @@ Las afirmaciones de esta sección describen el código inspeccionado. Las decisi
 
 **Reutilizar:** anchors/key/resolution; ProjectIndex.entities; análisis por recurso; scope y autorización de `ProjectCatalog`; repositorios locales/server con revisiones; `BindingEvidence` v1 al materializar; operaciones de proposal/promotion existentes; API client, herramienta MCP textual+structured y navegación UI.
 
-**Implementado en D03.3.1:** servicio puro `discoverSemanticCandidates(index, activeBindings, policyVersion)` más `DiscoverSemanticCandidatesUseCase` para autorización, vista efectiva, bindings activos y paginación. No hay `CandidateAssessment`, persistencia, mutaciones ni motor de certeza.
+**Implementado en D03.3.1:** servicio puro `discoverSemanticCandidates(index, activeBindings, policyVersion)` más `DiscoverSemanticCandidatesUseCase` para autorización, vista efectiva, bindings activos y paginación. D03.3.2 persiste snapshots de `CandidateAssessment` dentro del scope project/MY WORK, con historial append-only SQL y sidecar local atómico. No crea `SemanticBinding`.
 
 ## 3. Invariantes arquitectónicas
 
@@ -179,9 +179,9 @@ Anchor obsoleto deshabilita creación y ofrece abrir recurso (si existe), ver ú
 
 Implementa igualdad normalizada y compatibilidad de tipos, ID independiente de policyVersion, fingerprint de policyVersion + inputs/señales, scope Conceptual→Database, exclusión de bindings exactos y ambigüedad informativa. La aplicación autoriza y construye el índice efectivo con ProjectCatalog; HTTP y MCP remoto comparten el caso de uso. El overlay efectivo aplica SHARED + MY WORK propio por ID y conserva el contexto de cada recurso para leer el store correcto. No hay persistencia, evaluaciones ni writers.
 
-### D03.3.2 — Assessment MY WORK (diferido)
+### D03.3.2 — Assessment MY WORK (implementado)
 
-Agregar modelo y validación, puerto y repositorios server/local según decisión aprobada, revisiones optimistas, ownership y endpoints de aplicación. READ discovery puede incluir assessment. No tocar SemanticBinding/Evidence v1 ni SHARED.
+Agrega modelo/validación, puerto, repositorios SQL/local, revisiones optimistas, ownership y casos de uso compartidos de alta, consulta, listado, resolución de vigencia e historial. El estado stale se calcula sin reparar anchors: recursos ausentes, candidatos/huellas cambiados o revisiones internas de evidencia obsoletas. No toca SemanticBinding/Evidence v1 ni SHARED; no expone todavía endpoints.
 
 ### D03.3.3 — Contratos de Assessment API/MCP (diferido)
 
@@ -191,7 +191,7 @@ Exponer get/assess/list de evaluaciones en API y MCP remoto; adaptar MCP local �
 
 Agregar revisión/navegación UI, creación explícita de binding desde assessment vigente, después proposal operation explícita y promotion sin cambios de atajo. E2E desde discovery hasta SHARED, verificando que assessment no aparece en SHARED ni en Proposal como autoridad.
 
-Cada fase posterior requiere aprobación independiente. Este encargo autoriza exclusivamente D03.3.1.
+Cada fase posterior requiere aprobación independiente. Este encargo autoriza exclusivamente D03.3.2; D03.3.3 no queda autorizado.
 
 ## 10. Pruebas de aceptación y cierre
 
@@ -247,3 +247,9 @@ La suite Vitest levanta varios entornos PGlite que migran esquemas y arrancan ho
 La misma clase de timeout existe en `HEAD`, las fallas cambian con la carga y los archivos pasan aislados y en grupo. La causa demostrada es saturación por el alto paralelismo predeterminado mientras múltiples suites inicializan PGlite, no una regresión de Discovery ni contaminación entre casos. `vite.config.ts` fija `minWorkers: 1` y `maxWorkers: 2`; no se aumentó ningún timeout.
 
 Resultado final con esa configuración: `npm run lint`, `npm run typecheck`, tests focalizados, `npm run test:mcp` (smoke + 56 tests) y `npm test` (200 archivos, 2278/2278 tests en 110.18 s) pasan. La salida conserva warnings React `act(...)` ya existentes; no afectan el resultado. Los tests de integración verifican SHARED, SHARED + MY WORK propio, aislamiento de otro contexto, binding activo, paginación, paridad HTTP/MCP con texto text-only y ausencia de mutaciones.
+
+## 14. Verificación D03.3.2
+
+Implementación limitada al modelo/validación de assessment, puerto, repositorios local/SQL con historial append-only y casos de uso compartidos. No se añadieron endpoints, tools MCP, UI, bindings ni escrituras SHARED. READY conserva la declaración humana y Evidence v1; la aplicación comprueba revisión/resolución de evidencia interna al escribir y al leer.
+
+Resultado: `npm run lint`, `npm run typecheck`, tests focalizados de aplicación/persistencia y Discovery D03.3.1, `npm test -- --minWorkers=1 --maxWorkers=2` (203 archivos, 2283/2283 tests), `npm run test:mcp` (smoke + 56 tests) y `git diff --check` pasan. Se mantuvieron los límites de workers de D03.3.1; no se aumentaron timeouts. Los warnings React `act(...)` preexistentes siguen sin afectar el resultado.

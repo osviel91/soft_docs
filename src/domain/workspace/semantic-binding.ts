@@ -79,7 +79,7 @@ export function resolveEntityAnchor(anchor: EntityAnchor, entities: IndexedEntit
 export function validateSemanticBinding(binding: SemanticBinding): void {
   if (!binding.id || !binding.projectId || binding.left.resourceId === binding.right.resourceId) throw new Error("A semantic binding requires distinct resources and a stable id.");
   if (!BINDING_RELATIONS[binding.relation]) throw new Error("Unknown semantic binding relation.");
-  if (binding.evidence.version !== 1 || !binding.evidence.rationale.trim() || binding.evidence.items.length === 0) throw new Error("A semantic binding requires version 1 evidence and a concise rationale.");
+  validateBindingEvidence(binding.evidence);
   if (!Number.isInteger(binding.revision) || binding.revision < 1 || (binding.status !== "ACTIVE" && binding.status !== "RETIRED")) throw new Error("Invalid binding revision or lifecycle status.");
   for (const anchor of [binding.left, binding.right]) {
     if (anchor.version !== 1 || !anchor.resourceId || !anchor.identity) throw new Error("Invalid entity anchor.");
@@ -91,11 +91,15 @@ export function validateSemanticBinding(binding: SemanticBinding): void {
     if (anchor.representation === "conceptual" && !["concept", "conceptual-relationship"].includes(anchor.entityKind)) throw new Error("Entity kind does not belong to Conceptual.");
     if (anchor.representation === "database" && !["table", "foreign-key", "primary-key", "unique-key", "index", "column"].includes(anchor.entityKind)) throw new Error("Entity kind does not belong to Database.");
   }
-  for (const item of binding.evidence.items) {
+}
+
+export function validateBindingEvidence(evidence: BindingEvidence): void {
+  if (evidence.version !== 1 || !evidence.rationale.trim() || !Array.isArray(evidence.items) || evidence.items.length === 0) throw new Error("Version 1 evidence requires a concise rationale and at least one item.");
+  for (const item of evidence.items) {
     if (item.kind === "internal") {
       if (!item.resourceId || !Number.isInteger(item.revision) || item.revision < 1) throw new Error("Internal evidence requires a resource and positive revision.");
       if (item.entity && item.entity.resourceId !== item.resourceId) throw new Error("Evidence entity must belong to its evidence resource.");
       if (item.range && (item.range.start.line < 0 || item.range.start.column < 0 || item.range.end.line < item.range.start.line || (item.range.end.line === item.range.start.line && item.range.end.column < item.range.start.column))) throw new Error("Invalid evidence range.");
-    } else if (item.kind !== "external" || !item.reference.trim() || !item.description.trim()) throw new Error("External evidence requires a reference and description.");
+    } else if (item.kind !== "external" || typeof item.reference !== "string" || !item.reference.trim() || typeof item.description !== "string" || !item.description.trim()) throw new Error("External evidence requires a reference and description.");
   }
 }
