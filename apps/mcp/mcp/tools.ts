@@ -421,7 +421,7 @@ async function semanticIndex(
 ): Promise<{ index: ReturnType<typeof buildProjectIndex>; resources: Awaited<ReturnType<ProjectCatalog["listResources"]>> }> {
   throwIfAborted(toolContext.signal);
   const resources = await toolContext.catalog.listResources(toolContext.context, projectIdValue, contextId);
-  const semanticMessages = await toolContext.catalog.listSemanticMessages(toolContext.context, projectIdValue, contextId);
+  const semanticMessages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, projectIdValue, contextId);
   const metadata = { ...metadataFrom(resources), semanticMessages };
   const analyses = [];
   for (const resource of resources.slice(0, MAX_INDEXED_DOCUMENTS)) {
@@ -2001,7 +2001,7 @@ export function createMcpTools(): McpTool[] {
       annotations: { ...READ_ONLY, title: "List semantic message identities" },
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
-         const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null);
+          const messages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null);
         return { text: messages.length ? JSON.stringify(messages) : "No semantic message identities.", structured: { messages } };
       },
     },
@@ -2041,7 +2041,7 @@ export function createMcpTools(): McpTool[] {
         const contextId = typeof args.contextId === "string" ? args.contextId : null;
         const anchor = args.anchor as import("../../../src/domain/workspace/semantic-binding").EntityAnchor;
         const resources = await toolContext.catalog.listResources(toolContext.context, id, contextId);
-        const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId);
+        const messages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, id, contextId);
         const metadata = { ...metadataFrom(resources), semanticMessages: messages };
         const analyses = await Promise.all(resources.slice(0, MAX_INDEXED_DOCUMENTS).map(async resource => {
           const { content } = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);
@@ -2216,7 +2216,7 @@ export function createMcpTools(): McpTool[] {
         const trace = traceSemanticMessage(index, messageId);
         if (!trace.identity) throw notFound(`No semantic message "${messageId}" exists.`);
         if (trace.occurrences.length || trace.eventFlowEntities.length) throw invalid(`Semantic message "${messageId}" is still referenced.`);
-         const messages = (await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId)).filter((entry) => entry.id !== messageId);
+         const messages = (await toolContext.catalog.listPrivateSemanticMessages(toolContext.context, id, contextId)).filter((entry) => entry.id !== messageId);
          const result = await toolContext.catalog.updatePrivateSemanticMessages(toolContext.context, id, contextId, messages);
          return { text: `Deleted semantic message ${messageId}.`, structured: { messageId, messages: result } };
       },
@@ -2232,7 +2232,7 @@ export function createMcpTools(): McpTool[] {
         const id = stringArg(args, "projectId");
         const messageId = stringArg(args, "messageId");
          const contextId = stringArg(args, "contextId");
-         const messages = await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId);
+         const messages = await toolContext.catalog.listPrivateSemanticMessages(toolContext.context, id, contextId);
         const existing = messages.find((entry) => entry.id === messageId);
         if (!existing) throw notFound(`No semantic message "${messageId}" exists.`);
         const next = messages.map((entry) => entry.id === messageId ? { ...entry, name: stringArg(args, "name") } : entry);
@@ -2250,7 +2250,7 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const id = stringArg(args, "projectId");
          const contextId = stringArg(args, "contextId");
-         const identity = (await toolContext.catalog.listSemanticMessages(toolContext.context, id, contextId)).find((entry) => entry.id === stringArg(args, "messageId"));
+         const identity = (await toolContext.catalog.listPrivateSemanticMessages(toolContext.context, id, contextId)).find((entry) => entry.id === stringArg(args, "messageId"));
         if (!identity) throw notFound(`No semantic message "${stringArg(args, "messageId")}" exists.`);
          const resource = await resolveResource(toolContext, id, stringArg(args, "resource"), contextId);
          const read = await toolContext.catalog.readResource(toolContext.context, id, resource.id, contextId);

@@ -58,3 +58,23 @@ it("keeps private work owner-only and separate from SHARED", async () => {
   await catalog.deletePrivateWorkContext(contextFor(owner), project.id, work.id);
   await expect(catalog.listResources(contextFor(owner), project.id, work.id)).rejects.toMatchObject({ code: "not_found" });
 });
+
+it("resolves SHARED identities in one MY WORK context without copying them into its private registry", async () => {
+  const owner = await user("semantic-owner");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Semantic", workspaceId: owner })).project;
+  const first = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "first" });
+  const second = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "second" });
+  const manifest = await createFsProjectStorage({ root: path.join(volume, project.id) });
+  const shared = { id: "a7d03b12-0001-4a11-8111-000000000001", name: "OriginalEvent", kind: "event" as const };
+  const written = await manifest.write("project.json", JSON.stringify({ format: "sequencediagrams-project", version: 1, resources: [], semanticMessages: [shared] }));
+  expect(written.ok).toBe(true);
+
+  expect(await catalog.listEffectiveSemanticMessages(contextFor(owner), project.id, first.id)).toEqual([shared]);
+  expect(await catalog.listPrivateSemanticMessages(contextFor(owner), project.id, first.id)).toEqual([]);
+  expect(await catalog.listSemanticMessages(contextFor(owner), project.id, first.id)).toEqual([]);
+  await catalog.createSemanticMessage(contextFor(owner), project.id, { name: "PrivateOnly", kind: "event" }, second.id);
+  expect(await catalog.listEffectiveSemanticMessages(contextFor(owner), project.id, first.id)).toEqual([shared]);
+  expect(await catalog.listEffectiveSemanticMessages(contextFor(owner), project.id, second.id)).toHaveLength(2);
+  await catalog.updatePrivateSemanticMessages(contextFor(owner), project.id, second.id, [{ id: shared.id, name: "ConflictingEvent", kind: "command" }]);
+  await expect(catalog.listEffectiveSemanticMessages(contextFor(owner), project.id, second.id)).rejects.toMatchObject({ code: "invalid" });
+});

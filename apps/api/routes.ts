@@ -862,7 +862,7 @@ export function createRouter(dependencies: AppDependencies): Router {
   router.get("/api/projects/:projectId/semantic-messages", async (request, params) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
-       return json(200, { messages: await catalog.listSemanticMessages(context, params.projectId, request.query.contextId ?? null) });
+       return json(200, { messages: await catalog.listEffectiveSemanticMessages(context, params.projectId, request.query.contextId ?? null) });
     }),
   );
 

@@ -253,6 +253,8 @@ export interface ProjectCatalog {
     projectId: string,
     contextId?: string | null,
   ): Promise<SemanticMessageIdentity[]>;
+  listPrivateSemanticMessages(context: ApplicationContext, projectId: string, contextId: string): Promise<SemanticMessageIdentity[]>;
+  listEffectiveSemanticMessages(context: ApplicationContext, projectId: string, contextId?: string | null): Promise<SemanticMessageIdentity[]>;
   createSemanticMessage(
     context: ApplicationContext,
     projectId: string,
@@ -488,6 +490,22 @@ export function createProjectCatalog(
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new ApplicationError("invalid", "The project manifest is not valid JSON."); }
     return { ...(parseProjectMetadata(parsed) ?? createEmptyMetadata()), raw };
+  };
+
+  const listEffectiveSemanticMessages = async (context: ApplicationContext, projectId: string, contextId: string | null = null): Promise<SemanticMessageIdentity[]> => {
+    await requirePermission(context, projectId, "project:read");
+    if (contextId !== null) await requirePrivateContext(context, projectId, contextId);
+    const shared = (await readManifest(projectId)).semanticMessages ?? [];
+    if (contextId === null) return shared;
+    const effective = new Map(shared.map((message) => [message.id, message]));
+    for (const message of await knowledgeContexts!.listPrivateMessages(projectId, contextId)) {
+      const existing = effective.get(message.id);
+      if (existing && (existing.name !== message.name || existing.kind !== message.kind)) {
+        throw invalid(`Semantic message id ${message.id} collides between SHARED and MY WORK.`, { reason: "semantic_message_id_collision", messageId: message.id });
+      }
+      effective.set(message.id, message);
+    }
+    return [...effective.values()].sort((a, b) => a.id.localeCompare(b.id));
   };
 
   const requireBindingEndpoints = async (projectId: string, contextId: string, anchors: EntityAnchor[]): Promise<void> => {
@@ -779,14 +797,21 @@ export function createProjectCatalog(
       }
       },
 
+    async listPrivateSemanticMessages(context, projectId, contextId) {
+      await requirePermission(context, projectId, "project:read");
+      await requirePrivateContext(context, projectId, contextId);
+      return knowledgeContexts!.listPrivateMessages(projectId, contextId);
+    },
+
+    async listEffectiveSemanticMessages(context, projectId, contextId = null) {
+      return listEffectiveSemanticMessages(context, projectId, contextId);
+    },
+
     async listSemanticMessages(context, projectId, contextId = null) {
       await requirePermission(context, projectId, "project:read");
-      if (contextId !== null) {
-        await requirePrivateContext(context, projectId, contextId);
-        return knowledgeContexts!.listPrivateMessages(projectId, contextId);
-      }
-      const metadata = await readManifest(projectId);
-      return metadata.semanticMessages ?? [];
+      if (contextId === null) return (await readManifest(projectId)).semanticMessages ?? [];
+      await requirePrivateContext(context, projectId, contextId);
+      return knowledgeContexts!.listPrivateMessages(projectId, contextId);
     },
 
     async createSemanticMessage(context, projectId, input, contextId = null) {
