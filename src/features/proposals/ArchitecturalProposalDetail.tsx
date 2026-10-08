@@ -64,8 +64,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
     return () => { active = false; };
   }, [client, projectId, proposalId, onDiffLoaded]);
 
-  if (error) return <section aria-label="Architectural Proposal"><button type="button" onClick={onBack}>Back</button><p role="alert">{error}</p></section>;
-  if (!proposal) return <section aria-label="Architectural Proposal"><p>Loading proposal...</p></section>;
+  if (!proposal) return <section aria-label="Architectural Proposal"><button type="button" onClick={onBack}>Back</button>{error ? <p role="alert">{error}</p> : <p>Loading proposal...</p>}</section>;
 
   const state: ProposalLifecycleState = proposalLifecycle(proposal, reviews);
   const reviewLocked = ["PROMOTING", "PROMOTED", "WITHDRAWN", "SUPERSEDED"].includes(state);

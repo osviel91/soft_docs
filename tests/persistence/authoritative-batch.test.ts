@@ -83,4 +83,24 @@ describe("authoritative batches", () => {
     expect(await projects().findResource(target.id, resourceId)).toBeNull();
     expect(await createSemanticBindingRepository(client).list({ projectId: target.id, contextId: null })).toEqual([binding]);
   });
+
+  it("treats only an exact existing relationship ADD as idempotent", async () => {
+    const target = await project();
+    const source = await projects().createResource(target.id, { path: "source.seq", type: "sequence-diagram" });
+    const destination = await projects().createResource(target.id, { path: "destination.eventseq", type: "event-flow" });
+    const relationship = { kind: "complementary-view" as const, sourceId: source.id, targetId: destination.id, sourceRole: "execution" as const, targetRole: "causal" as const };
+    await client.query("INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role) VALUES ($1, $2, $3, $4, $5, $6)", [target.id, source.id, destination.id, relationship.kind, relationship.sourceRole, relationship.targetRole]);
+    const batch = createAuthoritativeBatchRepository(client);
+    const repeated = { operation: "ADD" as const, relationship };
+
+    await batch.claim({ batchId: randomUUID(), projectId: target.id, actor: { kind: "user", userId: target.userId, subjectUserId: target.userId }, audit: audit(target.userId, target.id), operations: [{ operation: "create", resourceId: randomUUID(), path: "exact.md", type: "markdown-document", content: "# exact" }], relationshipChanges: [repeated, repeated] });
+    await expect(batch.claim({
+      batchId: randomUUID(), projectId: target.id,
+      actor: { kind: "user", userId: target.userId, subjectUserId: target.userId }, audit: audit(target.userId, target.id),
+      operations: [{ operation: "create", resourceId: randomUUID(), path: "rolled-back.md", type: "markdown-document", content: "# no" }],
+      relationshipChanges: [{ operation: "ADD", relationship: { ...relationship, sourceRole: "other" } }],
+    })).rejects.toThrow("already exists with different kind or roles");
+    expect(await projects().findResourceByPath(target.id, "rolled-back.md")).toBeNull();
+    expect(await projects().listResourceRelationships(target.id, null)).toEqual([relationship]);
+  });
 });

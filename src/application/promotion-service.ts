@@ -104,9 +104,11 @@ export function createPromotionService(options: {
     for (const change of relationships) {
       const key = `${change.relationship.sourceId}:${change.relationship.targetId}`;
       const existing = currentRelationships.get(key);
-      if (change.operation === "ADD" && existing) blockers.push({ code: "RELATIONSHIP_EXISTS", message: `Relationship ${key} already exists.` });
+      if (change.operation === "ADD" && existing && relationshipFingerprint(existing) !== relationshipFingerprint(change.relationship)) blockers.push({ code: "RELATIONSHIP_CONFLICT", message: `Relationship ${key} exists with different kind or roles; revise the proposal against current SHARED state.` });
       if (change.operation !== "ADD" && !existing) blockers.push({ code: "RELATIONSHIP_MISSING", message: `Relationship ${key} is no longer present.` });
       if (change.operation !== "ADD" && existing && change.baseFingerprint !== undefined && relationshipFingerprint(existing) !== change.baseFingerprint) blockers.push({ code: "RELATIONSHIP_BASE_MISMATCH", message: `Relationship ${key} changed since the proposal base.` });
+      if (change.operation === "ADD" || change.operation === "UPDATE") currentRelationships.set(key, change.relationship);
+      else currentRelationships.delete(key);
     }
     const semanticMessages: PromotionSemanticMessageChange[] = proposal.semanticMessages.map((message) => ({ operation: message.operation ?? "ADD", message: { id: message.id, name: message.name, kind: message.kind }, ...(message.baseName === undefined ? {} : { baseName: message.baseName }), ...(message.baseKind === undefined ? {} : { baseKind: message.baseKind }) }));
     for (const change of semanticMessages) {

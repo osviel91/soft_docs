@@ -160,23 +160,23 @@ export function createAuthoritativeBatchRepository(
         for (const change of input.relationshipChanges ?? []) {
           const relationship = change.relationship;
           const current = await tx.query("SELECT kind, source_id, target_id, source_role, target_role FROM resource_relationships WHERE project_id = $1 AND knowledge_context_id IS NULL AND source_id = $2 AND target_id = $3 FOR UPDATE", [input.projectId, relationship.sourceId, relationship.targetId]);
-          if (change.operation === "ADD" && current.rows.length > 0) throw conflict("The relationship already exists.");
+          if (change.operation === "ADD" && current.rows.length > 0 && relationshipFingerprint(current.rows[0]) !== JSON.stringify({ kind: relationship.kind, sourceId: relationship.sourceId, targetId: relationship.targetId, sourceRole: relationship.sourceRole ?? null, targetRole: relationship.targetRole ?? null })) throw conflict(`Relationship ${relationship.sourceId} -> ${relationship.targetId} already exists with different kind or roles.`);
           if (change.operation !== "ADD" && current.rows.length === 0) throw conflict("The relationship no longer exists.");
           if (change.operation !== "ADD" && change.baseFingerprint !== undefined && current.rows.length > 0 && relationshipFingerprint(current.rows[0]) !== change.baseFingerprint) throw conflict("The relationship changed since the proposal base.");
-          if (change.operation === "ADD") {
+          if (change.operation === "ADD" && current.rows.length === 0) {
             await tx.query(
               `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
-               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (project_id, source_id, target_id) DO NOTHING`,
+               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
               [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
             );
-           } else if (change.operation === "UPDATE") {
-             await tx.query(
-               `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (project_id, source_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, source_role = EXCLUDED.source_role, target_role = EXCLUDED.target_role`,
-               [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
-             );
-           } else {
+          } else if (change.operation === "UPDATE") {
+            await tx.query(
+              `INSERT INTO resource_relationships (project_id, source_id, target_id, kind, source_role, target_role)
+               VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT DO UPDATE SET kind = EXCLUDED.kind, source_role = EXCLUDED.source_role, target_role = EXCLUDED.target_role`,
+              [input.projectId, relationship.sourceId, relationship.targetId, relationship.kind, relationship.sourceRole ?? null, relationship.targetRole ?? null],
+            );
+          } else if (change.operation === "REMOVE") {
             await tx.query(
               `INSERT INTO resource_relationship_history (id, project_id, source_id, target_id, kind, source_role, target_role, recorded_by, operation_id)
                SELECT $1, project_id, source_id, target_id, kind, source_role, target_role, $2, $3

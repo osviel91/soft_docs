@@ -126,6 +126,23 @@ describe("ArchitecturalProposalDetail", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Impact" }));
     expect(await screen.findByTestId("database-semantic-impact")).toHaveTextContent("1 table modified, 1 index removed");
   });
+
+  it("keeps proposal context visible when promotion fails", async () => {
+    const api = client();
+    vi.mocked(api.getArchitecturalProposal).mockResolvedValue({ ...proposal, capabilities: {
+      ...proposal.capabilities,
+      "proposal.previewPromotion": { capability: "proposal.previewPromotion", allowed: true },
+      "proposal.promote": { capability: "proposal.promote", allowed: true },
+    } });
+    api.previewArchitecturalProposalPromotion = vi.fn().mockResolvedValue({ reviewStatus: "approved", eligible: true, blockers: [], staleBase: false, creates: [], updates: [], retires: [] });
+    api.promoteArchitecturalProposal = vi.fn().mockRejectedValue(new Error("Relationship source -> target already exists with different kind or roles."));
+    render(<ArchitecturalProposalDetail client={api} projectId="project-1" proposalId="proposal-1" onBack={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Preview promotion" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Promote to SHARED" }));
+    expect(await screen.findByRole("heading", { name: proposal.title })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("already exists with different kind or roles");
+  });
 });
 
 describe("ProposalResourceComparison", () => {
