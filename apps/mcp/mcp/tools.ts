@@ -848,33 +848,34 @@ export function createMcpTools(): McpTool[] {
           id,
           contextId,
         );
+        const result = {
+          projectId: id,
+          total: resources.length,
+          resources: items.map((resource) => ({
+            id: resource.id,
+            path: resource.path,
+            type: resource.type,
+            revision: resource.revision,
+            ...(resource.metadata === undefined
+              ? {}
+              : { metadata: resource.metadata }),
+          })),
+          entities: (index.entities ?? []).map(({ name, anchor }) => ({
+            displayName: name,
+            resourceId: anchor.resourceId,
+            representation: anchor.representation,
+            entityKind: anchor.entityKind,
+            identity: anchor.identity,
+            anchor,
+            resolution: "resolved",
+            contextId: contextId ?? "SHARED",
+          })),
+          relationships,
+          nextCursor,
+        };
         return {
-          text: `${resources.length} resources; showing ${items.length}.`,
-          structured: {
-            projectId: id,
-            total: resources.length,
-            resources: items.map((resource) => ({
-              id: resource.id,
-              path: resource.path,
-              type: resource.type,
-              revision: resource.revision,
-              ...(resource.metadata === undefined
-                ? {}
-                : { metadata: resource.metadata }),
-            })),
-            entities: (index.entities ?? []).map(({ name, anchor }) => ({
-              displayName: name,
-              resourceId: anchor.resourceId,
-              representation: anchor.representation,
-              entityKind: anchor.entityKind,
-              identity: anchor.identity,
-              anchor,
-              resolution: "resolved",
-              contextId: contextId ?? "SHARED",
-            })),
-            relationships,
-            nextCursor,
-          },
+          text: JSON.stringify(result),
+          structured: result,
         };
       },
     },

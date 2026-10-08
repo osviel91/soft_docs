@@ -57,7 +57,11 @@ import { SEQUENCE_SEMANTIC_MESSAGING_GUIDANCE } from "../../../src/language/dsl-
 /** The server's advertised name. */
 export const MCP_SERVER_NAME = "sequencediagrams-mcp";
 /** The server's advertised version, from the package it ships in. */
-export const MCP_SERVER_VERSION = packageJson.version;
+const buildSha = process.env.SDM_BUILD_SHA;
+export const MCP_SERVER_VERSION =
+  buildSha && /^[a-f0-9]{7,40}$/i.test(buildSha)
+    ? `${packageJson.version}+${buildSha}`
+    : packageJson.version;
 
 /**
  * The guidance returned by `initialize`.

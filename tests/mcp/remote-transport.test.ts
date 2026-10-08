@@ -78,6 +78,14 @@ function structured(result: unknown): Record<string, any> {
   );
 }
 
+/** Models clients that expose MCP text blocks but hide structuredContent. */
+function textualResult(result: unknown): Record<string, any> {
+  const content = (result as { content: Array<{ type: string; text?: string }> }).content;
+  const text = content.find(block => block.type === "text")?.text;
+  if (text === undefined) throw new Error("MCP result has no text content");
+  return JSON.parse(text);
+}
+
 describe("the remote MCP service over Streamable HTTP", () => {
   it("keeps initialize guidance aligned with exposed tool names", () => {
     const tools = new Set(createMcpTools().map((tool) => tool.name));
@@ -347,12 +355,21 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(database.isError, JSON.stringify(database)).toBeFalsy();
 
     const listed = await client.callTool({ name: "get_project_index", arguments: { projectId, contextId } });
-    const entities = structured(listed).entities as Array<Record<string, any>>;
+    const clientVisible = textualResult(listed);
+    expect(clientVisible).toEqual(structured(listed));
+    const entities = clientVisible.entities as Array<Record<string, any>>;
     const concept = entities.find(entity => entity.displayName === "recharge-registry")!;
     const table = entities.find(entity => entity.displayName === "programmed_recharges_events")!;
     expect(concept).toMatchObject({ resourceId: structured(conceptual).resource.id, representation: "conceptual", entityKind: "concept", resolution: "resolved", contextId });
     expect(table).toMatchObject({ resourceId: structured(database).resource.id, representation: "database", entityKind: "table", resolution: "resolved", contextId });
     expect(concept.anchor).toEqual({ version: 1, resourceId: concept.resourceId, representation: concept.representation, entityKind: concept.entityKind, identity: concept.identity });
+
+    const sharedOnly = await client.callTool({ name: "get_project_index", arguments: { projectId } });
+    expect(textualResult(sharedOnly)).toEqual(structured(sharedOnly));
+    expect(textualResult(sharedOnly).entities).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ resourceId: structured(conceptual).resource.id }),
+      expect.objectContaining({ resourceId: structured(database).resource.id }),
+    ]));
 
     const created = await client.callTool({ name: "create_semantic_binding", arguments: {
       projectId,
@@ -395,6 +412,9 @@ describe("the remote MCP service over Streamable HTTP", () => {
 
     const otherOwner = await harness.aUser("Other binding owner");
     const otherContext = await harness.aPrivateWork(projectId, otherOwner);
+    const foreignIndex = await client.callTool({ name: "get_project_index", arguments: { projectId, contextId: otherContext } });
+    expect(foreignIndex.isError).toBe(true);
+    expect(JSON.stringify(foreignIndex)).toMatch(/forbidden|private|owned|context/i);
     const wrongContext = await client.callTool({ name: "create_semantic_binding", arguments: { projectId, contextId: otherContext, binding: createBinding } });
     expect(wrongContext.isError).toBe(true);
     expect(JSON.stringify(wrongContext)).toMatch(/forbidden|private|owned|context/i);
