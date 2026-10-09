@@ -807,6 +807,8 @@ export default function App() {
   const { diagrams: sharedDiagrams, notes: sharedNotes, metadata: sharedMetadata, resourceIdForFile: sharedResourceIdForFile } = sharedWorkspace;
 
   const loadSharedDiagram = useCallback((diagram: DiagramFile): void => {
+    setArchitecturalProposalId(null);
+    setView("code");
     if (server.active?.contextId === null || !server.active) {
       loadDiagram(diagram);
     } else {
@@ -814,12 +816,25 @@ export default function App() {
     }
   }, [loadDiagram, server.active, server.openProject, sharedWorkspace.loadDiagram]);
   const loadSharedNote = useCallback((note: NoteFile): void => {
+    setArchitecturalProposalId(null);
+    setView("code");
     if (server.active?.contextId === null || !server.active) {
       loadNote(note);
     } else {
       void server.openProject(server.active.project).then(() => sharedWorkspace.loadNote(note));
     }
   }, [loadNote, server.active, server.openProject, sharedWorkspace.loadNote]);
+
+  const loadMyWorkDiagram = useCallback((diagram: DiagramFile): void => {
+    setArchitecturalProposalId(null);
+    setView("code");
+    loadDiagram(diagram);
+  }, [loadDiagram]);
+  const loadMyWorkNote = useCallback((note: NoteFile): void => {
+    setArchitecturalProposalId(null);
+    setView("code");
+    loadNote(note);
+  }, [loadNote]);
 
   useEffect(() => {
     if (!proposalCodeTarget || (proposalCodeTarget.contextId !== null && server.active?.contextId !== proposalCodeTarget.contextId)) return;
@@ -3395,9 +3410,9 @@ export default function App() {
                   onAddMenu={(project, position) =>
                     setMenu({ kind: "project-add", project, ...position })
                   }
-                   onLoadDiagram={loadDiagram}
+                    onLoadDiagram={loadMyWorkDiagram}
                    onLoadSharedDiagram={loadSharedDiagram}
-                   onLoadNote={loadNote}
+                    onLoadNote={loadMyWorkNote}
                    onLoadSharedNote={loadSharedNote}
                   onDiagramMenu={(diagram, position) =>
                     setMenu({ kind: "diagram", diagram, ...position })
