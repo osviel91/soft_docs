@@ -60,7 +60,7 @@ export default function PresentationMode({ projectName, resources, initialId, in
   const title = markdown ? noteDisplayName(selected.path, selected.content) : diagramDisplayName(selected.path, selected.content);
   return <main className="presentation" aria-label="Architecture presentation" data-testid="presentation-mode">
     <header className="presentation__header"><div><strong>{projectName}</strong><span>{title}</span></div><button type="button" onClick={onExit}>Exit presentation <kbd>Esc</kbd></button></header>
-    <section className={`presentation__stage${markdown ? " presentation__stage--markdown" : ""}`} aria-label={`${title}, item ${index + 1} of ${ordered.length}`}>
+    <section className={`presentation__stage${markdown ? " presentation__stage--markdown" : eventFlow ? " presentation__stage--event-flow" : ""}`} aria-label={`${title}, item ${index + 1} of ${ordered.length}`}>
         {markdown ? <MarkdownView markdown={selected.content} /> : eventFlow ? <EventFlowPreview source={selected.content} view={eventView} onViewChange={(view) => { setEventView(view); onRepresentationChange?.(view); }} /> : conceptual ? <ConceptualPreview source={selected.content} /> : database ? <DatabasePreview source={selected.content} /> : <Preview source={selected.content} />}
     </section>
     <footer className="presentation__controls">
