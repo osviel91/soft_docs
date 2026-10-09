@@ -70,8 +70,8 @@ export default function WorkspaceSwitcher({
           <button type="button" className="workspaces__back" data-testid="workspace-back-to-projects" aria-expanded={projectPickerOpen} onClick={() => setProjectPickerOpen((open) => !open)}>
             {projectPickerOpen ? "Hide projects" : "Switch project"}
           </button>
-          {canShareProject && onShareProject ? <button type="button" className="workspaces__back" data-testid="workspace-share-project" onClick={onShareProject}>Share project…</button> : null}
           {onReloadServerProjects ? <button type="button" className="workspaces__reload" data-testid="workspace-server-refresh" onClick={onReloadServerProjects} title="Refresh project data" aria-label="Refresh project data">↻</button> : null}
+          {canShareProject && onShareProject ? <button type="button" className="workspaces__reload" data-testid="workspace-share-project" onClick={onShareProject} title="Share project" aria-label="Share project">↗</button> : null}
         </div>
         {projectPickerOpen ? <div className="workspaces__project-picker">
           {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label className="workspaces__workspace-select"><span className="visually-hidden">Workspace</span><select data-testid="workspace-server-workspace-select" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>{serverWorkspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
