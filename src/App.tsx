@@ -132,7 +132,7 @@ import { parseConceptual } from "./language/conceptual/analyze";
 import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
 import { parseDatabaseSyntax } from "./language/database/parser";
-import ComparisonView from "./features/preview/ComparisonView";
+import ComparisonView, { type ComparisonOption } from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
 import { analyzeEventFlow } from "./language/eventflow/parser";
@@ -1267,6 +1267,24 @@ export default function App() {
   // the document helpers — because link resolution needs it too.
   const index = useProjectIndex(selectedProjectId, diagrams, notes, metadata);
   const sharedIndex = useProjectIndex(server.active?.project.id ?? null, sharedDiagrams, sharedNotes, sharedMetadata);
+  const comparisonOptions: ComparisonOption[] = server.active && server.active.contextId && index && sharedIndex
+    ? [
+        ...sharedDiagrams.map((diagram) => {
+          const resourceId = sharedResourceIdForFile(diagram);
+          return { id: `shared:${resourceId ?? diagram.id}`, diagram, resourceId, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "shared" as const, id: `shared:${server.active!.project.id}`, projectId: server.active!.project.id }, index: sharedIndex, resourceId }, label: `SHARED · ${diagram.name}` };
+        }),
+        ...diagrams.map((diagram) => {
+          const resourceId = resourceIdForFile(diagram);
+          const work = server.privateWorkContexts.find((entry) => entry.id === server.active!.contextId);
+          return { id: `my-work:${server.active!.contextId}:${resourceId ?? diagram.id}`, diagram, resourceId, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "private-work" as const, id: server.active!.contextId!, projectId: server.active!.project.id, ownerUserId: work?.ownerUserId ?? "", name: work?.name ?? "MY WORK", lifecycle: work?.lifecycle ?? "active", createdAt: new Date(work?.createdAt ?? 0), updatedAt: new Date(work?.updatedAt ?? 0) }, index, resourceId }, label: `MY WORK · ${diagram.name}` };
+        }),
+      ]
+    : [];
+  const comparisonPrimaryOptionId = selectedDiagram
+    ? server.active?.contextId
+      ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedDiagram) ?? selectedDiagram.id}`
+      : `shared:${sharedResourceIdForFile(selectedDiagram) ?? selectedDiagram.id}`
+    : undefined;
   const activeBindingView = serverIndexedView(index, [...diagrams, ...notes]);
   const sharedBindingView = serverIndexedView(sharedIndex, [...sharedDiagrams, ...sharedNotes]);
   const bindingEntities = [...new Map([...activeBindingView.entities, ...sharedBindingView.entities].map(entity => [entityAnchorKey(entity.anchor), entity])).values()];
@@ -3814,8 +3832,10 @@ export default function App() {
                        selectedServerWorkspaceId={selectedServerWorkspaceId}
                        onSelectServerWorkspace={setSelectedServerWorkspaceId}
                         onOpenServerProject={selectServerProject}
-                       relationships={metadata?.relationships ?? []}
-                     />
+                      relationships={metadata?.relationships ?? []}
+                      comparisonOptions={comparisonOptions.length ? comparisonOptions : undefined}
+                      primaryOptionId={comparisonOptions.length ? comparisonPrimaryOptionId : undefined}
+                    />
                   ) : noteMode ? (
                     <MarkdownView
                       markdown={source}

@@ -39,12 +39,23 @@ export interface ComparisonViewProps {
   onOpenServerProject?: (project: ServerProject) => void;
   relationships?: ResourceRelationship[];
   analysisContexts?: AnalysisContext[];
+  comparisonOptions?: ComparisonOption[];
+  primaryOptionId?: string;
+}
+
+export interface ComparisonOption {
+  id: string;
+  diagram: DiagramFile;
+  resourceId: string | null;
+  context: AnalysisContext;
+  label: string;
 }
 
 type Pane = "a" | "b";
 
 interface Session {
   resource: DiagramFile;
+  resourceId: string | null;
   source: string;
   representation: "sequence" | "event-flow";
 }
@@ -58,7 +69,6 @@ function ComparisonPane({
   session,
   context,
   index,
-  resourceIdForFile,
   maximized,
   onMaximize,
   onRestore,
@@ -75,7 +85,6 @@ function ComparisonPane({
   session: Session;
   context?: AnalysisContext;
   index: ProjectIndex | null;
-  resourceIdForFile: (file: DiagramFile) => string | null;
   maximized: boolean;
   onMaximize: () => void;
   onRestore: () => void;
@@ -98,7 +107,7 @@ function ComparisonPane({
   const { ast: sequence } = useDiagram(
     session.representation === "sequence" ? session.source : "",
   );
-  const resourceId = resourceIdForFile(session.resource);
+  const resourceId = session.resourceId;
 
   useEffect(() => {
     setActiveNodeId(null);
@@ -203,37 +212,44 @@ export default function ComparisonView({
   onOpenServerProject,
   relationships = [],
   analysisContexts = [],
+  comparisonOptions,
+  primaryOptionId,
 }: ComparisonViewProps) {
   const comparisonRef = useRef<HTMLDivElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [summaryHeight, setSummaryHeight] = useState<number | null>(null);
   const [resizingSummary, setResizingSummary] = useState(false);
-  const [primaryId, setPrimaryId] = useState(primary.id);
-  const [secondaryId, setSecondaryId] = useState<string | null>(() => diagrams.find((diagram) => diagram.id !== primary.id)?.id ?? null);
-  const primaryResource = diagrams.find((diagram) => diagram.id === primaryId) ?? (primaryId === primary.id ? primary : null);
-  const secondary = diagrams.find((diagram) => diagram.id === secondaryId) ?? null;
+  const choices = comparisonOptions ?? diagrams.map((diagram) => ({ id: diagram.id, diagram, label: resourceLabel(diagram), resourceId: resourceIdForFile(diagram), context: undefined as AnalysisContext | undefined }));
+  const [primaryId, setPrimaryId] = useState(primaryOptionId ?? primary.id);
+  const [secondaryId, setSecondaryId] = useState<string | null>(() => choices.find((option) => option.id !== (primaryOptionId ?? primary.id))?.id ?? null);
+  const primaryOption = choices.find((option) => option.id === primaryId);
+  const secondaryOption = choices.find((option) => option.id === secondaryId);
+  const primaryResource = primaryOption?.diagram ?? (primaryId === primary.id ? primary : null);
+  const secondary = secondaryOption?.diagram ?? null;
   const sharedContext: KnowledgeContext = { kind: "shared", id: `shared:${primary.projectId}`, projectId: primary.projectId };
   const contextFor = (resourceId: string | null): AnalysisContext | undefined => analysisContexts.find((context) => context.resourceId === resourceId);
   const contextOrShared = (resourceId: string | null, fallbackIndex: ProjectIndex | null, sessionId: string): AnalysisContext =>
     contextFor(resourceId) ?? { projectId: primary.projectId, knowledgeContext: sharedContext, index: fallbackIndex ?? emptyIndex, resourceId, sessionId };
-  const primaryContext = contextOrShared(primaryResource ? resourceIdForFile(primaryResource) : null, index, "a");
-  const secondaryContext = contextOrShared(secondary ? resourceIdForFile(secondary) : null, index, "b");
+  const primaryContext = primaryOption?.context ?? contextOrShared(primaryResource ? resourceIdForFile(primaryResource) : null, index, "a");
+  const secondaryContext = secondaryOption?.context ?? contextOrShared(secondary ? resourceIdForFile(secondary) : null, index, "b");
   useEffect(() => {
-    if (!primaryResource) setPrimaryId(primary.id);
+    if (!primaryResource) setPrimaryId(primaryOptionId ?? primary.id);
     if (secondaryId === primaryId || secondaryId === null) {
-      setSecondaryId(diagrams.find((diagram) => diagram.id !== primaryId)?.id ?? null);
+      setSecondaryId(choices.find((option) => option.id !== primaryId)?.id ?? null);
     }
-  }, [diagrams, primary.id, primaryId, primaryResource, secondaryId]);
+  }, [choices, primaryOptionId, primary.id, primaryId, primaryResource, secondaryId]);
 
-  const sourceFor = (diagram: DiagramFile) => diagram.id === primary.id ? primarySource : diagram.source;
+  const sourceFor = (optionId: string | null | undefined, diagram: DiagramFile) => optionId === (primaryOptionId ?? primary.id) ? primarySource : diagram.source;
   const primarySession = primaryResource ? {
     resource: primaryResource,
-    source: sourceFor(primaryResource),
+    resourceId: primaryOption?.resourceId ?? resourceIdForFile(primaryResource),
+    source: sourceFor(primaryOption?.id, primaryResource),
     representation: resourceRepresentationOfName(primaryResource.name) === "event-flow" ? "event-flow" : "sequence",
   } satisfies Session : null;
   const secondarySession = secondary ? {
     resource: secondary,
-    source: sourceFor(secondary),
+    resourceId: secondaryOption?.resourceId ?? resourceIdForFile(secondary),
+    source: sourceFor(secondaryOption?.id, secondary),
     representation: resourceRepresentationOfName(secondary.name) === "event-flow" ? "event-flow" : "sequence",
   } satisfies Session : null;
   const comparison = useMemo(
@@ -271,8 +287,8 @@ export default function ComparisonView({
   };
   const swapViewers = () => {
     if (!primarySession || !secondary) return;
-    setPrimaryId(secondary.id);
-    setSecondaryId(primarySession.resource.id);
+    setPrimaryId(secondaryId!);
+    setSecondaryId(primaryId);
     setSelected((current) => current ? { ...current, pane: current.pane === "a" ? "b" : "a" } : null);
   };
   const openTrace = (start: TraceQueryStart, direction: TraceDirection, pane: Pane) => setTrace({ start, direction, pane });
@@ -306,11 +322,11 @@ export default function ComparisonView({
           {serverProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select></label> : null}
         <label>Viewer A <select aria-label="Viewer A resource" value={primaryId} onChange={(event) => setPrimaryId(event.target.value)}>
-          {diagrams.filter((diagram) => diagram.id !== secondaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
+          {choices.filter((option) => option.id !== secondaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
         <label>Viewer B <select aria-label="Viewer B resource" value={secondaryId ?? ""} onChange={(event) => setSecondaryId(event.target.value || null)}>
           <option value="">Select a diagram</option>
-          {diagrams.filter((diagram) => diagram.id !== primaryId).map((diagram) => <option key={diagram.id} value={diagram.id}>{resourceLabel(diagram)}</option>)}
+          {choices.filter((option) => option.id !== primaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
          <button type="button" className="icon-button" onClick={swapViewers} disabled={!secondarySession} title="Swap viewers" aria-label="Swap viewers">⇄</button>
           <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
@@ -341,9 +357,9 @@ export default function ComparisonView({
        <div className="comparison__content">
       <div className="comparison__panes">
         <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-          {primarySession ? <ComparisonPane pane="a" session={primarySession} context={primaryContext} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /> : null}
+           {primarySession ? <ComparisonPane pane="a" session={primarySession} context={primaryContext} index={primaryContext.index} maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "a" ? selected.messageId : null} counterpartMessageId={selected?.pane === "b" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "a", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /> : null}
         </div>
-          {secondarySession ? <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}><ComparisonPane pane="b" session={secondarySession} context={secondaryContext} index={index} resourceIdForFile={resourceIdForFile} maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "b" ? selected.messageId : null} counterpartMessageId={selected?.pane === "a" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "b", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /></div> : <div className="comparison__empty">{secondaryId ? `Viewer B resource ${secondaryId} is no longer available.` : "Choose a second diagram to compare."}</div>}
+           {secondarySession ? <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}><ComparisonPane pane="b" session={secondarySession} context={secondaryContext} index={secondaryContext.index} maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "b" ? selected.messageId : null} counterpartMessageId={selected?.pane === "a" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "b", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /></div> : <div className="comparison__empty">{secondaryId ? `Viewer B resource ${secondaryId} is no longer available.` : "Choose a second diagram to compare."}</div>}
       </div>
        {trace && index ? <TraceSurface index={(trace.pane === "a" ? primaryContext.index : secondaryContext.index)} start={trace.start} direction={trace.direction} provenance={`Viewer ${trace.pane.toUpperCase()}`} contextProvenance={trace.pane === "a" ? traceProvenance(primaryContext) : traceProvenance(secondaryContext)} onOpenResource={onOpenResource} /> : null}
       </div>

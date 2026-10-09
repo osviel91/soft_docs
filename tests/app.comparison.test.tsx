@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "./app-harness";
+import ComparisonView, { type ComparisonOption } from "../src/features/preview/ComparisonView";
+import type { ProjectIndex } from "../src/domain/project/project-index";
+import type { DiagramFile } from "../src/domain/workspace/types";
 
 const FLOW = [
   "event OrderCreated",
@@ -25,6 +28,24 @@ async function project(): Promise<void> {
 }
 
 describe("App — dual viewer foundation", () => {
+  it("labels same-path SHARED and MY WORK diagrams as distinct selectable versions", () => {
+    const shared: DiagramFile = { id: "shared-file", name: "checkout.seq", source: "participant Shared", projectId: "p" };
+    const work: DiagramFile = { id: "work-file", name: "checkout.seq", source: "participant Work", projectId: "p" };
+    const index = { projectId: "p", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
+    const options: ComparisonOption[] = [
+      { id: "shared:r1", diagram: shared, resourceId: "r1", label: "SHARED · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index, resourceId: "r1" } },
+      { id: "my-work:work1:r1", diagram: work, resourceId: "r1", label: "MY WORK · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "private-work", id: "work1", projectId: "p", ownerUserId: "u", name: "Draft", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index, resourceId: "r1" } },
+    ];
+    render(<ComparisonView primary={work} primarySource={work.source} diagrams={[work]} index={index} resourceIdForFile={() => "r1"} comparisonOptions={options} primaryOptionId="my-work:work1:r1" onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} />);
+
+    expect(screen.getByRole("option", { name: "SHARED · checkout.seq" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "MY WORK · checkout.seq" })).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-pane-a")).toHaveTextContent("MY WORK · Draft");
+    fireEvent.click(screen.getByRole("button", { name: "Swap viewers" }));
+    expect(screen.getByTestId("comparison-pane-a")).toHaveTextContent("SHARED");
+    expect(screen.getByTestId("comparison-pane-a")).toHaveTextContent("Shared");
+  });
+
   it("enters and exits Sequence to Sequence comparison", async () => {
     render(<App />);
     await project();
