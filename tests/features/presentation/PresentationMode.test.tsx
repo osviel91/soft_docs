@@ -39,11 +39,12 @@ describe("PresentationMode", () => {
     expect(screen.getByRole("button", { name: "How to read Database Diagram" })).toBeInTheDocument();
   });
 
-  it("stacks the causal view below its selector in presentation", () => {
+  it("renders causal graph content below its selector in presentation", async () => {
     render(<PresentationMode projectName="Billing" resources={[{ id: "flow", path: "billing.eventseq", title: "Billing", type: "event-flow", content: "event A\nevent B\nhandler H\nA handled by H\nH causes B" }]} initialId="flow" initialView="causal" onExit={vi.fn()} />);
     expect(screen.getByTestId("event-flow-preview")).toBeInTheDocument();
     expect(screen.getByTestId("event-causal")).toBeInTheDocument();
     expect(screen.getByTestId("event-flow-preview").parentElement).toHaveClass("presentation__stage--event-flow");
+    expect(await screen.findByText("H")).toBeInTheDocument();
   });
 
   it("keeps navigator dismissal in a dedicated header control", () => {
