@@ -2520,9 +2520,11 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     const context = await browser.newContext();
     const page = await context.newPage();
     let sourceProjectId = null;
+    let sameWorkspaceProjectId = null;
     let destinationProjectId = null;
     let destinationWorkspaceId = null;
     const targetAccessCount = { value: 0 };
+    const sameWorkspaceAccessCount = { value: 0 };
     const catalogStatuses = [];
     try {
       await page.addInitScript(() => {
@@ -2553,6 +2555,20 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       };
       const sourceProject = await createProject(sourceWorkspace.id, "Inbox navigation source", "source.seq");
       sourceProjectId = sourceProject.id;
+      const sameWorkspaceProject = await createProject(sourceWorkspace.id, "Inbox same-workspace project", "same-workspace.seq");
+      sameWorkspaceProjectId = sameWorkspaceProject.id;
+      const sameWorkspace = await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}/private-work`, { method: "POST", body: JSON.stringify({ name: "Same workspace proposal draft" }) });
+      if (sameWorkspace.status !== 201) throw new Error(`same-workspace proposal context setup failed (${sameWorkspace.status}): ${sameWorkspace.text}`);
+      const sameWorkspaceResource = await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ contextId: sameWorkspace.json.context.id, path: "same-workspace-proposal.seq", type: "sequence-diagram", content: "title Same workspace proposal\nparticipant Browser\n" }),
+      });
+      if (sameWorkspaceResource.status !== 201) throw new Error(`same-workspace proposal resource setup failed (${sameWorkspaceResource.status}): ${sameWorkspaceResource.text}`);
+      const sameWorkspaceProposal = await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}/architectural-proposals`, {
+        method: "POST",
+        body: JSON.stringify({ sourcePrivateContextId: sameWorkspace.json.context.id, resourceIds: [sameWorkspaceResource.json.resource.id], title: "Inbox same-workspace proposal", description: "Same-workspace navigation E2E fixture" }),
+      });
+      if (sameWorkspaceProposal.status !== 201) throw new Error(`same-workspace proposal setup failed (${sameWorkspaceProposal.status}): ${sameWorkspaceProposal.text}`);
       const workspaceResponse = await apiRequest(page, "/api/workspaces", { method: "POST", body: JSON.stringify({ name: "Inbox destination workspace" }) });
       if (workspaceResponse.status !== 201) throw new Error(`destination workspace setup failed (${workspaceResponse.status}): ${workspaceResponse.text}`);
       destinationWorkspaceId = workspaceResponse.json.workspace.id;
@@ -2580,7 +2596,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         if (url.pathname === "/api/workspaces" || (url.pathname === "/api/projects" && url.searchParams.has("workspaceId"))) catalogStatuses.push(`${response.status()} ${url.pathname}${url.search}`);
       });
       page.on("request", (request) => {
-        if (new URL(request.url()).pathname === `/api/projects/${destinationProjectId}/access`) targetAccessCount.value += 1;
+        const url = new URL(request.url());
+        if (url.pathname === `/api/projects/${destinationProjectId}/access`) targetAccessCount.value += 1;
+        if (url.pathname === `/api/projects/${sameWorkspaceProjectId}/access`) sameWorkspaceAccessCount.value += 1;
       });
       await page.locator('[data-testid="open-architecture-inbox"]').click();
       await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2595,7 +2613,23 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const destinationProjects = await apiRequest(page, `/api/projects?workspaceId=${encodeURIComponent(destinationWorkspaceId)}`);
       const workspaceOptions = await workspaces.locator("option").allTextContents();
       const projectOptions = await projects.locator("option").allTextContents();
-      check("Inbox catalog includes accessible workspaces and projects", workspaceOptions.length >= 3 && projectOptions.includes("Inbox navigation source") && projectOptions.includes("Inbox destination project") && destinationProjects.status === 200 && catalogStatuses.every((status) => status.startsWith("200 ")), `workspace/project catalog responses=${catalogStatuses.length}`);
+      check("Inbox catalog includes accessible workspaces and projects", workspaceOptions.length >= 3 && projectOptions.includes("Inbox navigation source") && projectOptions.includes("Inbox same-workspace project") && projectOptions.includes("Inbox destination project") && destinationProjects.status === 200 && catalogStatuses.every((status) => status.startsWith("200 ")), `workspace/project catalog responses=${catalogStatuses.length}`);
+
+      const sameWorkspaceRow = page.getByRole("button", { name: /Inbox same-workspace proposal/ });
+      await sameWorkspaceRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await sameWorkspaceRow.click();
+      await page.waitForFunction(() => document.querySelector('section[aria-label="Architectural Proposal"]')?.textContent?.includes("Inbox same-workspace proposal"), null, { timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction((id) => new URL(location.href).searchParams.get("project") === id, sameWorkspaceProjectId, { timeout: UI_TIMEOUT_MS });
+      const sameWorkspaceUrl = page.url();
+      await delay(700);
+      const sameWorkspaceProposalReads = await page.evaluate((proposalId) => window.performance.getEntriesByType("resource")
+        .map((entry) => new URL(entry.name))
+        .filter((url) => url.pathname === `/api/architectural-proposals/${proposalId}` || url.pathname === `/api/architectural-proposals/${proposalId}/reviews` || url.pathname === `/api/architectural-proposals/${proposalId}/diff`)
+        .map((url) => url.searchParams.get("projectId")), sameWorkspaceProposal.json.proposal.id);
+      check("same-workspace proposal detail stays bound to the selected project", page.url() === sameWorkspaceUrl && new URL(sameWorkspaceUrl).searchParams.get("project") === sameWorkspaceProjectId && sameWorkspaceAccessCount.value === 1 && sameWorkspaceProposalReads.length >= 3 && sameWorkspaceProposalReads.every((id) => id === sameWorkspaceProjectId), `access=${sameWorkspaceAccessCount.value}; detail projectIds=${sameWorkspaceProposalReads}`);
+
+      await page.goBack();
+      await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 
       await workspaces.selectOption(destinationWorkspaceId);
       await projects.selectOption(destinationProjectId);
@@ -2630,6 +2664,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("return to explorer is stable and does not reopen the project", page.url() === workspaceUrl && new URL(workspaceUrl).searchParams.get("project") === destinationProjectId && targetAccessCount.value === 1, `url=${workspaceUrl}; opens=${targetAccessCount.value}`);
     } finally {
       if (sourceProjectId) await apiRequest(page, `/api/projects/${sourceProjectId}`, { method: "DELETE" });
+      if (sameWorkspaceProjectId) await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}`, { method: "DELETE" });
       if (destinationProjectId) await apiRequest(page, `/api/projects/${destinationProjectId}`, { method: "DELETE" });
       if (destinationWorkspaceId) await apiRequest(page, `/api/workspaces/${destinationWorkspaceId}`, { method: "DELETE" });
       await context.close();

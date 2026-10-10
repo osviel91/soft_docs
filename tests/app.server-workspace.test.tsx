@@ -64,7 +64,7 @@ interface FakeState {
   resources: Map<string, FakeResource>;
   proposals: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; baseSharedRevision: string; submittedAt?: string }>;
   /** Every request the shell made, for asserting the wire. */
-  calls: Array<{ method: string; path: string; body: unknown }>;
+  calls: Array<{ method: string; path: string; search: string; body: unknown }>;
   /** Answer the next write with a conflict at this revision, once. */
   conflictAt: number | null;
   /** Make the next write fail at the transport, as an offline browser would. */
@@ -128,7 +128,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
     typeof init?.body === "string"
       ? (JSON.parse(init.body) as Record<string, unknown>)
       : null;
-  state.calls.push({ method, path, body });
+  state.calls.push({ method, path, search: url.search, body });
 
   if (path === "/api/me") {
     return Promise.resolve(
@@ -183,11 +183,19 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   if (path === "/api/projects/p3/architectural-proposals") return Promise.resolve(reply(200, { proposals: [] }));
   if (path === "/api/projects/p3/resources") return Promise.resolve(reply(200, { resources: [] }));
   if (path === "/api/projects/p3/relationships") return Promise.resolve(reply(200, { relationships: [] }));
-  if (path === "/api/architectural-proposals/proposal-1") return Promise.resolve(state.proposalUnavailable ? refuse(404, "not_found", { message: "secret proposal detail" }) : reply(200, { proposal: { id: "proposal-1", projectId: "p3", authorUserId: "u1", title: "Cross-workspace proposal", status: "open", submittedAt: new Date(0).toISOString(), baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, resources: [], relationships: [], semanticMessages: [], lifecycle: { state: "OPEN" }, capabilities: {} } }));
+  if (path === "/api/architectural-proposals/proposal-1") {
+    const projectId = url.searchParams.get("projectId");
+    const expectedProjectId = state.crossWorkspace ? "p3" : "p2";
+    if (state.proposalUnavailable || projectId !== expectedProjectId) return Promise.resolve(refuse(404, "not_found", { message: "secret proposal detail" }));
+    return Promise.resolve(reply(200, { proposal: { id: "proposal-1", projectId, authorUserId: "u1", title: projectId === "p2" ? "Same-workspace proposal" : "Cross-workspace proposal", status: "open", submittedAt: new Date(0).toISOString(), baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, resources: [], relationships: [], semanticMessages: [], lifecycle: { state: "OPEN" }, capabilities: {} } }));
+  }
   if (path === "/api/architectural-proposals/proposal-1/reviews") return Promise.resolve(reply(200, { reviews: { status: "none", approvals: 0, changesRequested: 0, reviews: [] } }));
   if (path === "/api/architectural-proposals/proposal-1/diff") return Promise.resolve(reply(200, { diff: { resources: [], relationships: [], semanticIdentities: [], semanticBindings: [], impact: { resourcesAdded: 0, resourcesModified: 0, resourcesDeleted: 0, relationshipsChanged: 0, semanticIdentitiesChanged: 0 } } }));
   if (path === "/api/inbox/proposals") return Promise.resolve(reply(200, {
-    items: state.crossWorkspace ? [{ proposalId: "proposal-1", title: "Cross-workspace proposal", status: "open", author: { userId: "u1", displayName: "Ada" }, workspace: { id: "w2", name: "Archive workspace" }, project: { id: "p3", name: "Archive" }, createdAt: new Date(0).toISOString(), submittedAt: new Date(0).toISOString(), lastActivityAt: new Date(0).toISOString(), review: { status: "none", approvals: 0, changesRequested: 0 }, promotion: { status: null, createdAt: null, completedAt: null }, lifecycle: "OPEN", attentionCategory: "PENDING_REVIEW" }] : [],
+    items: state.crossWorkspace
+      ? [{ proposalId: "proposal-1", title: "Cross-workspace proposal", status: "open", author: { userId: "u1", displayName: "Ada" }, workspace: { id: "w2", name: "Archive workspace" }, project: { id: "p3", name: "Archive" }, createdAt: new Date(0).toISOString(), submittedAt: new Date(0).toISOString(), lastActivityAt: new Date(0).toISOString(), review: { status: "none", approvals: 0, changesRequested: 0 }, promotion: { status: null, createdAt: null, completedAt: null }, lifecycle: "OPEN", attentionCategory: "PENDING_REVIEW" }]
+      : state.multipleProjects ? [{ proposalId: "proposal-1", title: "Same-workspace proposal", status: "open", author: { userId: "u1", displayName: "Ada" }, workspace: { id: "w1", name: "Personal" }, project: { id: "p2", name: "Reporting" }, createdAt: new Date(0).toISOString(), submittedAt: new Date(0).toISOString(), lastActivityAt: new Date(0).toISOString(), review: { status: "none", approvals: 0, changesRequested: 0 }, promotion: { status: null, createdAt: null, completedAt: null }, lifecycle: "OPEN", attentionCategory: "PENDING_REVIEW" }]
+        : [],
     nextCursor: null,
     counts: { PENDING_REVIEW: state.crossWorkspace ? 1 : 0, CHANGES_REQUESTED: 0, APPROVED_PENDING_PROMOTION: 0, PROMOTION_COMPLETION_PENDING: 0, PROMOTED: 0, WITHDRAWN: 0, SUPERSEDED: 0 },
   }));
@@ -405,6 +413,18 @@ describe("App — authenticated browser", () => {
     expect(await screen.findByRole("heading", { name: "Cross-workspace proposal" })).toBeInTheDocument();
     await waitFor(() => expect(state.calls.filter((call) => call.path === "/api/projects/p3/access")).toHaveLength(1));
     expect(state.calls.filter((call) => call.path === "/api/projects/p3")).toHaveLength(1);
+  });
+
+  it("keeps a same-workspace Inbox proposal bound to its project while that project opens", async () => {
+    state.multipleProjects = true;
+    await openServerProject("title Payments\nparticipant Browser\n", false);
+    fireEvent.click(screen.getByTestId("open-architecture-inbox"));
+    fireEvent.click(await screen.findByRole("button", { name: /Same-workspace proposal/ }));
+
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get("project")).toBe("p2"));
+    expect(await screen.findByRole("heading", { name: "Same-workspace proposal" })).toBeInTheDocument();
+    expect(state.calls.filter((call) => call.path === "/api/projects/p2/access")).toHaveLength(1);
+    expect(state.calls.filter((call) => call.path === "/api/architectural-proposals/proposal-1").every((call) => call.search === "?projectId=p2")).toBe(true);
   });
 
   it("opens the authorized deep-link project when its workspace project catalog fails", async () => {

@@ -924,7 +924,7 @@ export default function App() {
     if (project) {
       navigationProjectRequested.current = browserLocationState.projectId;
       navigationProjectResolved.current = null;
-      browserLocationHydrated.current = true;
+      // URL synchronization waits until this project is actually active.
       void server.openProject(project);
       return;
     }
@@ -933,7 +933,6 @@ export default function App() {
       if (server.projectsError && navigationProjectResolved.current?.id === browserLocationState.projectId) {
         const accessibleProject = navigationProjectResolved.current;
         navigationProjectResolved.current = null;
-        browserLocationHydrated.current = true;
         void server.openProject(accessibleProject);
       }
       return;
