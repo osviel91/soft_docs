@@ -509,7 +509,8 @@ export class ServerApiClient {
       "GET",
       "/api/workspaces",
     );
-    return body.workspaces ?? [];
+    if (!Array.isArray(body.workspaces)) throw new Error("The workspace catalog response was invalid.");
+    return body.workspaces;
   }
 
   async setWorkspaceAuthorSelfReview(workspaceId: string, allowed: boolean): Promise<void> {
@@ -608,7 +609,8 @@ export class ServerApiClient {
       "GET",
       `/api/projects?workspaceId=${encodeURIComponent(workspaceId)}`,
     );
-    return body.projects ?? [];
+    if (!Array.isArray(body.projects)) throw new Error("The project catalog response was invalid.");
+    return body.projects;
   }
 
   async getProject(projectId: string): Promise<ServerProject> {

@@ -58,6 +58,7 @@ interface FakeState {
   multipleProjects: boolean;
   crossWorkspace: boolean;
   denyProjectOpen: string | null;
+  failProjectCatalogWorkspace: string | null;
   proposalUnavailable: boolean;
   contextId: string | null;
   resources: Map<string, FakeResource>;
@@ -75,6 +76,7 @@ const state: FakeState = {
   multipleProjects: false,
   crossWorkspace: false,
   denyProjectOpen: null,
+  failProjectCatalogWorkspace: null,
   proposalUnavailable: false,
   contextId: null,
   resources: new Map(),
@@ -146,6 +148,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   if (path === "/api/projects") {
     const candidates = [PROJECT, ...(state.multipleProjects ? [SECOND_PROJECT] : []), ...(state.crossWorkspace ? [THIRD_PROJECT] : [])];
     const workspaceId = url.searchParams.get("workspaceId");
+    if (workspaceId === state.failProjectCatalogWorkspace) return Promise.resolve(refuse(403, "forbidden"));
     return Promise.resolve(
       reply(200, {
         projects: state.signedIn
@@ -183,7 +186,11 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
   if (path === "/api/architectural-proposals/proposal-1") return Promise.resolve(state.proposalUnavailable ? refuse(404, "not_found", { message: "secret proposal detail" }) : reply(200, { proposal: { id: "proposal-1", projectId: "p3", authorUserId: "u1", title: "Cross-workspace proposal", status: "open", submittedAt: new Date(0).toISOString(), baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, resources: [], relationships: [], semanticMessages: [], lifecycle: { state: "OPEN" }, capabilities: {} } }));
   if (path === "/api/architectural-proposals/proposal-1/reviews") return Promise.resolve(reply(200, { reviews: { status: "none", approvals: 0, changesRequested: 0, reviews: [] } }));
   if (path === "/api/architectural-proposals/proposal-1/diff") return Promise.resolve(reply(200, { diff: { resources: [], relationships: [], semanticIdentities: [], semanticBindings: [], impact: { resourcesAdded: 0, resourcesModified: 0, resourcesDeleted: 0, relationshipsChanged: 0, semanticIdentitiesChanged: 0 } } }));
-  if (path === "/api/inbox/proposals") return Promise.resolve(reply(200, { items: [], nextCursor: null, counts: { PENDING_REVIEW: 0, CHANGES_REQUESTED: 0, APPROVED_PENDING_PROMOTION: 0, PROMOTION_COMPLETION_PENDING: 0, PROMOTED: 0, WITHDRAWN: 0, SUPERSEDED: 0 } }));
+  if (path === "/api/inbox/proposals") return Promise.resolve(reply(200, {
+    items: state.crossWorkspace ? [{ proposalId: "proposal-1", title: "Cross-workspace proposal", status: "open", author: { userId: "u1", displayName: "Ada" }, workspace: { id: "w2", name: "Archive workspace" }, project: { id: "p3", name: "Archive" }, createdAt: new Date(0).toISOString(), submittedAt: new Date(0).toISOString(), lastActivityAt: new Date(0).toISOString(), review: { status: "none", approvals: 0, changesRequested: 0 }, promotion: { status: null, createdAt: null, completedAt: null }, lifecycle: "OPEN", attentionCategory: "PENDING_REVIEW" }] : [],
+    nextCursor: null,
+    counts: { PENDING_REVIEW: state.crossWorkspace ? 1 : 0, CHANGES_REQUESTED: 0, APPROVED_PENDING_PROMOTION: 0, PROMOTION_COMPLETION_PENDING: 0, PROMOTED: 0, WITHDRAWN: 0, SUPERSEDED: 0 },
+  }));
   if (path === "/api/workspaces/w1/members") {
     return Promise.resolve(reply(200, { members: [] }));
   }
@@ -316,6 +323,7 @@ beforeEach(() => {
   state.multipleProjects = false;
   state.crossWorkspace = false;
   state.denyProjectOpen = null;
+  state.failProjectCatalogWorkspace = null;
   state.proposalUnavailable = false;
   state.contextId = null;
   state.resources = new Map();
@@ -373,6 +381,41 @@ describe("App — authenticated browser", () => {
     await act(async () => { window.history.back(); });
     await waitFor(() => expect(screen.getByTestId("architecture-inbox")).toBeInTheDocument());
     expect(window.location.search).toContain("q=ledger");
+  });
+
+  it("keeps the active project and exposes a return path when opening the Inbox", async () => {
+    state.signedIn = true;
+    render(<App />);
+    await screen.findByTestId("workspace-server-project-filter");
+    fireEvent.click(screen.getByTestId("open-architecture-inbox"));
+
+    expect(await screen.findByTestId("architecture-inbox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /back to workspace/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /back to workspace/i }));
+    expect(await screen.findByTestId("workspace-server-project-filter")).toBeInTheDocument();
+  });
+
+  it("opens one cross-workspace proposal after the destination catalog switches", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    window.history.replaceState({}, "", "/?inbox=proposals");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Cross-workspace proposal/ }));
+    expect(await screen.findByRole("heading", { name: "Cross-workspace proposal" })).toBeInTheDocument();
+    await waitFor(() => expect(state.calls.filter((call) => call.path === "/api/projects/p3/access")).toHaveLength(1));
+    expect(state.calls.filter((call) => call.path === "/api/projects/p3")).toHaveLength(1);
+  });
+
+  it("opens the authorized deep-link project when its workspace project catalog fails", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    state.failProjectCatalogWorkspace = "w2";
+    window.history.replaceState({}, "", "/?project=p3&proposal=proposal-1&returnTo=%2F%3Finbox%3Dproposals");
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Cross-workspace proposal" })).toBeInTheDocument();
+    expect(state.calls.filter((call) => call.path === "/api/projects/p3/access")).toHaveLength(1);
   });
 
   it("returns a cross-workspace deep link to Inbox when access is revoked during project opening", async () => {

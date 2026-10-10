@@ -16,7 +16,7 @@ function displayName(item: ServerProposalInbox["items"][number]): string {
   return item.author.displayName || item.author.userId;
 }
 
-export default function ArchitectureInbox({ client, onOpen }: { client: ServerApiClient; onOpen: (item: ServerProposalInbox["items"][number], returnTo: string) => void }) {
+export default function ArchitectureInbox({ client, onOpen, onBack }: { client: ServerApiClient; onOpen: (item: ServerProposalInbox["items"][number], returnTo: string) => void; onBack: () => void }) {
   const initialQuery = new URLSearchParams(window.location.search);
   const [workspaces, setWorkspaces] = useState<ServerWorkspace[]>([]);
   const [projects, setProjects] = useState<ServerProject[]>([]);
@@ -30,6 +30,9 @@ export default function ArchitectureInbox({ client, onOpen }: { client: ServerAp
   const [result, setResult] = useState<ServerProposalInbox | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [inboxAttempt, setInboxAttempt] = useState(0);
   const [unavailableNotice, setUnavailableNotice] = useState(() => initialQuery.get("unavailable") === "1");
 
   useEffect(() => {
@@ -37,12 +40,18 @@ export default function ArchitectureInbox({ client, onOpen }: { client: ServerAp
     void client.listWorkspaces().then(async (rows) => {
       const projectLists = await Promise.all(rows.map((workspace) => client.listProjects(workspace.id)));
       if (active) {
+        setCatalogError(null);
         setWorkspaces(rows);
         setProjects(projectLists.flat());
       }
-    }).catch(() => { if (active) setError("Could not load accessible workspaces."); });
+    }).catch(() => {
+      if (!active) return;
+      setWorkspaces([]);
+      setProjects([]);
+      setCatalogError("Could not load accessible workspaces and projects.");
+    });
     return () => { active = false; };
-  }, [client]);
+  }, [client, catalogAttempt]);
 
   useEffect(() => {
     let active = true;
@@ -59,7 +68,7 @@ export default function ArchitectureInbox({ client, onOpen }: { client: ServerAp
       if (active) setError(reason instanceof Error ? reason.message : "Could not load the Architecture Inbox.");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [category, client, cursors, pageIndex, projectId, submittedSearch, workspaceId]);
+  }, [category, client, cursors, inboxAttempt, pageIndex, projectId, submittedSearch, workspaceId]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -81,6 +90,7 @@ export default function ArchitectureInbox({ client, onOpen }: { client: ServerAp
   const returnTo = `${window.location.pathname}?${returnParams}`;
 
   return <main className="architecture-inbox" data-testid="architecture-inbox">
+    <button type="button" className="button button--small" onClick={onBack}>Back to workspace</button>
     <PageHeader eyebrow="Cross-project governance" title="Architecture Inbox" description="Review submitted architectural proposals across the workspaces you can access." />
     {unavailableNotice ? <p className="architecture-inbox__error" role="alert">This proposal is unavailable or you no longer have access. You are back in the Inbox. <button type="button" className="button button--small" onClick={() => { setUnavailableNotice(false); const params = new URLSearchParams(window.location.search); params.delete("unavailable"); window.history.replaceState({}, "", `${window.location.pathname}?${params}`); }}>Dismiss</button></p> : null}
     <section className="architecture-inbox__summary" aria-label="Proposal attention summary">
@@ -93,9 +103,9 @@ export default function ArchitectureInbox({ client, onOpen }: { client: ServerAp
       <label className="architecture-inbox__search"><span>Proposal title</span><input type="search" maxLength={200} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles" /></label>
       <button type="submit" className="button">Search</button>
     </form>
-    {error ? <p className="architecture-inbox__error" role="alert">{error} <button type="button" className="button button--small" onClick={() => resetPage()}>Retry</button></p> : null}
+    {catalogError ? <p className="architecture-inbox__error" role="alert">{catalogError} <button type="button" className="button button--small" onClick={() => { setCatalogError(null); setCatalogAttempt((attempt) => attempt + 1); }}>Retry</button></p> : error ? <p className="architecture-inbox__error" role="alert">{error} <button type="button" className="button button--small" onClick={() => setInboxAttempt((attempt) => attempt + 1)}>Retry</button></p> : null}
     {loading && !result ? <p role="status">Loading proposals…</p> : null}
-    {!loading && result?.items.length === 0 ? <p className="architecture-inbox__empty">{!workspaceId && !projectId && !submittedSearch && Object.values(result.counts).every((count) => count === 0) ? "No proposals are available in your accessible workspaces." : "No proposals match these filters."}</p> : null}
+    {!catalogError && !error && !loading && result?.items.length === 0 ? <p className="architecture-inbox__empty">{!workspaceId && !projectId && !submittedSearch && Object.values(result.counts).every((count) => count === 0) ? "No proposals are available in your accessible workspaces." : "No proposals match these filters."}</p> : null}
     {result?.items.length ? <>
       <ul className="architecture-inbox__list" aria-busy={loading}>
         {result.items.map((item) => <li key={`${item.project.id}:${item.proposalId}`}>

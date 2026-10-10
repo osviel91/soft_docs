@@ -610,6 +610,7 @@ export default function App() {
   const browserLocationLoaded = useRef(false);
   const browserResourceLoaded = useRef(false);
   const navigationProjectRequested = useRef<string | null>(null);
+  const navigationProjectResolved = useRef<ServerProject | null>(null);
 
   const setBrowserLocation = useCallback((next: BrowserLocation, replace = false): void => {
     setBrowserLocationState(next);
@@ -625,6 +626,8 @@ export default function App() {
   useEffect(() => {
     const onPopState = () => {
       const location = browserLocation();
+      navigationProjectRequested.current = null;
+      navigationProjectResolved.current = null;
       setBrowserLocationState(location);
       setPage(location.inbox ? "inbox" : "workspace");
       browserLocationLoaded.current = false;
@@ -917,23 +920,37 @@ export default function App() {
       browserLocationHydrated.current = true;
       return;
     }
-    if (navigationProjectRequested.current === browserLocationState.projectId) return;
     const project = server.projects.find((entry) => entry.id === browserLocationState.projectId);
     if (project) {
       navigationProjectRequested.current = browserLocationState.projectId;
+      navigationProjectResolved.current = null;
       browserLocationHydrated.current = true;
       void server.openProject(project);
       return;
     }
+    if (navigationProjectRequested.current === browserLocationState.projectId) {
+      if (server.projectsLoading || !server.projectsLoaded) return;
+      if (server.projectsError && navigationProjectResolved.current?.id === browserLocationState.projectId) {
+        const accessibleProject = navigationProjectResolved.current;
+        navigationProjectResolved.current = null;
+        browserLocationHydrated.current = true;
+        void server.openProject(accessibleProject);
+      }
+      return;
+    }
     if (!serverWorkspacesLoaded || (serverWorkspaces.length > 0 && selectedServerWorkspaceId === null) || (selectedServerWorkspaceId !== null && !server.projectsLoaded) || server.projectsLoading) return;
     navigationProjectRequested.current = browserLocationState.projectId;
+    navigationProjectResolved.current = null;
     void apiClient.getProject(browserLocationState.projectId).then((accessibleProject) => {
-      if (browserLocationState.projectId !== accessibleProject.id) return;
+      if (navigationProjectRequested.current !== accessibleProject.id || browserLocation().projectId !== accessibleProject.id) return;
+      navigationProjectResolved.current = accessibleProject;
       setSelectedServerWorkspaceId(accessibleProject.workspaceId);
-      browserLocationHydrated.current = true;
-      void server.openProject(accessibleProject);
+      // Let the selected workspace's project read model settle before opening;
+      // its refresh invalidates in-flight opens in useServerWorkspaces.
     }).catch(() => {
+      if (navigationProjectRequested.current !== browserLocationState.projectId || browserLocation().projectId !== browserLocationState.projectId) return;
       navigationProjectRequested.current = null;
+      navigationProjectResolved.current = null;
       if (browserLocationState.proposalId) {
         setArchitecturalProposalId(null);
         setPage("inbox");
@@ -941,7 +958,7 @@ export default function App() {
         setBrowserLocationState(browserLocation());
       } else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
     });
-  }, [apiClient, browserLocationState.projectId, browserLocationState.returnTo, selectedServerWorkspaceId, server.active?.project.id, server.opening, server.openProject, server.projects, server.projectsLoaded, server.projectsLoading, serverWorkspaces.length, serverWorkspacesLoaded, setBrowserLocation]);
+  }, [apiClient, browserLocationState.projectId, browserLocationState.returnTo, selectedServerWorkspaceId, server.active?.project.id, server.opening, server.openProject, server.projects, server.projectsError, server.projectsLoaded, server.projectsLoading, serverWorkspaces.length, serverWorkspacesLoaded, setBrowserLocation]);
 
   useEffect(() => {
     const projectId = browserLocationState.projectId;
@@ -3334,7 +3351,7 @@ export default function App() {
 
         <div className="app__toolbar-actions">
           {auth.status === "authenticated" ? (
-            <button type="button" className="button button--small" data-testid="open-architecture-inbox" aria-current={page === "inbox" ? "page" : undefined} onClick={() => { setPage("inbox"); setArchitecturalProposalId(null); setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null, inbox: true }); }}>
+            <button type="button" className="button button--small" data-testid="open-architecture-inbox" aria-current={page === "inbox" ? "page" : undefined} onClick={() => { navigationProjectRequested.current = null; navigationProjectResolved.current = null; setPage("inbox"); setArchitecturalProposalId(null); setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null, inbox: true }); }}>
               Inbox
             </button>
           ) : null}
@@ -3386,7 +3403,15 @@ export default function App() {
       </header>
 
       {page === "inbox" ? (
-        <ArchitectureInbox client={apiClient} onOpen={openInboxProposal} />
+        <ArchitectureInbox client={apiClient} onOpen={openInboxProposal} onBack={() => {
+          setPage("workspace");
+          setArchitecturalProposalId(null);
+          setArchitecturalProposalContextId(null);
+          setRevisionProposalId(null);
+          setView("code");
+          if (server.active) setBrowserLocation({ projectId: server.active.project.id, contextId: server.active.contextId, resourceId: null, proposalId: null }, true);
+          else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
+        }} />
       ) : page === "docs" ? (
         <DocsPage onBack={() => setPage("workspace")} />
       ) : page === "settings" ? (
