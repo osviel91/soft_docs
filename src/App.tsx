@@ -52,6 +52,7 @@ import type {
   ServerArchitecturalProposal,
   ServerArchitecturalProposalDiff,
   ServerArchitecturalProposalDiffResource,
+  ServerProposalInbox,
   ServerResourceType,
 } from "./workspace/server/api-client";
 import TabBar from "./features/tabs/TabBar";
@@ -213,6 +214,7 @@ import { entityAnchorKey, type EntityAnchor } from "./domain/workspace/semantic-
 import { ProposalReviewPanel } from "./features/proposals/ProposalReview";
 import { ArchitecturalProposalDetail, ProposalResourceComparison, type ComparisonMode } from "./features/proposals/ArchitecturalProposalDetail";
 import { ArchitecturalProposalSubmit } from "./features/proposals/ArchitecturalProposalSubmit";
+import ArchitectureInbox from "./features/proposals/ArchitectureInbox";
 import ChangesInbox from "./features/proposals/ChangesInbox";
 import {
   useProjectProposalCount,
@@ -237,7 +239,7 @@ type EditorView =
  * are separate pages because they are account administration rather than editing
  * tools.
  */
-type AppPage = "workspace" | "docs" | "settings";
+type AppPage = "workspace" | "docs" | "settings" | "inbox";
 
 /**
  * A destructive action waiting for confirmation. The dialog is opened when the
@@ -293,11 +295,11 @@ function wordCount(markdown: string): number {
   return trimmed === "" ? 0 : trimmed.split(/\s+/).length;
 }
 
-type BrowserLocation = { projectId: string | null; contextId: string | null; resourceId: string | null; proposalId: string | null };
+type BrowserLocation = { projectId: string | null; contextId: string | null; resourceId: string | null; proposalId: string | null; inbox?: boolean; returnTo?: string | null };
 
 function browserLocation(): BrowserLocation {
   const params = new URLSearchParams(window.location.search);
-  return { projectId: params.get("project"), contextId: params.get("context"), resourceId: params.get("resource"), proposalId: params.get("proposal") };
+  return { projectId: params.get("project"), contextId: params.get("context"), resourceId: params.get("resource"), proposalId: params.get("proposal"), inbox: params.get("inbox") === "proposals", returnTo: params.get("returnTo") };
 }
 
 function serverIndexedView(index: ProjectIndex | null, files: Array<DiagramFile | NoteFile>) {
@@ -320,8 +322,28 @@ function locationUrl(location: BrowserLocation): string {
   if (location.contextId) params.set("context", location.contextId);
   if (location.resourceId) params.set("resource", location.resourceId);
   if (location.proposalId) params.set("proposal", location.proposalId);
+  if (location.inbox) params.set("inbox", "proposals");
+  if (location.returnTo) params.set("returnTo", location.returnTo);
   const query = params.toString();
   return `${window.location.pathname}${query ? `?${query}` : ""}`;
+}
+
+function safeInboxReturnUrl(value: string | null | undefined): string {
+  if (value) {
+    try {
+      const candidate = new URL(value, window.location.origin);
+      if (candidate.origin === window.location.origin && candidate.pathname === window.location.pathname && candidate.searchParams.get("inbox") === "proposals") {
+        return `${candidate.pathname}${candidate.search}`;
+      }
+    } catch { /* Use the Inbox default for malformed return URLs. */ }
+  }
+  return `${window.location.pathname}?inbox=proposals`;
+}
+
+function inboxUnavailableUrl(value: string | null | undefined): string {
+  const url = new URL(safeInboxReturnUrl(value), window.location.origin);
+  url.searchParams.set("unavailable", "1");
+  return `${url.pathname}${url.search}`;
 }
 
 export default function App() {
@@ -364,14 +386,17 @@ export default function App() {
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspace[]>(
     [],
   );
+  const [serverWorkspacesLoaded, setServerWorkspacesLoaded] = useState(false);
   const [workspaceMembersByWorkspaceId, setWorkspaceMembersByWorkspaceId] =
     useState<Record<string, ServerWorkspaceMember[]>>({});
   const [workspaceInvitationsByWorkspaceId, setWorkspaceInvitationsByWorkspaceId] = useState<Record<string, ServerWorkspaceInvitation[]>>({});
   const refreshServerWorkspaces = useCallback(() => {
+    setServerWorkspacesLoaded(false);
     void apiClient
       .listWorkspaces()
       .then((workspaces) => {
         setServerWorkspaces(workspaces);
+        setServerWorkspacesLoaded(true);
         const invitedWorkspace = new URLSearchParams(window.location.search).get("invitedWorkspace");
         setSelectedServerWorkspaceId((selected) => invitedWorkspace && workspaces.some(item => item.id === invitedWorkspace)
           ? invitedWorkspace
@@ -399,6 +424,7 @@ export default function App() {
       })
       .catch(() => {
         setServerWorkspaces([]);
+        setServerWorkspacesLoaded(true);
         setWorkspaceMembersByWorkspaceId({});
         setWorkspaceInvitationsByWorkspaceId({});
         setSelectedServerWorkspaceId(null);
@@ -417,6 +443,7 @@ export default function App() {
   useEffect(() => {
     if (auth.status !== "authenticated") {
       setServerWorkspaces([]);
+      setServerWorkspacesLoaded(false);
       setWorkspaceMembersByWorkspaceId({});
       setSelectedServerWorkspaceId(null);
       return;
@@ -510,7 +537,7 @@ export default function App() {
     },
     [apiClient],
   );
-  const [page, setPage] = useState<AppPage>("workspace");
+  const [page, setPage] = useState<AppPage>(() => browserLocation().inbox ? "inbox" : "workspace");
   const [view, setView] = useState<EditorView>("code");
   const [historyResourceScoped, setHistoryResourceScoped] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(true);
@@ -597,7 +624,9 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
-      setBrowserLocationState(browserLocation());
+      const location = browserLocation();
+      setBrowserLocationState(location);
+      setPage(location.inbox ? "inbox" : "workspace");
       browserLocationLoaded.current = false;
       browserResourceLoaded.current = false;
     };
@@ -613,6 +642,19 @@ export default function App() {
     setView("changes");
     setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
   }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
+
+  const openInboxProposal = useCallback((item: ServerProposalInbox["items"][number], returnTo: string): void => {
+    browserLocationLoaded.current = false;
+    browserLocationHydrated.current = false;
+    navigationProjectRequested.current = null;
+    setPage("workspace");
+    setView("changes");
+    setArchitecturalProposalContextId(null);
+    setRevisionProposalId(null);
+    setArchitecturalProposalId(item.proposalId);
+    setProposalInspector({ proposalId: item.proposalId, diff: null, selectedPath: null, mode: "unified" });
+    setBrowserLocation({ projectId: item.project.id, contextId: null, resourceId: null, proposalId: item.proposalId, returnTo });
+  }, [setBrowserLocation]);
 
   const startProposalRevision = useCallback((contextId: string, proposalId: string, resourceId: string | null, resources: Array<{ resourceId: string; path: string; type: ServerResourceType; content: string }>, title: string, description: string): void => {
     setRevisionReturnContext({ proposalId, contextId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode });
@@ -870,18 +912,45 @@ export default function App() {
   }, [apiClient, architecturalProposalId, proposalInspector.selectedPath, server.active, server.openPrivateWork, server.openProject, server.privateWorkContexts, setBrowserLocation]);
 
   useEffect(() => {
-    if (!browserLocationState.projectId || server.projects.length === 0 || server.opening) return;
+    if (!browserLocationState.projectId || server.opening) return;
     if (server.active?.project.id === browserLocationState.projectId) {
       browserLocationHydrated.current = true;
       return;
     }
     if (navigationProjectRequested.current === browserLocationState.projectId) return;
     const project = server.projects.find((entry) => entry.id === browserLocationState.projectId);
-    browserLocationHydrated.current = true;
+    if (project) {
+      navigationProjectRequested.current = browserLocationState.projectId;
+      browserLocationHydrated.current = true;
+      void server.openProject(project);
+      return;
+    }
+    if (!serverWorkspacesLoaded || (serverWorkspaces.length > 0 && selectedServerWorkspaceId === null) || (selectedServerWorkspaceId !== null && !server.projectsLoaded) || server.projectsLoading) return;
     navigationProjectRequested.current = browserLocationState.projectId;
-    if (project) void server.openProject(project);
-    else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
-  }, [browserLocationState.projectId, server.active?.project.id, server.opening, server.openProject, server.projects, setBrowserLocation]);
+    void apiClient.getProject(browserLocationState.projectId).then((accessibleProject) => {
+      if (browserLocationState.projectId !== accessibleProject.id) return;
+      setSelectedServerWorkspaceId(accessibleProject.workspaceId);
+      browserLocationHydrated.current = true;
+      void server.openProject(accessibleProject);
+    }).catch(() => {
+      navigationProjectRequested.current = null;
+      if (browserLocationState.proposalId) {
+        setArchitecturalProposalId(null);
+        setPage("inbox");
+        window.history.replaceState({}, "", inboxUnavailableUrl(browserLocationState.returnTo));
+        setBrowserLocationState(browserLocation());
+      } else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
+    });
+  }, [apiClient, browserLocationState.projectId, browserLocationState.returnTo, selectedServerWorkspaceId, server.active?.project.id, server.opening, server.openProject, server.projects, server.projectsLoaded, server.projectsLoading, serverWorkspaces.length, serverWorkspacesLoaded, setBrowserLocation]);
+
+  useEffect(() => {
+    const projectId = browserLocationState.projectId;
+    if (!browserLocationState.proposalId || !projectId || server.opening || !server.openError || server.active?.project.id === projectId || navigationProjectRequested.current !== projectId) return;
+    setArchitecturalProposalId(null);
+    setPage("inbox");
+    window.history.replaceState({}, "", inboxUnavailableUrl(browserLocationState.returnTo));
+    setBrowserLocationState(browserLocation());
+  }, [browserLocationState.projectId, browserLocationState.proposalId, browserLocationState.returnTo, server.active?.project.id, server.openError, server.opening]);
 
   useEffect(() => {
     if (!server.active || browserLocationLoaded.current) return;
@@ -911,19 +980,20 @@ export default function App() {
   }, [architecturalProposalId, browserLocationState, revisionProposalId, server.active, server.openPrivateWork, server.openProject, server.projects]);
 
   useEffect(() => {
-    if (!server.active || !browserLocationHydrated.current || server.opening) return;
+    if (page === "inbox" || !server.active || !browserLocationHydrated.current || server.opening) return;
     const resourceId = selectedDiagramId ?? selectedNoteId;
     const next = {
       projectId: server.active.project.id,
       contextId: server.active.contextId,
       resourceId: server.active.contextId ? resourceId : null,
       proposalId: view === "changes" ? architecturalProposalId ?? revisionProposalId : revisionProposalId,
+      ...(browserLocationState.returnTo ? { returnTo: browserLocationState.returnTo } : {}),
     };
     if (locationUrl(next) !== locationUrl(browserLocationState)) {
       setBrowserLocationState(next);
       window.history.replaceState({}, "", locationUrl(next));
     }
-  }, [architecturalProposalId, browserLocationState, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, server.opening, setBrowserLocation, view]);
+  }, [architecturalProposalId, browserLocationState, page, revisionProposalId, selectedDiagramId, selectedNoteId, server.active, server.opening, setBrowserLocation, view]);
 
   useEffect(() => {
     if (!revisionProposalId) return;
@@ -3257,12 +3327,17 @@ export default function App() {
             </button>
           </>
         ) : (
-          <span className="app__page-title" data-testid="docs-page-title">
-            {page === "settings" ? "Workspace settings" : "Documentation"}
+          <span className="app__page-title" data-testid={page === "inbox" ? "inbox-page-title" : "docs-page-title"}>
+            {page === "settings" ? "Workspace settings" : page === "inbox" ? "Architecture Inbox" : "Documentation"}
           </span>
         )}
 
         <div className="app__toolbar-actions">
+          {auth.status === "authenticated" ? (
+            <button type="button" className="button button--small" data-testid="open-architecture-inbox" aria-current={page === "inbox" ? "page" : undefined} onClick={() => { setPage("inbox"); setArchitecturalProposalId(null); setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null, inbox: true }); }}>
+              Inbox
+            </button>
+          ) : null}
           {auth.status === "authenticated" ? (
             <div className="app__account" data-testid="toolbar-account">
               <span>
@@ -3310,7 +3385,9 @@ export default function App() {
         </div>
       </header>
 
-      {page === "docs" ? (
+      {page === "inbox" ? (
+        <ArchitectureInbox client={apiClient} onOpen={openInboxProposal} />
+      ) : page === "docs" ? (
         <DocsPage onBack={() => setPage("workspace")} />
       ) : page === "settings" ? (
         <ServerSettings
@@ -3502,8 +3579,10 @@ export default function App() {
               }
             >
                 {revisionProposalId && server.active ? <RevisionSessionBanner title={revisionTitle || server.architecturalProposals.find((proposal) => proposal.id === revisionProposalId)?.title || revisionProposalId} proposalId={revisionProposalId} resources={revisionResources.map((resource) => resource.path)} onBack={() => { const context = revisionReturnContext; const sourceId = context?.proposalId ?? revisionProposalId; setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setArchitecturalProposalId(sourceId); setView("changes"); if (context) setProposalInspector((current) => ({ ...current, proposalId: sourceId, selectedPath: context.selectedPath, mode: context.mode })); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: sourceId }); void server.openProject(server.active!.project); }} onCancel={() => { setRevisionProposalId(null); setRevisionResources([]); setRevisionTitle(""); setRevisionDescription(""); revisionTabsOpened.current = null; setRevisionReturnContext(null); setArchitecturalProposalContextId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: null }); }} onSubmit={() => { setArchitecturalProposalContextId(server.active!.contextId); setBrowserLocation({ projectId: server.active!.project.id, contextId: server.active!.contextId, resourceId: selectedDiagramId ?? selectedNoteId, proposalId: revisionProposalId }); }} /> : null}
-                {architecturalProposalId && view === "changes" && server.active ? (
-                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { setProposalRefreshKey(key => key + 1); void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setProposalRefreshKey(key => key + 1); setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
+                {architecturalProposalId && view === "changes" && server.active && server.active.project.id !== browserLocationState.projectId ? (
+                  <p role={server.openError ? "alert" : "status"}>{server.openError ? "This proposal is unavailable or you no longer have access." : "Opening the proposal project…"}</p>
+                ) : architecturalProposalId && view === "changes" && server.active ? (
+                    <ArchitecturalProposalDetail client={apiClient} projectId={server.active.project.id} proposalId={architecturalProposalId} authorDisplayName={proposalAuthorDisplayName} selectedDiffPath={proposalInspector.proposalId === architecturalProposalId ? proposalInspector.selectedPath : null} onDiffLoaded={handleProposalDiffLoaded} onSelectDiff={handleProposalDiffSelect} onBack={() => { setArchitecturalProposalId(null); if (browserLocationState.returnTo) { setPage("inbox"); window.history.replaceState({}, "", safeInboxReturnUrl(browserLocationState.returnTo)); setBrowserLocationState(browserLocation()); } else setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId: null, resourceId: null, proposalId: null }); }} onHideDetails={() => setComparisonEditorHidden(true)} onChanged={() => { setProposalRefreshKey(key => key + 1); void syncServerWorkspace(); }} onOpenProposal={openArchitecturalProposal} onRevise={startProposalRevision} onOpenShared={() => { setProposalRefreshKey(key => key + 1); setArchitecturalProposalId(null); setBrowserLocation({ projectId: server.active!.project.id, contextId: null, resourceId: null, proposalId: null }); }} />
               ) : proposalReviewOpen && canReviewProjectProposals ? (
                 <ProposalReviewPanel
                   client={apiClient}

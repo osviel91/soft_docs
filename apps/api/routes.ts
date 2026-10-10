@@ -37,6 +37,7 @@ import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-m
 import type { ArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
 import type { EntityKind } from "../../src/domain/workspace/semantic-binding";
+import type { ProposalAttentionCategory, ProposalInboxStatus } from "../../src/application/ports/proposal-inbox-repository";
 import { createHash, randomBytes } from "node:crypto";
 
 type ArchitecturalProposalInput = Parameters<ArchitecturalProposalService["submit"]>[1];
@@ -272,6 +273,24 @@ export function createRouter(dependencies: AppDependencies): Router {
       const workspaces =
         await dependencies.workspaceService.listWorkspaces(context);
       return json(200, { workspaces: workspaces.map(workspaceView) });
+    }),
+  );
+
+  router.get("/api/inbox/proposals", async (request) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const query = request.query;
+      const csv = (value: string | undefined) => value === undefined || value === "" ? undefined : value.split(",").map((item) => item.trim()).filter(Boolean);
+      const limit = query.limit === undefined ? undefined : Number(query.limit);
+      return json(200, await dependencies.proposalInbox.list(context, {
+        ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+        ...(query.projectId ? { projectId: query.projectId } : {}),
+        ...(query.status ? { status: csv(query.status) as ProposalInboxStatus[] } : {}),
+        ...(query.attentionCategory ? { attentionCategory: csv(query.attentionCategory) as ProposalAttentionCategory[] } : {}),
+        ...(query.search === undefined ? {} : { search: query.search }),
+        ...(limit === undefined ? {} : { limit }),
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      }));
     }),
   );
 

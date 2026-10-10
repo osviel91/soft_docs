@@ -43,6 +43,7 @@ export interface ActiveServerWorkspace {
 /** The server project list and the active binding. */
 export interface ServerWorkspacesHook {
   projects: ServerProject[];
+  projectsLoaded: boolean;
   projectsLoading: boolean;
   projectsError: string | null;
   /** The open binding, or `null` when the editor is on a local workspace. */
@@ -74,6 +75,7 @@ export function useServerWorkspaces(
   selectedWorkspaceId: string | null,
 ): ServerWorkspacesHook {
   const [projects, setProjects] = useState<ServerProject[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [active, setActive] = useState<ActiveServerWorkspace | null>(null);
@@ -94,6 +96,7 @@ export function useServerWorkspaces(
     if (!authenticated || selectedWorkspaceId === null) {
       projectReadModelGeneration.current += 1;
       setProjects([]);
+      setProjectsLoaded(false);
       setProjectsError(null);
       setPrivateWorkContexts([]);
       setArchitecturalProposals([]);
@@ -101,6 +104,7 @@ export function useServerWorkspaces(
     }
     const generation = ++projectReadModelGeneration.current;
     const workspaceId = selectedWorkspaceId;
+    setProjectsLoaded(false);
     setProjectsLoading(true);
     setProjectsError(null);
     try {
@@ -131,7 +135,10 @@ export function useServerWorkspaces(
         );
       }
     } finally {
-      if (generation === projectReadModelGeneration.current) setProjectsLoading(false);
+      if (generation === projectReadModelGeneration.current) {
+        setProjectsLoading(false);
+        setProjectsLoaded(true);
+      }
     }
   }, [client, authenticated, selectedWorkspaceId]);
 
@@ -307,6 +314,7 @@ export function useServerWorkspaces(
 
   return {
     projects,
+    projectsLoaded,
     projectsLoading,
     projectsError,
     active,

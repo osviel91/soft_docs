@@ -40,6 +40,7 @@ const SECOND_PROJECT = {
   name: "Reporting",
   slug: "reporting",
 };
+const THIRD_PROJECT = { ...SECOND_PROJECT, id: "p3", workspaceId: "w2", name: "Archive" };
 
 /** The one resource the fake API holds. */
 interface FakeResource {
@@ -55,6 +56,9 @@ interface FakeResource {
 interface FakeState {
   signedIn: boolean;
   multipleProjects: boolean;
+  crossWorkspace: boolean;
+  denyProjectOpen: string | null;
+  proposalUnavailable: boolean;
   contextId: string | null;
   resources: Map<string, FakeResource>;
   proposals: Array<{ id: string; title: string; authorUserId: string; status: "open" | "withdrawn" | "superseded"; baseSharedRevision: string; submittedAt?: string }>;
@@ -69,6 +73,9 @@ interface FakeState {
 const state: FakeState = {
   signedIn: false,
   multipleProjects: false,
+  crossWorkspace: false,
+  denyProjectOpen: null,
+  proposalUnavailable: false,
   contextId: null,
   resources: new Map(),
   proposals: [],
@@ -137,10 +144,12 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
     );
   }
   if (path === "/api/projects") {
+    const candidates = [PROJECT, ...(state.multipleProjects ? [SECOND_PROJECT] : []), ...(state.crossWorkspace ? [THIRD_PROJECT] : [])];
+    const workspaceId = url.searchParams.get("workspaceId");
     return Promise.resolve(
       reply(200, {
         projects: state.signedIn
-          ? [PROJECT, ...(state.multipleProjects ? [SECOND_PROJECT] : [])]
+          ? candidates.filter((project) => !workspaceId || project.workspaceId === workspaceId)
           : [],
       }),
     );
@@ -159,11 +168,22 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
                 createdAt: new Date(0).toISOString(),
                 updatedAt: new Date(0).toISOString(),
               },
-            ]
+              ...(state.crossWorkspace ? [{ id: "w2", ownerId: "u1", name: "Archive workspace", isDefault: false, role: "ADMIN", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }] : []),
+          ]
           : [],
       }),
     );
   }
+  if (path === "/api/projects/p3") return Promise.resolve(reply(state.signedIn ? 200 : 404, state.signedIn ? { project: THIRD_PROJECT } : undefined));
+  if (path === "/api/projects/p3/access") return Promise.resolve(state.denyProjectOpen === "p3" ? refuse(404, "not_found") : reply(200, { projectId: "p3", role: "OWNER", permissions: ["project:read", "resource:read"] }));
+  if (path === "/api/projects/p3/private-work") return Promise.resolve(reply(200, { contexts: [] }));
+  if (path === "/api/projects/p3/architectural-proposals") return Promise.resolve(reply(200, { proposals: [] }));
+  if (path === "/api/projects/p3/resources") return Promise.resolve(reply(200, { resources: [] }));
+  if (path === "/api/projects/p3/relationships") return Promise.resolve(reply(200, { relationships: [] }));
+  if (path === "/api/architectural-proposals/proposal-1") return Promise.resolve(state.proposalUnavailable ? refuse(404, "not_found", { message: "secret proposal detail" }) : reply(200, { proposal: { id: "proposal-1", projectId: "p3", authorUserId: "u1", title: "Cross-workspace proposal", status: "open", submittedAt: new Date(0).toISOString(), baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, resources: [], relationships: [], semanticMessages: [], lifecycle: { state: "OPEN" }, capabilities: {} } }));
+  if (path === "/api/architectural-proposals/proposal-1/reviews") return Promise.resolve(reply(200, { reviews: { status: "none", approvals: 0, changesRequested: 0, reviews: [] } }));
+  if (path === "/api/architectural-proposals/proposal-1/diff") return Promise.resolve(reply(200, { diff: { resources: [], relationships: [], semanticIdentities: [], semanticBindings: [], impact: { resourcesAdded: 0, resourcesModified: 0, resourcesDeleted: 0, relationshipsChanged: 0, semanticIdentitiesChanged: 0 } } }));
+  if (path === "/api/inbox/proposals") return Promise.resolve(reply(200, { items: [], nextCursor: null, counts: { PENDING_REVIEW: 0, CHANGES_REQUESTED: 0, APPROVED_PENDING_PROMOTION: 0, PROMOTION_COMPLETION_PENDING: 0, PROMOTED: 0, WITHDRAWN: 0, SUPERSEDED: 0 } }));
   if (path === "/api/workspaces/w1/members") {
     return Promise.resolve(reply(200, { members: [] }));
   }
@@ -294,6 +314,9 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
   state.signedIn = false;
   state.multipleProjects = false;
+  state.crossWorkspace = false;
+  state.denyProjectOpen = null;
+  state.proposalUnavailable = false;
   state.contextId = null;
   state.resources = new Map();
   state.proposals = [];
@@ -334,6 +357,53 @@ describe("App — anonymous browser", () => {
 });
 
 describe("App — authenticated browser", () => {
+  it("hydrates a reloaded proposal deep link in another workspace before reading the proposal", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    window.history.replaceState({}, "", "/");
+    window.history.pushState({}, "", "/?inbox=proposals&q=ledger");
+    window.history.pushState({}, "", "/?project=p3&proposal=proposal-1&returnTo=%2F%3Finbox%3Dproposals%26q%3Dledger");
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Cross-workspace proposal" })).toBeInTheDocument();
+    expect(state.calls.map((call) => call.path)).toContain("/api/projects/p3");
+    expect(state.calls.map((call) => call.path)).toContain("/api/projects/p3/access");
+    expect(state.calls.map((call) => call.path)).toContain("/api/architectural-proposals/proposal-1");
+    expect(window.location.search).toContain("project=p3");
+    await act(async () => { window.history.back(); });
+    await waitFor(() => expect(screen.getByTestId("architecture-inbox")).toBeInTheDocument());
+    expect(window.location.search).toContain("q=ledger");
+  });
+
+  it("returns a cross-workspace deep link to Inbox when access is revoked during project opening", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    state.denyProjectOpen = "p3";
+    window.history.replaceState({}, "", "/?project=p3&proposal=proposal-1&returnTo=%2F%3Finbox%3Dproposals%26q%3Dledger");
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This proposal is unavailable or you no longer have access");
+    expect(window.location.search).toContain("inbox=proposals");
+    expect(window.location.search).toContain("q=ledger");
+    expect(state.calls.map((call) => call.path)).toContain("/api/projects/p3");
+    expect(state.calls.map((call) => call.path)).toContain("/api/projects/p3/access");
+    expect(state.calls.map((call) => call.path)).not.toContain("/api/architectural-proposals/proposal-1");
+  });
+
+  it("shows a generic proposal-unavailable message and the Inbox return when a deep link disappears", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    state.proposalUnavailable = true;
+    window.history.replaceState({}, "", "/?project=p3&proposal=proposal-1&returnTo=%2F%3Finbox%3Dproposals");
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This proposal is unavailable or you no longer have access.");
+    expect(screen.queryByText("secret proposal detail")).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Back" })));
+    expect(await screen.findByTestId("architecture-inbox")).toBeInTheDocument();
+    expect(window.location.search).toContain("inbox=proposals");
+  });
+
   /** Sign in, open the server project, and wait for its document. */
   async function openServerProject(content = "title Checkout", enterMyWork = true) {
     state.signedIn = true;

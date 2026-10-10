@@ -51,6 +51,7 @@ import { createArchitecturalProposalRepository } from "./architectural-proposal-
 import { createProposalReviewRepository } from "./proposal-review-repository";
 import { createAuthoritativeBatchRepository } from "./authoritative-batch-repository";
 import { createPromotionRepository } from "./promotion-repository";
+import { createProposalInboxRepository } from "./proposal-inbox-repository";
 import { createWorkspaceInvitationRepository } from "./workspace-invitation-repository";
 import { createProjectShareRepository } from "./project-share-repository";
 import { createSemanticBindingRepository } from "./semantic-binding-repository";
@@ -99,6 +100,7 @@ export interface ServerRuntime {
   proposalReviews: ReturnType<typeof createProposalReviewRepository>;
   authoritativeBatches: ReturnType<typeof createAuthoritativeBatchRepository>;
   promotions: ReturnType<typeof createPromotionRepository>;
+  proposalInbox: ReturnType<typeof createProposalInboxRepository>;
   semanticBindings: ReturnType<typeof createSemanticBindingRepository>;
   candidateAssessments: ReturnType<typeof createCandidateAssessmentRepository>;
   /** The one authoritative resource-mutation path. */
@@ -171,6 +173,7 @@ export async function createServerRuntime(
   const proposalReviews = createProposalReviewRepository(sql);
   const authoritativeBatches = createAuthoritativeBatchRepository(sql);
   const promotions = createPromotionRepository(sql);
+  const proposalInbox = createProposalInboxRepository(sql);
   const mutations = createWorkspaceMutationService({
     projects,
     storage: storageForContext,
@@ -202,6 +205,7 @@ export async function createServerRuntime(
     proposalReviews,
     authoritativeBatches,
     promotions,
+    proposalInbox,
     semanticBindings: createSemanticBindingRepository(sql),
     candidateAssessments: createCandidateAssessmentRepository(sql),
     mutations,

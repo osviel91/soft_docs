@@ -357,6 +357,10 @@ describe("the API over its routes", () => {
 });
 
 describe("request plumbing", () => {
+  it("decodes form-style plus spaces and preserves escaped literal plus signs in queries", () => {
+    expect(parseQuery("?search=proposal+review&literal=a%2Bb")).toEqual({ search: "proposal review", literal: "a+b" });
+  });
+
   it("reads a body and refuses one over the limit", async () => {
     const chunk = Buffer.from("abcd");
     async function* small() {

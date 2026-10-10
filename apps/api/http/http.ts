@@ -177,8 +177,8 @@ export function parseQuery(search: string): Record<string, string> {
   for (const part of body.split("&")) {
     if (part === "") continue;
     const index = part.indexOf("=");
-    const name = decodeURIComponent(index === -1 ? part : part.slice(0, index));
-    const value = index === -1 ? "" : decodeURIComponent(part.slice(index + 1));
+    const name = decodeURIComponent((index === -1 ? part : part.slice(0, index)).replace(/\+/g, " "));
+    const value = index === -1 ? "" : decodeURIComponent(part.slice(index + 1).replace(/\+/g, " "));
     if (!(name in query)) query[name] = value;
   }
   return query;

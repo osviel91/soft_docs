@@ -162,10 +162,11 @@ async function signIn(): Promise<SignedIn> {
 function request(
   method: string,
   url: string,
-  options: { cookie?: string; body?: unknown } = {},
+  options: { cookie?: string; bearer?: string; body?: unknown } = {},
 ): ServerRequest {
   const headers: Record<string, string> = {};
   if (options.cookie !== undefined) headers.cookie = options.cookie;
+  if (options.bearer !== undefined) headers.authorization = `Bearer ${options.bearer}`;
   if (options.body !== undefined) headers["content-type"] = "application/json";
   const queryIndex = url.indexOf("?");
   return {
@@ -182,7 +183,7 @@ function request(
 async function call(
   method: string,
   url: string,
-  options: { cookie?: string; body?: unknown } = {},
+  options: { cookie?: string; bearer?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: any }> {
   const projectId = /\/api\/projects\/([^/]+)/.exec(url)?.[1];
   const contextId = projectId === undefined ? undefined : privateContextByProject.get(projectId);
@@ -276,6 +277,7 @@ const SECRET_B = "participant B\nB -> A: B's private diagram\n";
 
 let projectA: OwnedProject;
 let projectB: OwnedProject;
+let inboxProposalId: string;
 
 /** Both directions, so no assertion depends on which user is "the owner". */
 function directions(): Direction[] {
@@ -299,6 +301,97 @@ beforeAll(async () => {
 });
 
 describe("two owners, two projects: neither can reach the other's", () => {
+  it("lists only proposals in the caller's authorized workspace and scopes counts identically", async () => {
+    const contextId = privateContextByProject.get(projectA.projectId)!;
+    const submitted = await call("POST", `/api/projects/${projectA.projectId}/architectural-proposals`, {
+      cookie: projectA.owner.cookie,
+      body: { sourcePrivateContextId: contextId, resourceIds: [projectA.resourceId], title: "Inbox-visible proposal" },
+    });
+    expect(submitted.status).toBe(201);
+    inboxProposalId = submitted.body.proposal.id;
+
+    const visible = await call("GET", "/api/inbox/proposals?limit=10", { cookie: projectA.owner.cookie });
+    const hidden = await call("GET", "/api/inbox/proposals?limit=10", { cookie: projectB.owner.cookie });
+    expect(visible.status).toBe(200);
+    expect(visible.body.items.map((entry: any) => entry.proposalId)).toContain(submitted.body.proposal.id);
+    expect(visible.body.items[0]).toMatchObject({ workspace: { id: projectA.owner.userId }, project: { id: projectA.projectId, name: "Project A" } });
+    expect(visible.body.counts.PENDING_REVIEW).toBeGreaterThan(0);
+    expect(hidden.status).toBe(200);
+    expect(hidden.body.items).toEqual([]);
+    expect(hidden.body.counts.PENDING_REVIEW).toBe(0);
+  });
+
+  it("matches project:read policy for workspace roles and revokes inbox rows and counts", async () => {
+    expect(await policy.decide(contextFor(projectA.owner.userId), projectA.projectId, "project:read")).toMatchObject({ allowed: true, role: "OWNER" });
+    const memberships = ["ADMIN", "EDITOR", "VIEWER"] as const;
+    for (const role of memberships) {
+      const member = await signIn();
+      await dependencies.workspaces.setMember(projectA.owner.userId, member.userId, role);
+      const policyResult = await policy.decide(contextFor(member.userId), projectA.projectId, "project:read");
+      expect(policyResult).toMatchObject({ allowed: true, role: role === "VIEWER" ? "VIEWER" : "EDITOR" });
+      const response = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}`, { cookie: member.cookie });
+      expect(response.status).toBe(200);
+      expect(response.body.items.map((item: any) => item.proposalId)).toContain(inboxProposalId);
+      expect(response.body.counts.PENDING_REVIEW).toBeGreaterThan(0);
+      if (role === "ADMIN") {
+        const workContextId = privateContextByProject.get(projectA.projectId)!;
+        const extra = await call("POST", `/api/projects/${projectA.projectId}/architectural-proposals`, {
+          cookie: projectA.owner.cookie,
+          body: { sourcePrivateContextId: workContextId, resourceIds: [projectA.resourceId], title: "Second cursor item" },
+        });
+        expect(extra.status).toBe(201);
+        const firstPage = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}&limit=1`, { cookie: member.cookie });
+        expect(firstPage.body.nextCursor).toEqual(expect.any(String));
+        await dependencies.workspaces.removeMember(projectA.owner.userId, member.userId);
+        const afterRevocation = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}&limit=1&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`, { cookie: member.cookie });
+        expect(afterRevocation).toMatchObject({ status: 200, body: { items: [], counts: { PENDING_REVIEW: 0 } } });
+        expect((await policy.decide(contextFor(member.userId), projectA.projectId, "project:read")).allowed).toBe(false);
+        continue;
+      }
+      await dependencies.workspaces.removeMember(projectA.owner.userId, member.userId);
+      expect((await policy.decide(contextFor(member.userId), projectA.projectId, "project:read")).allowed).toBe(false);
+      const revoked = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}`, { cookie: member.cookie });
+      expect(revoked).toMatchObject({ status: 200, body: { items: [], counts: { PENDING_REVIEW: 0 } } });
+    }
+
+    const outsider = await signIn();
+    const denied = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}`, { cookie: outsider.cookie });
+    expect(denied).toMatchObject({ status: 200, body: { items: [], counts: { PENDING_REVIEW: 0 } } });
+    const filtered = await call("GET", `/api/inbox/proposals?workspaceId=${outsider.userId}&projectId=${projectA.projectId}`, { cookie: outsider.cookie });
+    expect(filtered).toMatchObject({ status: 200, body: { items: [], counts: { PENDING_REVIEW: 0 } } });
+    const forgedUser = await call("GET", `/api/inbox/proposals?userId=${projectA.owner.userId}`, { cookie: outsider.cookie });
+    expect(forgedUser.body.items).toEqual([]);
+  });
+
+  it("intersects one- and multi-project PATs with live project membership", async () => {
+    const contextId = privateContextByProject.get(projectB.projectId)!;
+    const submitted = await call("POST", `/api/projects/${projectB.projectId}/architectural-proposals`, {
+      cookie: projectB.owner.cookie,
+      body: { sourcePrivateContextId: contextId, resourceIds: [projectB.resourceId], title: "Second inbox proposal" },
+    });
+    expect(submitted.status).toBe(201);
+    await dependencies.workspaces.setMember(projectA.owner.userId, projectB.owner.userId, "EDITOR");
+
+    const agent = await dependencies.agents.createAgent(contextFor(projectB.owner.userId), { name: "Inbox restriction test" });
+    const mint = async (allowedProjectIds: string[]) => (await dependencies.agents.createCredential(contextFor(projectB.owner.userId), agent.id, {
+      name: `Inbox ${allowedProjectIds.length}`,
+      scopes: ["project:read"],
+      allowedProjectIds,
+    })).token;
+    const oneProjectToken = await mint([projectB.projectId]);
+    const oneProject = await call("GET", "/api/inbox/proposals", { bearer: oneProjectToken });
+    expect(oneProject.body.items.map((item: any) => item.project.id)).toEqual([projectB.projectId]);
+    expect(oneProject.body.counts.PENDING_REVIEW).toBe(1);
+
+    const twoProjectToken = await mint([projectA.projectId, projectB.projectId]);
+    const twoProjects = await call("GET", "/api/inbox/proposals", { bearer: twoProjectToken });
+    expect([...new Set(twoProjects.body.items.map((item: any) => item.project.id))].sort()).toEqual([projectA.projectId, projectB.projectId].sort());
+    expect(twoProjects.body.counts.PENDING_REVIEW).toBe(3);
+    const outsideFilter = await call("GET", `/api/inbox/proposals?projectId=${projectA.projectId}`, { bearer: oneProjectToken });
+    expect(outsideFilter).toMatchObject({ status: 200, body: { items: [], counts: { PENDING_REVIEW: 0 } } });
+    await dependencies.workspaces.removeMember(projectA.owner.userId, projectB.owner.userId);
+  });
+
   it("lists each owner's own project and never the other's", async () => {
     for (const { member, own, other } of directions()) {
       const listed = await call(

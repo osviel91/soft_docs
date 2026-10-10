@@ -1997,6 +1997,76 @@ body {
   background: var(--bg);
 }
 
+.architecture-inbox {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px clamp(18px, 4vw, 56px) 40px;
+  background: var(--bg);
+}
+
+.architecture-inbox__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+  margin: 22px 0;
+}
+
+.architecture-inbox__summary button {
+  display: grid;
+  gap: 7px;
+  min-height: 82px;
+  padding: 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.architecture-inbox__summary button[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.architecture-inbox__summary strong { font-size: 22px; }
+.architecture-inbox__summary span { color: var(--text-muted); font-size: 12px; }
+
+.architecture-inbox__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.architecture-inbox__filters label { display: grid; gap: 5px; min-width: 170px; color: var(--text-muted); font-size: 12px; }
+.architecture-inbox__filters input, .architecture-inbox__filters select { min-height: 34px; padding: 6px 9px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; }
+.architecture-inbox__filters .architecture-inbox__search { flex: 1 1 220px; }
+
+.architecture-inbox__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.architecture-inbox__item { display: grid; width: 100%; gap: 7px; padding: 15px 17px; text-align: left; color: var(--text-muted); background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); font: inherit; cursor: pointer; }
+.architecture-inbox__item:hover { border-color: var(--accent); }
+.architecture-inbox__item-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; color: var(--text); }
+.architecture-inbox__item-heading strong { font-size: 15px; }
+.architecture-inbox__item-heading > span { color: var(--accent); font-size: 12px; }
+.architecture-inbox__location { color: var(--text); font-weight: 600; }
+.architecture-inbox__item time { font-size: 12px; }
+.architecture-inbox__empty, .architecture-inbox__error { padding: 22px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.architecture-inbox__pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 18px; }
+
+@media (max-width: 600px) {
+  .architecture-inbox { padding: 18px 12px 28px; }
+  .architecture-inbox__filters { align-items: stretch; }
+  .architecture-inbox__filters label, .architecture-inbox__filters .architecture-inbox__search { flex: 1 1 100%; }
+  .architecture-inbox__filters > button { align-self: flex-start; }
+  .architecture-inbox__item-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+
 .docspage__header {
   display: flex;
   align-items: flex-start;

@@ -265,6 +265,26 @@ export interface ServerPromotionPreview {
   relationships?: Array<{ operation: "ADD" | "UPDATE" | "REMOVE"; relationship: ResourceRelationship; baseFingerprint?: string }>;
 }
 
+export interface ServerProposalInbox {
+  items: Array<{
+    proposalId: string;
+    title: string;
+    status: "open" | "withdrawn" | "superseded";
+    author: { userId: string; displayName: string | null };
+    workspace: { id: string; name: string };
+    project: { id: string; name: string };
+    createdAt: string;
+    submittedAt: string;
+    lastActivityAt: string;
+    review: { status: "none" | "approved" | "changes-requested" | "mixed"; approvals: number; changesRequested: number };
+    promotion: { status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED" | null; createdAt: string | null; completedAt: string | null };
+    lifecycle: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
+    attentionCategory: "PENDING_REVIEW" | "CHANGES_REQUESTED" | "APPROVED_PENDING_PROMOTION" | "PROMOTION_COMPLETION_PENDING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
+  }>;
+  nextCursor: string | null;
+  counts: Record<ServerProposalInbox["items"][number]["attentionCategory"], number>;
+}
+
 /** An agent identity, as `/api/agents` renders it. */
 export interface ServerAgent {
   id: string;
@@ -589,6 +609,23 @@ export class ServerApiClient {
       `/api/projects?workspaceId=${encodeURIComponent(workspaceId)}`,
     );
     return body.projects ?? [];
+  }
+
+  async getProject(projectId: string): Promise<ServerProject> {
+    const body = await this.request<{ project: ServerProject }>("GET", `/api/projects/${encodeURIComponent(projectId)}`);
+    return body.project;
+  }
+
+  async listProposalInbox(input: { workspaceId?: string; projectId?: string; status?: string[]; attentionCategory?: string[]; search?: string; cursor?: string; limit?: number } = {}): Promise<ServerProposalInbox> {
+    const params = new URLSearchParams();
+    if (input.workspaceId) params.set("workspaceId", input.workspaceId);
+    if (input.projectId) params.set("projectId", input.projectId);
+    if (input.status?.length) params.set("status", input.status.join(","));
+    if (input.attentionCategory?.length) params.set("attentionCategory", input.attentionCategory.join(","));
+    if (input.search) params.set("search", input.search);
+    if (input.cursor) params.set("cursor", input.cursor);
+    if (input.limit !== undefined) params.set("limit", String(input.limit));
+    return this.request<ServerProposalInbox>("GET", `/api/inbox/proposals${params.size ? `?${params}` : ""}`);
   }
 
   /** Create a project and return its listing (the caller becomes its owner). */

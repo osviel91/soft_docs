@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ServerApiClient, ServerArchitecturalProposal, ServerProposalReviewSummary, ServerPromotionPreview } from "../../workspace/server/api-client";
+import { ResourceNotFoundError } from "../../workspace/server/api-errors";
 import { operationSymbol, proposalChangeSummary } from "./proposal-change-summary";
 import { lifecycleReason, proposalLifecycle, type ProposalLifecycleState } from "./proposal-lifecycle";
 import Preview from "../preview/Preview";
@@ -52,7 +53,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
 
   useEffect(() => {
     let active = true;
-    void Promise.all([client.getArchitecturalProposal(projectId, proposalId), client.getArchitecturalProposalReviews(projectId, proposalId)]).then(([value, reviewSummary]) => { if (active) { setProposal(value); setReviews(reviewSummary); setError(null); } }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "The proposal could not be loaded."); });
+    void Promise.all([client.getArchitecturalProposal(projectId, proposalId), client.getArchitecturalProposalReviews(projectId, proposalId)]).then(([value, reviewSummary]) => { if (active) { setProposal(value); setReviews(reviewSummary); setError(null); } }).catch((reason: unknown) => { if (active) setError(reason instanceof ResourceNotFoundError ? "This proposal is unavailable or you no longer have access." : reason instanceof Error ? reason.message : "The proposal could not be loaded."); });
     return () => { active = false; };
   }, [client, projectId, proposalId]);
 
@@ -60,7 +61,7 @@ export function ArchitecturalProposalDetail({ client, projectId, proposalId, onB
     let active = true;
     setDiff(null);
     if (typeof client.getArchitecturalProposalDiff !== "function") return () => { active = false; };
-    void client.getArchitecturalProposalDiff(projectId, proposalId).then((value) => { if (!active) return; setDiff(value); if (controlledPathRef.current === undefined) setLocalSelectedDiffPath(value.resources[0]?.path ?? null); onDiffLoaded?.(value); }).catch(() => { if (active) setError("The proposal comparison could not be loaded."); });
+    void client.getArchitecturalProposalDiff(projectId, proposalId).then((value) => { if (!active) return; setDiff(value); if (controlledPathRef.current === undefined) setLocalSelectedDiffPath(value.resources[0]?.path ?? null); onDiffLoaded?.(value); }).catch((reason: unknown) => { if (active) setError(reason instanceof ResourceNotFoundError ? "This proposal is unavailable or you no longer have access." : "The proposal comparison could not be loaded."); });
     return () => { active = false; };
   }, [client, projectId, proposalId, onDiffLoaded]);
 
