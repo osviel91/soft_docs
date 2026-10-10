@@ -55,4 +55,13 @@ describe("PresentationMode", () => {
     expect(close.parentElement).toHaveClass("presentation__navigator-header");
     expect(close).toHaveClass("presentation__navigator-close");
   });
+
+  it("keeps the navigator open when selecting another presentation resource", () => {
+    render(<PresentationMode projectName="Checkout" resources={resources} initialId="readme" onExit={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Architecture" }));
+    const navigator = screen.getByRole("navigation", { name: "Presentation resources" });
+    fireEvent.click(within(navigator).getByRole("button", { name: "Architecture" }));
+    expect(screen.getByRole("navigation", { name: "Presentation resources" })).toBeInTheDocument();
+    expect(within(navigator).getByRole("button", { name: "Architecture" })).toHaveAttribute("aria-current", "page");
+  });
 });

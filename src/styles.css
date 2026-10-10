@@ -222,7 +222,7 @@ body {
 .presentation__stage--markdown pre, .presentation__stage--markdown table { max-width: 100%; overflow: auto; }
 .presentation__controls { justify-content: center; border-top: 1px solid var(--border); border-bottom: 0; }
 .presentation__controls span { min-width: 12ch; text-align: center; }
-.presentation__navigator { position: absolute; z-index: 2; inset: 58px auto 58px 0; display: flex; width: min(340px, 85vw); flex-direction: column; gap: 4px; overflow: auto; padding: 12px; background: var(--bg-panel); border: 1px solid var(--border); box-shadow: var(--shadow-pop); }
+.presentation__navigator { position: absolute; z-index: 2; inset: 58px 0 58px auto; display: flex; width: min(340px, 85vw); flex-direction: column; gap: 4px; overflow: auto; padding: 12px; background: var(--bg-panel); border: 1px solid var(--border); box-shadow: var(--shadow-pop); }
 .presentation__navigator button { padding: 9px; text-align: left; }
 .presentation__navigator-header { display: flex; flex: 0 0 auto; justify-content: flex-end; }
 .presentation__navigator .presentation__navigator-close { flex: 0 0 32px; width: 32px; height: 32px; padding: 0; text-align: center; }
