@@ -80,6 +80,7 @@ import { normalizeResourceMetadata } from "../../../src/domain/workspace/resourc
 import type { ResourceRelationship } from "../../../src/domain/workspace/resource-relationship";
 import { createDiscoverSemanticCandidatesUseCase } from "../../../src/application/discover-semantic-candidates";
 import type { EntityKind } from "../../../src/domain/workspace/semantic-binding";
+import { entityAnchorKey, resolveEntityAnchor } from "../../../src/domain/workspace/semantic-binding";
 import type { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
 
 /** A tool's result before the dispatcher wraps it in an MCP result. */
@@ -443,6 +444,7 @@ async function semanticIndex(
   toolContext: ToolContext,
   projectIdValue: string,
   contextId: string | null = null,
+  documentLimit: number | null = MAX_INDEXED_DOCUMENTS,
 ): Promise<{ index: ReturnType<typeof buildProjectIndex>; resources: Awaited<ReturnType<ProjectCatalog["listResources"]>> }> {
   throwIfAborted(toolContext.signal);
   const resources = contextId === null
@@ -451,7 +453,7 @@ async function semanticIndex(
   const semanticMessages = await toolContext.catalog.listEffectiveSemanticMessages(toolContext.context, projectIdValue, contextId);
   const metadata = { ...metadataFrom(resources), semanticMessages };
   const analyses = [];
-  for (const resource of resources.slice(0, MAX_INDEXED_DOCUMENTS)) {
+  for (const resource of documentLimit === null ? resources : resources.slice(0, documentLimit)) {
     throwIfAborted(toolContext.signal);
      const { content } = await toolContext.catalog.readResource(toolContext.context, projectIdValue, resource.id, resource.contextId ?? null);
     analyses.push(analyzeResource({ id: resource.id, projectId: projectIdValue, path: resource.path, type: resource.type, title: resource.path }, content));
@@ -2037,6 +2039,39 @@ export function createMcpTools(): McpTool[] {
     },
 
     {
+      name: "list_semantic_entities",
+      title: "List semantic entities",
+      description: "List indexed Conceptual/Database entities with exact EntityAnchors, stable resource ids, display names and resolution/provenance. Filter and paginate without returning the complete project index.",
+      inputSchema: {
+        projectId: projectId(), contextId: z.string().uuid().optional(),
+        representation: z.enum(["conceptual", "database"]).optional(),
+        entityKind: z.enum(["concept", "conceptual-relationship", "table", "foreign-key", "primary-key", "unique-key", "index", "column"]).optional(),
+        resourceId: z.string().min(1).optional(), limit: limit(100, 500), cursor: cursor(),
+      },
+      annotations: { ...READ_ONLY, title: "List semantic entities" }, requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const project = stringArg(args, "projectId");
+        const contextId = typeof args.contextId === "string" ? args.contextId : null;
+        const { index } = await semanticIndex(toolContext, project, contextId, null);
+        const resources = await toolContext.catalog.listResources(toolContext.context, project, contextId);
+        const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+        const filtered = (index.entities ?? []).filter(({ anchor }) =>
+          (args.representation === undefined || anchor.representation === args.representation) &&
+          (args.entityKind === undefined || anchor.entityKind === args.entityKind) &&
+          (args.resourceId === undefined || anchor.resourceId === args.resourceId),
+        ).sort((a, b) => entityAnchorKey(a.anchor).localeCompare(entityAnchorKey(b.anchor)));
+        const { items, nextCursor } = page(filtered, decodeCursor(typeof args.cursor === "string" ? args.cursor : undefined), numberArg(args, "limit") ?? 100);
+        const entities = items.map(({ name, anchor }) => ({
+          displayName: name, stableIdentity: anchor.identity, resourceId: anchor.resourceId,
+          resourcePath: resourceById.get(anchor.resourceId)?.path ?? null,
+          anchor, resolution: resolveEntityAnchor(anchor, index.entities ?? []),
+          provenance: resourceById.get(anchor.resourceId)?.contextId ? { context: "MY_WORK", contextId: resourceById.get(anchor.resourceId)!.contextId } : { context: "SHARED" },
+        }));
+        const result = { projectId: project, context: contextId === null ? "SHARED" : "SHARED+MY_WORK", total: filtered.length, entities, nextCursor };
+        return { text: JSON.stringify(result, null, 2), structured: result };
+      },
+    },
+    {
       name: "list_semantic_messages",
       title: "List semantic message identities",
       description: "List explicit project-scoped semantic message identities and their stable display data. Equal names without explicit references remain candidates only.",
@@ -2051,13 +2086,28 @@ export function createMcpTools(): McpTool[] {
     {
       name: "list_semantic_bindings",
       title: "List semantic bindings",
-      description: "List explicit active Semantic Bindings in SHARED, or SHARED plus your MY WORK context when contextId is supplied. Matching names are discovery hints, never evidence. Semantic bindings are separate from SemanticMessageIdentity/messageRef.",
-      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
+      description: "List explicit Semantic Bindings in SHARED, or SHARED plus your MY WORK context when contextId is supplied. Returns exact anchors, resolution, evidence and provenance. Matching names are discovery hints, never evidence.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional(), resourceId: z.string().min(1).optional(), anchor: entityAnchorSchema.optional(), limit: limit(100, 500), cursor: cursor() },
       annotations: { ...READ_ONLY, title: "List semantic bindings" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
-        const bindings = await toolContext.catalog.listSemanticBindings(toolContext.context, stringArg(args, "projectId"), typeof args.contextId === "string" ? args.contextId : null);
-        return { text: bindings.length ? `${bindings.length} explicit semantic binding(s).` : "No documented explicit binding.", structured: { bindings, candidates: { available: false }, semanticMessages: "separate" } };
+        const project = stringArg(args, "projectId");
+        const contextId = typeof args.contextId === "string" ? args.contextId : null;
+        const { index } = await semanticIndex(toolContext, project, contextId, null);
+        const all = await toolContext.catalog.listSemanticBindings(toolContext.context, project, contextId);
+        const anchor = args.anchor as import("../../../src/domain/workspace/semantic-binding").EntityAnchor | undefined;
+        const filtered = all.filter((binding) =>
+          (args.resourceId === undefined || binding.left.resourceId === args.resourceId || binding.right.resourceId === args.resourceId) &&
+          (anchor === undefined || entityAnchorKey(binding.left) === entityAnchorKey(anchor) || entityAnchorKey(binding.right) === entityAnchorKey(anchor)),
+        ).sort((a, b) => a.id.localeCompare(b.id));
+        const { items, nextCursor } = page(filtered, decodeCursor(typeof args.cursor === "string" ? args.cursor : undefined), numberArg(args, "limit") ?? 100);
+        const resources = new Set(index.resources.map((resource) => resource.id));
+        const bindings = items.map((binding) => ({ ...binding, resolution: {
+          left: resources.has(binding.left.resourceId) ? resolveEntityAnchor(binding.left, index.entities ?? []) : "unavailable",
+          right: resources.has(binding.right.resourceId) ? resolveEntityAnchor(binding.right, index.entities ?? []) : "unavailable",
+        }, provenance: binding.provenance.contextId ? { context: "MY_WORK", contextId: binding.provenance.contextId } : { context: "SHARED" } }));
+        const result = { projectId: project, total: filtered.length, bindings, nextCursor, semanticMessages: "separate" };
+        return { text: JSON.stringify(result, null, 2), structured: result };
       },
     },
     {
@@ -2113,10 +2163,64 @@ export function createMcpTools(): McpTool[] {
           ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
           ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}),
         });
-        return {
-          text: JSON.stringify(result, null, 2),
-          structured: result,
+        return { text: JSON.stringify(result, null, 2), structured: result };
+      },
+    },
+    {
+      name: "diagnose_semantic_discovery",
+      title: "Diagnose semantic discovery",
+      description: "Read-only explanation of the current deterministic discovery result: eligible entities, compatible exact-name pairs, pairs excluded by active exact bindings, discovered candidates, and available private assessment states. Does not change discovery policy or create bindings.",
+      inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
+      annotations: { ...READ_ONLY, title: "Diagnose semantic discovery" }, requiredPermissions: ["resource:read"],
+      async run(args, toolContext) {
+        const projectIdValue = stringArg(args, "projectId");
+        const contextId = typeof args.contextId === "string" ? args.contextId : undefined;
+        const { index } = await semanticIndex(toolContext, projectIdValue, contextId ?? null, null);
+        const entities = (index.entities ?? []).filter(({ anchor }) =>
+          (anchor.representation === "conceptual" && ["concept", "conceptual-relationship"].includes(anchor.entityKind)) ||
+          (anchor.representation === "database" && ["table", "column", "foreign-key"].includes(anchor.entityKind)),
+        );
+        const normalized = (name: string) => name.normalize("NFKC").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+        const left = entities.filter(({ anchor }) => anchor.representation === "conceptual");
+        const right = entities.filter(({ anchor }) => anchor.representation === "database");
+        const matches = left.flatMap((l) => right.filter((r) => normalized(l.name) !== "" && normalized(l.name) === normalized(r.name) &&
+          ((l.anchor.entityKind === "concept" || l.anchor.entityKind === "conceptual-relationship") && ["table", "column", "foreign-key"].includes(r.anchor.entityKind))
+        ).map((r) => [l.anchor, r.anchor] as const));
+        const active = (await toolContext.catalog.listSemanticBindings(toolContext.context, projectIdValue, contextId ?? null)).filter((binding) => binding.status === "ACTIVE");
+        const bound = new Set(active.map((binding) => `${entityAnchorKey(binding.left)}\0${entityAnchorKey(binding.right)}`));
+        const excluded = matches.filter(([l, r]) => bound.has(`${entityAnchorKey(l)}\0${entityAnchorKey(r)}`));
+        const discovery = await createDiscoverSemanticCandidatesUseCase(toolContext.catalog)(toolContext.context, { projectId: projectIdValue, ...(contextId === undefined ? {} : { contextId }), limit: 200 });
+        const eligibleConceptual = left.length;
+        const eligibleDatabase = right.length;
+        let assessmentSummary: { total: number; current: number; stale: number } | null = null;
+        if (contextId !== undefined) {
+          let cursor: string | undefined;
+          let total = 0;
+          let current = 0;
+          let stale = 0;
+          do {
+            const result = await toolContext.candidateAssessments.list(toolContext.context, projectIdValue, contextId, { limit: 200, ...(cursor === undefined ? {} : { cursor }) });
+            total = result.total;
+            current += result.assessments.filter((entry) => entry.status === "CURRENT").length;
+            stale += result.assessments.filter((entry) => entry.status === "STALE").length;
+            cursor = result.nextCursor;
+          } while (cursor !== undefined);
+          assessmentSummary = { total, current, stale };
+        }
+        const result = {
+          projectId: projectIdValue, context: contextId === undefined ? "SHARED" : "SHARED+MY_WORK",
+          policyVersion: discovery.policyVersion,
+          diagnosis: matches.length === 0 ? (eligibleConceptual === 0 || eligibleDatabase === 0 ? "NO_ELIGIBLE_ENTITIES" : "NO_MATCHES_UNDER_CURRENT_SIGNALS") : discovery.total === 0 ? "ALL_MATCHES_EXCLUDED_BY_ACTIVE_BINDINGS" : "CANDIDATES_DISCOVERED",
+          eligibleEntities: { conceptual: eligibleConceptual, database: eligibleDatabase },
+          compatibleExactNamePairs: matches.length, excludedByActiveExactBindings: excluded.length,
+          discoveredCandidates: discovery.total,
+          assessments: assessmentSummary === null ? { available: false, reason: "MY_WORK contextId required" } : {
+            available: true, current: assessmentSummary.current,
+            stale: assessmentSummary.stale, total: assessmentSummary.total,
+          },
+          note: "A zero result means no candidate under the current documented policy; it does not establish that no semantic relationship exists.",
         };
+        return { text: JSON.stringify(result, null, 2), structured: result };
       },
     },
     {

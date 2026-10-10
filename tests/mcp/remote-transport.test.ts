@@ -393,6 +393,10 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(created.isError, JSON.stringify(created)).toBeFalsy();
     const byConcept = await client.callTool({ name: "get_semantic_bindings_for_entity", arguments: { projectId, contextId, anchor: concept.anchor } });
     expect(structured(byConcept).bindings).toEqual([expect.objectContaining({ binding: expect.objectContaining({ id: "f4c6d93e-f19c-4f72-a9bc-2966fc9cb5ea", left: concept.anchor, right: table.anchor, relation: "represents-in" }), resolution: { left: "resolved", right: "resolved" } })]);
+    const bindingPage = await client.callTool({ name: "list_semantic_bindings", arguments: { projectId, contextId, resourceId: structured(conceptual).resource.id, anchor: concept.anchor, limit: 1 } });
+    expect(bindingPage.isError).toBe(false);
+    expect(textualResult(bindingPage)).toEqual(structured(bindingPage));
+    expect(structured(bindingPage).bindings).toEqual([expect.objectContaining({ id: "f4c6d93e-f19c-4f72-a9bc-2966fc9cb5ea", left: concept.anchor, right: table.anchor, revision: 1, evidence: expect.any(Object), resolution: { left: "resolved", right: "resolved" }, provenance: { context: "MY_WORK", contextId } })]);
 
     const listedResources = await client.listResources();
     const reference = listedResources.resources.find(entry => entry.uri === SEMANTIC_BINDING_URI);
@@ -465,6 +469,23 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(textualResult(shared).notice).toContain("not bindings or evidence");
     expect(structured(shared).total).toBe(1);
     expect(structured(shared).candidates[0]).toMatchObject({ leftPath: "shared.concept", rightPath: "shared.dbschema" });
+
+    const entityPage = await client.callTool({ name: "list_semantic_entities", arguments: { projectId: discoveryProjectId, representation: "conceptual", limit: 1 } });
+    expect(entityPage.isError).toBe(false);
+    expect(textualResult(entityPage)).toEqual(structured(entityPage));
+    expect(structured(entityPage).entities[0]).toMatchObject({ displayName: "Account", anchor: { resourceId: expect.any(String), representation: "conceptual", identity: { kind: "local-id", value: "account" } } });
+    expect(structured(entityPage).nextCursor).toBeNull();
+
+    const diagnosis = await client.callTool({ name: "diagnose_semantic_discovery", arguments: { projectId: discoveryProjectId } });
+    expect(diagnosis.isError).toBe(false);
+    expect(textualResult(diagnosis)).toEqual(structured(diagnosis));
+    expect(structured(diagnosis)).toMatchObject({ diagnosis: "CANDIDATES_DISCOVERED", compatibleExactNamePairs: 1, discoveredCandidates: 1 });
+
+    const databaseEntities = await client.callTool({ name: "list_semantic_entities", arguments: { projectId: discoveryProjectId, representation: "database", resourceId: (await harness.service.runtime.projects.listResources(discoveryProjectId, null)).find((resource) => resource.path === "shared.dbschema")!.id } });
+    expect(databaseEntities.isError).toBe(false);
+    expect(textualResult(databaseEntities)).toEqual(structured(databaseEntities));
+    expect(structured(databaseEntities).entities).toHaveLength(1);
+    expect(structured(databaseEntities).entities[0]).toMatchObject({ displayName: "Account", anchor: { representation: "database", entityKind: "table", identity: { kind: "local-id", value: "account" } } });
 
     const first = await client.callTool({ name: "discover_semantic_candidates", arguments: { projectId: discoveryProjectId, contextId: workId, limit: 1 } });
     expect(first.isError).toBe(false);
