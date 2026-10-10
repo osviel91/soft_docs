@@ -506,9 +506,10 @@ that event while Negative Ledger Balance Notification is an Event Flow entered
 by the event and continuing to downstream consequences. That is message-mediated
 traceability, not two projections of one complete behavior.
 
-D03.11.2 can add stable semantic message identity through the reserved occurrence
-reference, then bind Sequence occurrences and Event Flow entities. D03.11.1
-deliberately provides no implicit links or name-based identity.
+D03.11.2 added stable semantic message identity through the reserved occurrence
+reference; Sequence occurrences and Event Flow entities can be explicitly bound
+to that identity. D03.11.1 deliberately provided no implicit links or name-based
+identity. Equal names remain discovery candidates, not identity.
 
 ## Event Flows
 
@@ -797,8 +798,8 @@ artifact-authoring reference for grammar and canonical examples.
 
 For example, a proposal persistence view may show `change_proposals` with its
 revision, status, actor, and merge fields related to `resources`, annotated with
-optimistic concurrency and immutable terminal transitions. Database source is
-supported; its product renderer and presentation surfaces remain unavailable.
+optimistic concurrency and immutable terminal transitions. Database source,
+semantic diff, rendering, Share, and Presentation are supported.
 
 ## Coverage Model
 

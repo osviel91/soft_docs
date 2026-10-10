@@ -1,6 +1,6 @@
 # D03.3 — Candidate Discovery & Epistemic Reasoning
 
-**Estado:** D03.3.1–D03.3.4 implementados; la aceptación externa de pilotos sigue pendiente
+**Estado:** D03.3.1–D03.3.4 implementados y funcionalmente verificados; aceptación externa parcial, con límites explícitos
 **Alcance:** sugerencias de correspondencia Conceptual ↔ Database y evaluaciones privadas de esas sugerencias
 **Regla:** Candidate no es SemanticBinding. Solo una acción explícita, con evidencia válida, crea un binding en MY WORK; publicación sigue el flujo de Architectural Proposal.
 
@@ -31,15 +31,15 @@ Las afirmaciones de esta sección describen el código inspeccionado. Las decisi
 ### HTTP, MCP y UI
 
 - HTTP expone CRUD gobernado de SemanticBinding bajo `/api/projects/:projectId/semantic-bindings`; escritura requiere contexto MY WORK. El cliente browser concentra llamadas en `src/workspace/server/api-client.ts`.
-- MCP local y remoto ya listan/leen bindings por anchor y crean bindings en MY WORK. Respuestas ofrecen texto y estructura para transporte. No existe endpoint/tool de discovery de entidades.
-- `SemanticBindingsPanel` permite inspeccionar, navegar, crear y editar bindings. La selección de entidades y la navegación usan anchors exactos; la UI advierte que similitud de nombre no es evidencia. No hay flujo para evaluar sugerencias.
+- MCP local y remoto listan/leen bindings por anchor y crean bindings en MY WORK. Respuestas ofrecen texto y estructura para transporte. El discovery de candidatos Conceptual↔Database se expone por HTTP y MCP remoto; no hay que confundirlo con discovery autoritativo de bindings.
+- `SemanticBindingsPanel` permite inspeccionar, navegar, crear y editar bindings, y evaluar sugerencias en MY WORK. La selección y navegación usan anchors exactos; la UI advierte que similitud de nombre no es evidencia. La cobertura visible de evaluaciones sigue limitada a candidatos en la página cargada, como se documenta en el informe D03.3.4.
 - El índice sirve a navegación/edición; `App.tsx` agrega entidades de vistas efectiva y compartida y pasa un callback de navegación. Se puede extender ese patrón sin dibujar aristas inferidas.
 
 ## 2. Problemas demostrados y reutilización
 
-**Demostrado:** hoy el producto no descubre correspondencias entre entidades. La UI permite seleccionar un extremo exacto pero requiere que la persona encuentre el otro extremo. No hay persistencia para “revisado”, “rechazado” o “falta evidencia”. Binding Evidence no codifica una afirmación contradictoria; solo adjunta referencias y rationale.
+**Antecedente histórico, previo a D03.3.1–D03.3.4:** el producto no descubría correspondencias entre entidades, no persistía decisiones y la UI solo permitía seleccionar anchors exactos. Esas carencias motivaron esta fase y ya no describen el estado actual. Binding Evidence v1 aún no codifica una afirmación contradictoria; adjunta referencias y rationale.
 
-**No demostrado:** no se afirma que los pilotos privados estén accesibles en este repositorio ni que sus nombres/estructuras permitan una señal concreta. BillingMiddleware y Data Transactions Consumer se usarán como familias de fixtures sintéticos y no como dependencia de repositorios privados.
+**Antecedente histórico:** el diseño inicial no tenía acceso a los pilotos privados y proponía usar fixtures sintéticos. Posteriormente se reportaron comprobaciones externas de BillingMiddleware y Data Transactions Consumer; los resultados y su alcance están separados abajo de las pruebas reproducibles del repositorio.
 
 **Reutilizar:** anchors/key/resolution; ProjectIndex.entities; análisis por recurso; scope y autorización de `ProjectCatalog`; repositorios locales/server con revisiones; `BindingEvidence` v1 al materializar; operaciones de proposal/promotion existentes; API client, herramienta MCP textual+structured y navegación UI.
 
@@ -121,7 +121,7 @@ Regla de materialización inicial: `READY_FOR_BINDING` requiere `BindingEvidence
 
 ## 5. Persistencia y gobernanza
 
-**Decisión para fases posteriores:** evaluaciones rechazadas deben seguir visibles para su autor y no compartirse entre contextos. El almacenamiento de evaluaciones, historial y lifecycle no forma parte de D03.3.1. Las fases posteriores deben preservar paridad local-first; no se acepta una solución server-only como estado final.
+**Decisión de diseño inicial, superada parcialmente por la implementación posterior:** D03.3.1 no incluía persistencia. D03.3.2 agregó almacenamiento privado versionado e historial tanto SQL como local sidecar. Se conserva como antecedente la intención de paridad local-first; ambas implementaciones existen actualmente.
 
 - Evaluaciones guardadas en MY WORK, privadas al owner. GET con contexto devuelve SHARED de manera implícita solo para discovery de anchors, más evaluaciones de ese único contexto; nunca lista evaluaciones ajenas.
 - No persistir evaluaciones en SHARED. No permitir `contextId` vacío al evaluar; lectura de SHARED sin contexto puede descubrir candidatos, pero no guardar decisión.
@@ -132,7 +132,7 @@ Regla de materialización inicial: `READY_FOR_BINDING` requiere `BindingEvidence
 
 ## 6. Contratos API/MCP
 
-**Implementado:** `GET /api/projects/{projectId}/semantic-candidates`; es read-only y usa la misma lógica de caso de uso que MCP. Admite `contextId?`, `leftEntityKind?` (Conceptual), `rightEntityKind?` (Database), `limit` (default 50, máximo 200) y `cursor?` (ID del último candidato de la página anterior). Devuelve `status: "unconfirmed"`, aviso explícito, candidatos con ID/fingerprint, anchors exactos, nombres/tipos/paths, señales, ranking ordinal y ambigüedad, `policyVersion`, scope, total y `nextCursor?`. Cursor inválido o filtros fuera de dirección son rechazados; el orden estable del dominio es por candidate ID.
+**Implementado:** `GET /api/projects/{projectId}/semantic-candidates`; es read-only y usa la misma lógica de caso de uso que MCP. Admite `contextId?`, filtros de tipo, `limit` (default 50, máximo 200) y `cursor?` por ID de candidato para paginación estable. Devuelve `status: "unconfirmed"`, aviso explícito, candidatos con ID/fingerprint, anchors exactos, nombres/tipos/paths, señales, ranking ordinal y ambigüedad, `policyVersion`, scope, total y `nextCursor?`. Cursor inválido o filtros fuera de dirección son rechazados.
 
 MCP remoto publica `discover_semantic_candidates`, `get_semantic_candidate`, `assess_semantic_candidate` y `list_candidate_assessments`. Las tres lecturas usan `resource:read` y anotación read-only; `assess_semantic_candidate` usa `resource:update`, anotación de escritura y exige el MY WORK propio. Todas las respuestas contienen JSON completo en texto además de `structuredContent`; los candidatos se identifican como sugerencias no confirmadas. La ruta local-first stdio se difiere: no ofrece identidad autenticada ni MY WORK server-backed equivalente.
 
@@ -191,7 +191,7 @@ Agrega modelo/validación, puerto, repositorios SQL/local, revisiones optimistas
 
 Expone get/assess/list en API y MCP remoto sobre casos de uso compartidos. Las evaluaciones incluyen CURRENT/STALE y causas; las escrituras validan el fingerprint antes de persistir y nunca crean binding. `create_semantic_binding` permanece separado y no requiere CandidateAssessment.
 
-### D03.3.4 — Workspace y gobernanza
+### D03.3.4 — Workspace y gobernanza (implementado)
 
 La UI de SemanticBindings ahora incluye sugerencias paginadas, señales/ambigüedad, navegación por anchors, estado y rationale/evidence de evaluaciones, y acciones de evaluación solo en MY WORK. READY vigente ofrece creación confirmada de un SemanticBinding explícito mediante el endpoint existente; assessment y binding permanecen separados. Las evaluaciones STALE se etiquetan con sus causas cuando el candidato está en la página visible. No se modificaron contratos de Proposal/Promotion ni renderers.
 
@@ -207,7 +207,16 @@ La implementación no incorpora evaluaciones a Proposal. El binding creado queda
 
 ### Informe de aceptación externa D03.3.4
 
-**No ejecutado.** No se dispone en esta sesión de un cliente MCP externo autorizado ni de credenciales/acceso a los proyectos BillingMiddleware y Data Transactions Consumer. No se simularon resultados ni se fabricaron evaluaciones READY/bindings. Por tanto D03.3 no se declara completamente aceptada: queda pendiente el piloto externo especificado en el encargo, incluyendo la comprobación de los siete bindings, aislamiento MY WORK y ausencia de cambios SHARED.
+**Actualización externa reportada:**
+
+- **BillingMiddleware:** discovery, paginación, assessment privado y revisión optimista comprobados externamente. `CURRENT` confirma vigencia/fingerprint, no certeza semántica ni verdad del binding.
+- **Data Transactions Consumer:** discovery funcional con cero candidatos; no hubo evaluación aplicable. Esto no prueba ausencia de correspondencias en general.
+- **Pendiente:** exclusión exhaustiva de bindings existentes y observabilidad de anchors/bindings en respuestas MCP grandes.
+- **No verificado:** promoción satisfactoria de la propuesta real de Data Transactions Consumer. No modificar la propuesta ni datos de producción como parte de esta tarea documental.
+
+Estos resultados externos se registran como aceptación parcial de los casos ejercitados, no como suite repetible ni aceptación exhaustiva de D03.3. La implementación completa y la aceptación exhaustiva son dimensiones distintas. El informe histórico siguiente preserva lo que se sabía en la fecha de ejecución original.
+
+**Antecedente histórico:** en la sesión de implementación D03.3.4 el piloto externo no se había ejecutado; no había cliente MCP autorizado ni acceso a ambos proyectos. Esa afirmación describe el estado de entonces y queda reemplazada por los resultados parciales reportados arriba, no por una aceptación total.
 
 ### Validación D03.3.4
 
@@ -222,6 +231,8 @@ La implementación no incorpora evaluaciones a Proposal. El binding creado queda
 El build E2E conserva el warning existente de chunk JavaScript mayor de 500 kB. Los warnings React `act(...)` en pruebas de App también aparecen en el log, sin fallos asociados.
 
 Las fases requieren aprobación independiente. El encargo D03.3.4 autoriza el alcance descrito en este informe; no autoriza ampliar el contrato de Proposal/Promotion ni declarar aceptado el piloto externo pendiente.
+
+La implementación del incremento está completa en el alcance descrito y tiene pruebas automatizadas. La aceptación externa permanece parcial: el estado `CURRENT` es únicamente de vigencia, no una afirmación de certeza semántica. No se cierra la aceptación exhaustiva mientras sigan pendientes las comprobaciones listadas arriba.
 
 ## 10. Pruebas de aceptación y cierre
 
@@ -244,14 +255,14 @@ Usar recursos Conceptual/Database construidos dentro de fixtures de tests, con n
 
 **Cierre D03.3:** invariantes anteriores pasan en domain/application/persistence/API/MCP/UI; `npm run lint`, `npm run typecheck`, `npm test`, `npm run test:mcp`, E2E relevante y `git diff --check` pasan; revisión confirma que ningún renderer dibuja candidatos como confirmados y no hay writer que publique assessment.
 
-## 11. Decisiones abiertas para aprobación
+## 11. Preguntas de diseño iniciales y estado actual
 
-1. ¿Se necesita solapamiento de tokens u otras señales además de igualdad normalizada? Diferido; no está en la política inicial.
-2. ¿Qué esquema local-first se usará para evaluaciones y su historial? Diferido; la paridad local-first es requisito.
-3. ¿Cómo representar formalmente evidencia contradictoria? Diferido; Evidence v1 no se modifica.
-4. ¿Qué política de retención aplica al archivar/eliminar MY WORK? Diferido a persistencia.
-5. ¿Cómo aparecen evaluaciones en UI y cómo se materializa un binding? Diferido a autoría/gobernanza.
-6. ¿Qué límites/cursor usar para paginación a gran escala? Diferido hasta que el volumen lo justifique; D03.3.1 devuelve orden determinista sin paginación.
+1. ¿Se necesita solapamiento de tokens u otras señales además de igualdad normalizada? Sigue diferido; no está en la política inicial.
+2. ¿Qué esquema local-first se usará para evaluaciones y su historial? Resuelto para este alcance mediante persistencia SQL y sidecar local, con historial versionado.
+3. ¿Cómo representar formalmente evidencia contradictoria? Sigue diferido; Evidence v1 no se modifica.
+4. ¿Qué política de retención aplica al archivar/eliminar MY WORK? El contrato de retención no se resuelve en D03.3; requiere decisión específica si cambia el comportamiento actual de persistencia.
+5. ¿Cómo aparecen evaluaciones en UI y cómo se materializa un binding? Implementado: evaluación y creación explícita de binding permanecen separadas; véase el informe D03.3.4.
+6. ¿Qué límites/cursor usar para paginación a gran escala? Resuelto en el contrato actual con orden determinista y cursor candidateId (default 50, máximo 200). Sigue pendiente la observabilidad práctica en respuestas grandes, no la existencia de paginación.
 
 ## 12. Referencias de código inspeccionadas
 
