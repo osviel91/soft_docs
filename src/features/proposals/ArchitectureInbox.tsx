@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ServerApiClient, ServerProject, ServerProposalInbox, ServerWorkspace } from "../../workspace/server/api-client";
+import { ResourceNotFoundError } from "../../workspace/server/api-errors";
 import PageHeader from "../ui/PageHeader";
 
 const categoryLabels: Record<keyof ServerProposalInbox["counts"], string> = {
@@ -38,11 +39,19 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
   useEffect(() => {
     let active = true;
     void client.listWorkspaces().then(async (rows) => {
-      const projectLists = await Promise.all(rows.map((workspace) => client.listProjects(workspace.id)));
+      const catalogs = await Promise.all(rows.map(async (workspace) => {
+        try {
+          return { workspace, projects: await client.listProjects(workspace.id) };
+        } catch (reason) {
+          if (reason instanceof ResourceNotFoundError) return null;
+          throw reason;
+        }
+      }));
       if (active) {
+        const accessible = catalogs.filter((catalog): catalog is NonNullable<typeof catalog> => catalog !== null);
         setCatalogError(null);
-        setWorkspaces(rows);
-        setProjects(projectLists.flat());
+        setWorkspaces(accessible.map((catalog) => catalog.workspace));
+        setProjects(accessible.flatMap((catalog) => catalog.projects));
       }
     }).catch(() => {
       if (!active) return;

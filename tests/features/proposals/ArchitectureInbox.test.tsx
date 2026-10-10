@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ArchitectureInbox from "../../../src/features/proposals/ArchitectureInbox";
 import type { ServerApiClient, ServerProposalInbox } from "../../../src/workspace/server/api-client";
+import { ResourceNotFoundError } from "../../../src/workspace/server/api-errors";
 
 const inbox: ServerProposalInbox = {
   items: [{
@@ -80,5 +81,26 @@ describe("ArchitectureInbox", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load accessible workspaces and projects.");
     expect(screen.queryByText("No proposals are available in your accessible workspaces.")).toBeNull();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("omits platform-admin workspaces without project membership without failing the accessible catalog", async () => {
+    const client = {
+      listWorkspaces: vi.fn().mockResolvedValue([
+        { id: "workspace-1", name: "Accessible" },
+        { id: "workspace-hidden", name: "Not a member" },
+      ]),
+      listProjects: vi.fn((workspaceId: string) => workspaceId === "workspace-hidden"
+        ? Promise.reject(new ResourceNotFoundError("No workspace with id workspace-hidden."))
+        : Promise.resolve([{ id: "project-1", workspaceId, name: "Checkout" }])),
+      listProposalInbox: vi.fn().mockResolvedValue({ items: [], nextCursor: null, counts: inbox.counts }),
+    } as unknown as ServerApiClient;
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+
+    const workspaceFilter = screen.getByLabelText("Workspace");
+    expect(await screen.findByRole("option", { name: "Accessible" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Not a member" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Checkout" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(workspaceFilter).toHaveValue("");
   });
 });
