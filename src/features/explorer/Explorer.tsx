@@ -306,7 +306,13 @@ function ServerWorkspaceExplorer({
   </li>;
   const renderProposal = (proposal: NonNullable<ExplorerProps["architecturalProposals"]>[number], lifecycle: ReturnType<typeof proposalLifecycle>) => {
     const revising = proposal.status === "open" && !["PROMOTING", "PROMOTED"].includes(lifecycle) && proposal.id === revisingProposalId;
-    return <li key={proposal.id} data-testid="explorer-proposal" className={proposal.id === selectedProposalId ? "explorer__context-item explorer__context-item--selected" : "explorer__context-item"} data-revising={revising ? "true" : undefined}><button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-current={proposal.id === selectedProposalId ? "true" : undefined} aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button><span>{lifecycle}</span><small>{proposal.submittedAt ? new Date(proposal.submittedAt).toLocaleDateString() : "undated"} · {proposal.id.slice(0, 8)}</small>{revising ? <small data-testid="explorer-revision-origin">REVISING</small> : null}{onProposalMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-proposal-menu" aria-label={`Actions for proposal ${proposal.title}`} onClick={(event) => onProposalMenu(proposal, positionBelow(event.currentTarget))}>⋯</button> : null}</li>;
+    return <li key={proposal.id} data-testid="explorer-proposal" className={`explorer__proposal explorer__context-item${proposal.id === selectedProposalId ? " explorer__context-item--selected" : ""}`} data-revising={revising ? "true" : undefined}>
+      <div className="explorer__proposal-copy">
+        <button type="button" className="explorer__context-item-button" data-testid="explorer-proposal-open" aria-current={proposal.id === selectedProposalId ? "true" : undefined} aria-label={`Open proposal ${proposal.title}`} onClick={() => onOpenArchitecturalProposal?.(proposal.id)}>{proposal.title}</button>
+        <div className="explorer__proposal-meta"><span>{lifecycle}</span><small>{proposal.submittedAt ? new Date(proposal.submittedAt).toLocaleDateString() : "undated"} · {proposal.id.slice(0, 8)}</small>{revising ? <small data-testid="explorer-revision-origin">REVISING</small> : null}</div>
+      </div>
+      {onProposalMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-proposal-menu" aria-label={`Actions for proposal ${proposal.title}`} onClick={(event) => onProposalMenu(proposal, positionBelow(event.currentTarget))}>⋯</button> : null}
+    </li>;
   };
 
   return (

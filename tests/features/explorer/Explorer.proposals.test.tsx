@@ -45,6 +45,17 @@ describe("Explorer proposal indicators", () => {
     expect(screen.getByText("SUPERSEDED")).toBeInTheDocument();
   });
 
+  it("groups proposal status and date below the title", () => {
+    render(<Explorer {...props} serverMode architecturalProposals={[
+      { id: "proposal-12345678", title: "A long proposal title", authorUserId: "u", status: "open", baseSharedRevision: "r", submittedAt: "2026-01-01T00:00:00Z", lifecycle: { state: "PROMOTED" } },
+    ]} />);
+    fireEvent.click(screen.getByTestId("explorer-archived-proposals-toggle"));
+    const proposal = screen.getByTestId("explorer-proposal");
+    expect(proposal.querySelector(".explorer__proposal-copy")).toContainElement(screen.getByRole("button", { name: "Open proposal A long proposal title" }));
+    expect(proposal.querySelector(".explorer__proposal-meta")).toHaveTextContent("PROMOTED");
+    expect(proposal.querySelector(".explorer__proposal-meta")).toHaveTextContent("1/1/2026");
+  });
+
   it("does not mark withdrawn proposals as revising and moves draft actions into a context menu", () => {
     const onMyWorkMenu = vi.fn();
     const onProposalMenu = vi.fn();

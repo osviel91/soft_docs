@@ -61,4 +61,24 @@ describe("project sharing UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revoke link" }));
     await waitFor(() => expect(client.revokeProjectShare).toHaveBeenCalledWith("p1", "g1"));
   });
+
+  it("selects and deselects every resource for a share link", async () => {
+    const resources = [
+      { id: "doc", projectId: "p1", path: "overview.md", type: "markdown-document" as const, revision: 1 },
+      { id: "seq", projectId: "p1", path: "architecture.seq", type: "sequence-diagram" as const, revision: 1 },
+    ];
+    const grant = { id: "g1", projectId: "p1", resourceIds: ["doc", "seq"], createdByUserId: "u1", createdAt: "2026-01-01", expiresAt: "2026-01-31", revokedAt: null, revokedByUserId: null, state: "ACTIVE" as const };
+    const client = api({ listProjectShares: vi.fn().mockResolvedValue([]), listResources: vi.fn().mockResolvedValue(resources), createProjectShare: vi.fn().mockResolvedValue({ token: "bearer", grant }) });
+    render(<ProjectShareDialog projectId="p1" client={client} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("2 of 2 selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Deselect all" }));
+    expect(screen.getByText("0 of 2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create read-only link" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /overview\.md/ }));
+    expect(screen.getByText("1 of 2 selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create read-only link" }));
+    await waitFor(() => expect(client.createProjectShare).toHaveBeenCalledWith("p1", ["seq"]));
+  });
 });

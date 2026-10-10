@@ -85,11 +85,13 @@ describe("WorkspaceSwitcher", () => {
 
   it("keeps the active project and reveals the project picker without closing it", () => {
     const onReloadServerProjects = vi.fn();
+    const onProjectMenu = vi.fn();
     renderSwitcher({
       mode: "server",
       serverProjects: [project("p1", "Payments")],
       activeServerProjectId: "p1",
       onReloadServerProjects,
+      onProjectMenu,
     });
     expect(screen.getByTestId("workspace-active-project")).toHaveTextContent("Payments");
     expect(screen.queryByTestId("workspace-server-project")).toBeNull();
@@ -97,6 +99,8 @@ describe("WorkspaceSwitcher", () => {
     expect(screen.getByTestId("workspace-server-project")).toHaveAttribute("aria-current", "true");
     fireEvent.click(screen.getByTestId("workspace-server-refresh"));
     expect(onReloadServerProjects).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("workspace-project-menu"));
+    expect(onProjectMenu).toHaveBeenCalledWith(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
   });
 
   it("progressively discloses server project creation", () => {

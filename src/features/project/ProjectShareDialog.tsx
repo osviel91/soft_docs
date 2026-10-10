@@ -65,7 +65,21 @@ export default function ProjectShareDialog({ projectId, client, onClose }: { pro
       <button type="button" className="share-dialog__close" aria-label="Close share management" onClick={onClose}>×</button>
       <p className="login-card__eyebrow">Project sharing</p><h2 id="share-title">Share project</h2>
       <p>Anyone with this link can view the project's shared documentation. The link does not grant editing or workspace membership.</p>
-      <fieldset><legend>Resources this link may expose</legend><p>Bindings are visible only if both endpoint resources are selected. Evidence referring to an unselected resource is marked unavailable.</p>{resources.map(resource => <label key={resource.id}><input type="checkbox" checked={selectedResourceIds.includes(resource.id)} onChange={event => setSelectedResourceIds(current => event.target.checked ? [...current, resource.id] : current.filter(id => id !== resource.id))} /> {resource.path} [{resource.type}]</label>)}</fieldset>
+      <fieldset className="share-dialog__resources">
+        <legend>Resources this link may expose</legend>
+        <p>Bindings are visible only if both endpoint resources are selected. Evidence referring to an unselected resource is marked unavailable.</p>
+        <div className="share-dialog__selection-tools">
+          <span>{selectedResourceIds.length} of {resources.length} selected</span>
+          <div>
+            <button type="button" onClick={() => setSelectedResourceIds(resources.map(resource => resource.id))} disabled={selectedResourceIds.length === resources.length}>Select all</button>
+            <button type="button" onClick={() => setSelectedResourceIds([])} disabled={selectedResourceIds.length === 0}>Deselect all</button>
+          </div>
+        </div>
+        <div className="share-dialog__resource-list">{resources.map(resource => <label key={resource.id}>
+          <input type="checkbox" checked={selectedResourceIds.includes(resource.id)} onChange={event => setSelectedResourceIds(current => event.target.checked ? [...current, resource.id] : current.filter(id => id !== resource.id))} />
+          <span>{resource.path}</span><small>{resource.type}</small>
+        </label>)}</div>
+      </fieldset>
       {createdUrl ? <section aria-label="New link">
         <h3>Link created</h3><label htmlFor="created-share-url">Read-only link</label>
         <input id="created-share-url" readOnly value={createdUrl} onFocus={(event) => event.currentTarget.select()} />

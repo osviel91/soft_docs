@@ -253,6 +253,7 @@ type PendingProposalWithdrawal = { id: string; projectId: string; title: string 
 
 /** The file or project a context menu was opened over, and where to place it. */
 type MenuTarget =
+  | ({ kind: "server-project"; id: string } & MenuPosition)
   | ({ kind: "diagram"; diagram: DiagramFile } & MenuPosition)
   | ({ kind: "note"; note: NoteFile } & MenuPosition)
   | ({ kind: "project"; project: Project } & MenuPosition)
@@ -2823,6 +2824,9 @@ export default function App() {
         },
       ];
     }
+    if (menu.kind === "server-project") {
+      return [{ id: "copy-server-project-id", label: "Copy project ID", onSelect: () => copyId(menu.id, "project") }];
+    }
     if (menu.kind === "project-add") {
       const { project } = menu;
       return [
@@ -3410,6 +3414,9 @@ export default function App() {
                       serverProjectsError={server.projectsError}
                       activeServerProjectId={server.active?.project.id ?? null}
                       activeServerProjectName={server.active?.project.name ?? null}
+                      onProjectMenu={(position) => {
+                        if (server.active) setMenu({ kind: "server-project", id: server.active.project.id, ...position });
+                      }}
                       canShareProject={server.active?.project.role === "OWNER"}
                       onShareProject={() => { if (server.active?.project.role === "OWNER") setShareProjectId(server.active.project.id); }}
                       serverOpenError={server.openError}
@@ -4118,7 +4125,7 @@ export default function App() {
               ? "Diagram actions"
               : menu.kind === "note"
                 ? "Note actions"
-                : menu.kind === "project"
+                : menu.kind === "project" || menu.kind === "server-project"
                   ? "Project actions"
                   : menu.kind === "private-work"
                     ? `Actions for MY WORK ${menu.work.name}`
