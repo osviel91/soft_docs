@@ -2419,6 +2419,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await anonymousPage.getByRole("button", { name: "Architecture", exact: true }).click();
         await anonymousPage.getByRole("navigation", { name: "Presentation resources" }).getByRole("button", { name: "Customer model" }).click();
         await anonymousPage.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        check("presentation navigator stays open after selecting a resource", await anonymousPage.getByRole("navigation", { name: "Presentation resources" }).count() === 1);
         await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
         await anonymousPage.getByTestId("preview-svg").waitFor({ state: "visible" });
         const notesBox = await anonymousPage.getByTestId("preview-notes").boundingBox();
@@ -2426,7 +2427,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         check("Sequence guidance control does not overlap note controls in Presentation", notesBox !== null && sequenceGuidanceBox !== null && (sequenceGuidanceBox.x + sequenceGuidanceBox.width <= notesBox.x || notesBox.x + notesBox.width <= sequenceGuidanceBox.x || sequenceGuidanceBox.y + sequenceGuidanceBox.height <= notesBox.y || notesBox.y + notesBox.height <= sequenceGuidanceBox.y));
         await anonymousPage.getByRole("button", { name: "Next presentation item" }).click();
         await anonymousPage.getByTestId("event-flow-preview").waitFor({ state: "visible" });
-        await anonymousPage.getByRole("button", { name: "Causal" }).click();
+        await anonymousPage.getByTestId("event-flow-preview").getByRole("button", { name: "Causal", exact: true }).click();
         const causalNode = anonymousPage.locator(".causal-flow .react-flow__node").first();
         await causalNode.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         const causalNodeBox = await causalNode.boundingBox();
