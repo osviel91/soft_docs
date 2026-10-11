@@ -24,13 +24,18 @@ export function createProposalInboxRepository(client: SqlClient): ProposalInboxR
             WHERE ($2::uuid[] IS NULL OR p.id = ANY($2::uuid[]))
               AND ($3::uuid IS NULL OR p.workspace_id = $3::uuid)
               AND ($4::uuid IS NULL OR p.id = $4::uuid)
-         ), latest_reviews AS (
-           SELECT DISTINCT ON (r.proposal_id, r.reviewer_user_id)
-                  r.proposal_id, r.reviewer_user_id, r.decision, GREATEST(r.created_at, r.updated_at) AS activity_at
-             FROM architectural_proposal_reviews r
-             JOIN authorized a ON a.proposal_id = r.proposal_id
-            ORDER BY r.proposal_id, r.reviewer_user_id, r.created_at DESC, r.id DESC
-         ), review_summary AS (
+          ), latest_reviews AS (
+            SELECT DISTINCT ON (r.proposal_id, r.reviewer_user_id)
+                   r.proposal_id, r.reviewer_user_id, r.decision, r.created_at, r.updated_at,
+                   GREATEST(r.created_at, r.updated_at) AS activity_at
+              FROM architectural_proposal_reviews r
+              JOIN authorized a ON a.proposal_id = r.proposal_id
+             ORDER BY r.proposal_id, r.reviewer_user_id, r.created_at DESC, r.id DESC
+          ), my_latest_reviews AS (
+            SELECT proposal_id, decision, created_at, updated_at
+              FROM latest_reviews
+             WHERE reviewer_user_id = $1
+          ), review_summary AS (
            SELECT proposal_id,
                   count(*) FILTER (WHERE decision = 'APPROVE')::int AS approvals,
                   count(*) FILTER (WHERE decision = 'REQUEST_CHANGES')::int AS changes_requested
@@ -43,14 +48,16 @@ export function createProposalInboxRepository(client: SqlClient): ProposalInboxR
          ), enriched AS (
            SELECT a.*, COALESCE(rs.approvals, 0)::int AS approvals,
                   COALESCE(rs.changes_requested, 0)::int AS changes_requested,
-                  CASE WHEN COALESCE(rs.approvals, 0) = 0 AND COALESCE(rs.changes_requested, 0) = 0 THEN 'none'
-                       WHEN rs.approvals > 0 AND rs.changes_requested > 0 THEN 'mixed'
-                       WHEN rs.approvals > 0 THEN 'approved' ELSE 'changes-requested' END AS review_status,
-                  pr.status AS promotion_status, pr.created_at AS promotion_created_at, pr.completed_at AS promotion_completed_at,
+                   CASE WHEN COALESCE(rs.approvals, 0) = 0 AND COALESCE(rs.changes_requested, 0) = 0 THEN 'none'
+                        WHEN rs.approvals > 0 AND rs.changes_requested > 0 THEN 'mixed'
+                        WHEN rs.approvals > 0 THEN 'approved' ELSE 'changes-requested' END AS review_status,
+                   mr.decision AS my_review_decision, mr.created_at AS my_review_created_at, mr.updated_at AS my_review_updated_at,
+                   pr.status AS promotion_status, pr.created_at AS promotion_created_at, pr.completed_at AS promotion_completed_at,
                   GREATEST(a.submitted_at, a.withdrawn_at, a.superseded_at, ra.activity_at, pr.created_at, pr.completed_at) AS last_activity_at
-             FROM authorized a
-             LEFT JOIN review_summary rs ON rs.proposal_id = a.proposal_id
-             LEFT JOIN review_activity ra ON ra.proposal_id = a.proposal_id
+              FROM authorized a
+              LEFT JOIN review_summary rs ON rs.proposal_id = a.proposal_id
+              LEFT JOIN my_latest_reviews mr ON mr.proposal_id = a.proposal_id
+              LEFT JOIN review_activity ra ON ra.proposal_id = a.proposal_id
              LEFT JOIN promotions pr ON pr.project_id = a.project_id AND pr.proposal_id = a.proposal_id
          ), categorized AS (
            SELECT e.*,
@@ -104,8 +111,13 @@ export function createProposalInboxRepository(client: SqlClient): ProposalInboxR
         project: { id: String(row.project_id), name: String(row.project_name) },
         createdAt: date(row.created_at),
         submittedAt: date(row.submitted_at),
-        lastActivityAt: date(row.last_activity_at),
-        review: { status: row.review_status as ProposalInboxItem["review"]["status"], approvals: Number(row.approvals), changesRequested: Number(row.changes_requested) },
+         lastActivityAt: date(row.last_activity_at),
+         myReview: row.my_review_decision == null ? null : {
+           decision: row.my_review_decision as NonNullable<ProposalInboxItem["myReview"]>["decision"],
+           createdAt: date(row.my_review_created_at),
+           updatedAt: date(row.my_review_updated_at),
+         },
+         review: { status: row.review_status as ProposalInboxItem["review"]["status"], approvals: Number(row.approvals), changesRequested: Number(row.changes_requested) },
         promotion: { status: row.promotion_status == null ? null : row.promotion_status as ProposalInboxItem["promotion"]["status"], createdAt: row.promotion_created_at == null ? null : date(row.promotion_created_at), completedAt: row.promotion_completed_at == null ? null : date(row.promotion_completed_at) },
         lifecycle: row.lifecycle as ProposalInboxItem["lifecycle"],
         attentionCategory: row.attention_category as ProposalAttentionCategory,

@@ -15,6 +15,7 @@ const inbox: ServerProposalInbox = {
     createdAt: "2026-01-01T00:00:00.000Z",
     submittedAt: "2026-01-01T00:00:00.000Z",
     lastActivityAt: "2026-01-02T00:00:00.000Z",
+    myReview: { decision: "APPROVE", createdAt: "2026-01-01T01:00:00.000Z", updatedAt: "2026-01-01T01:00:00.000Z" },
     review: { status: "approved", approvals: 1, changesRequested: 0 },
     promotion: { status: null, createdAt: null, completedAt: null },
     lifecycle: "APPROVED",
@@ -37,7 +38,7 @@ describe("ArchitectureInbox", () => {
     render(<ArchitectureInbox client={client} onOpen={onOpen} onBack={vi.fn()} />);
 
     expect(await screen.findByRole("button", { name: /Governed publication/ })).toHaveTextContent("Platform / Checkout");
-    fireEvent.change(screen.getByLabelText("Situation"), { target: { value: "APPROVED_PENDING_PROMOTION" } });
+    fireEvent.change(screen.getByLabelText("Governance situation"), { target: { value: "APPROVED_PENDING_PROMOTION" } });
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenLastCalledWith(expect.objectContaining({ attentionCategory: ["APPROVED_PENDING_PROMOTION"] })));
     fireEvent.change(screen.getByLabelText("Workspace"), { target: { value: "workspace-1" } });
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId: "workspace-1" })));
@@ -46,6 +47,29 @@ describe("ArchitectureInbox", () => {
     expect(onOpen).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Governed publication/ }));
     expect(onOpen).toHaveBeenCalledWith(inbox.items[0], expect.stringContaining("inbox=proposals"));
+    expect(screen.getByText(/Your latest decision: Approved/)).toBeInTheDocument();
+    expect(screen.getByText(/Last activity/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Governed publication/ })).toHaveTextContent("Approved, promotion not evaluated");
+    expect(screen.queryByText(/Assigned to you|Pending review|Unread|New since your last visit/i)).toBeNull();
+  });
+
+  it("renders a personal change request separately from the global category, and omits it when absent", async () => {
+    const changed = { ...inbox, items: [{ ...inbox.items[0]!, myReview: { decision: "REQUEST_CHANGES" as const, createdAt: "2026-01-01T01:00:00.000Z", updatedAt: "2026-01-01T02:00:00.000Z" } }] };
+    const client = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      listProjects: vi.fn().mockResolvedValue([]),
+      listProposalInbox: vi.fn().mockResolvedValue(changed),
+    } as unknown as ServerApiClient;
+    const view = render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    expect(await screen.findByText(/Your latest decision: Changes requested/)).toBeInTheDocument();
+    expect(screen.getByText(/Changes requested ·/)).toBeInTheDocument();
+
+    view.unmount();
+    const withoutReview = { ...inbox, items: [{ ...inbox.items[0]!, myReview: null }] };
+    const noReviewClient = { ...client, listProposalInbox: vi.fn().mockResolvedValue(withoutReview) } as unknown as ServerApiClient;
+    render(<ArchitectureInbox client={noReviewClient} onOpen={vi.fn()} onBack={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /Governed publication/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Your latest decision/)).toBeNull();
   });
 
   it("distinguishes a globally empty inbox, filtered-empty results and request errors", async () => {

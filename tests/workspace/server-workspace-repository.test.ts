@@ -584,3 +584,30 @@ describe("ServerApiClient error mapping", () => {
     await expect(client.deleteProject("p1")).resolves.toBeUndefined();
   });
 });
+
+describe("ServerApiClient proposal inbox contract", () => {
+  const response = (myReview?: unknown) => ({
+    items: [{ proposalId: "proposal-1", ...(myReview === undefined ? {} : { myReview }) }],
+    nextCursor: null,
+    counts: {},
+  });
+
+  it("reads and validates personal review data without accepting an identity parameter", async () => {
+    let requestedUrl = "";
+    const client = new ServerApiClient({
+      fetch: async (input) => {
+        requestedUrl = String(input);
+        return reply(200, response({ decision: "APPROVE", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }));
+      },
+    });
+    const result = await client.listProposalInbox();
+    expect(result.items[0]?.myReview?.decision).toBe("APPROVE");
+    expect(requestedUrl).toBe("/api/inbox/proposals");
+
+    const legacyClient = new ServerApiClient({ fetch: async () => reply(200, response()) });
+    expect((await legacyClient.listProposalInbox()).items[0]?.myReview).toBeNull();
+
+    const invalidClient = new ServerApiClient({ fetch: async () => reply(200, response({ decision: "UNKNOWN", createdAt: "bad", updatedAt: "bad" })) });
+    await expect(invalidClient.listProposalInbox()).rejects.toThrow("proposal inbox response was invalid");
+  });
+});

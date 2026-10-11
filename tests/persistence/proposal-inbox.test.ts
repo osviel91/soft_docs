@@ -52,6 +52,32 @@ it("filters to live workspace access, derives review categories and pages determ
   expect(next.items[0]?.attentionCategory).toBe("APPROVED_PENDING_PROMOTION");
 });
 
+it("returns only the authenticated reviewer's latest effective decision without changing global summaries", async () => {
+  const ids = [14, 15, 16].map((n) => `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
+  await db.query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'VIEWER')", [workspace, otherUser]);
+  await db.query(`INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, base_shared_revision, submitted_at)
+    SELECT id, $2, $3, $4, 'personal review fixture', 'base', '2026-04-01T00:00:00Z' FROM unnest($1::uuid[]) AS id`, [ids, project, author, context]);
+  await db.query(`INSERT INTO architectural_proposal_reviews (id, proposal_id, reviewer_user_id, decision, proposal_base_revision, observed_shared_revision, created_at, updated_at)
+    VALUES ('60000000-0000-4000-8000-000000000014', $1, $3, 'APPROVE', 'base', 'base', '2026-04-01T01:00:00Z', '2026-04-01T01:00:00Z'),
+           ('60000000-0000-4000-8000-000000000015', $1, $3, 'REQUEST_CHANGES', 'base', 'base', '2026-04-01T02:00:00Z', '2026-04-01T02:00:00Z'),
+           ('60000000-0000-4000-8000-000000000016', $1, $4, 'APPROVE', 'base', 'base', '2026-04-01T03:00:00Z', '2026-04-01T03:00:00Z'),
+           ('60000000-0000-4000-8000-000000000017', $2, $3, 'APPROVE', 'base', 'base', '2026-04-01T04:00:00Z', '2026-04-01T04:00:00Z'),
+           ('60000000-0000-4000-8000-000000000018', $5, $4, 'REQUEST_CHANGES', 'base', 'base', '2026-04-01T05:00:00Z', '2026-04-01T05:00:00Z')`, [ids[0], ids[1], user, otherUser, ids[2]]);
+
+  const repository = createProposalInboxRepository(db);
+  const mine = await repository.query({ userId: user, allowedProjectIds: null, filters: { projectId: project, search: "personal review fixture", limit: 10 } });
+  const byOtherUser = await repository.query({ userId: otherUser, allowedProjectIds: [project], filters: { projectId: project, search: "personal review fixture", limit: 10 } });
+  const mineById = new Map(mine.items.map((item) => [item.proposalId, item]));
+
+  expect(mineById.get(ids[0])?.myReview).toEqual({ decision: "REQUEST_CHANGES", createdAt: "2026-04-01T02:00:00.000Z", updatedAt: "2026-04-01T02:00:00.000Z" });
+  expect(mineById.get(ids[1])?.myReview).toEqual({ decision: "APPROVE", createdAt: "2026-04-01T04:00:00.000Z", updatedAt: "2026-04-01T04:00:00.000Z" });
+  expect(mineById.get(ids[2])?.myReview).toBeNull();
+  expect(byOtherUser.items.find((item) => item.proposalId === ids[0])?.myReview).toEqual({ decision: "APPROVE", createdAt: "2026-04-01T03:00:00.000Z", updatedAt: "2026-04-01T03:00:00.000Z" });
+  expect(mine.counts).toEqual(byOtherUser.counts);
+  expect(mine.counts.CHANGES_REQUESTED).toBe(2);
+  expect(mine.items.find((item) => item.proposalId === ids[0])?.review).toMatchObject({ status: "mixed", approvals: 1, changesRequested: 1 });
+});
+
 it("pages through microsecond timestamps and timestamp ties without omissions or duplicates", async () => {
   const ids = [4, 5, 6, 7].map((n) => `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
   await db.query(`INSERT INTO architectural_proposals (id, project_id, author_user_id, source_private_context_id, title, base_shared_revision, base_shared_resource_revisions, submitted_at)
@@ -95,7 +121,7 @@ it("derives every exclusive category and counts mixed reviews as changes request
     VALUES ('70000000-0000-4000-8000-000000000010', $1, $2, '{}'::jsonb, 'base', 'next', 'COMMITTED_COMPLETION_PENDING', '2026-03-02T00:00:00Z', NULL),
            ('70000000-0000-4000-8000-000000000011', $1, $3, '{}'::jsonb, 'base', 'next', 'COMPLETED', '2026-03-02T00:00:00Z', '2026-03-03T00:00:00Z')`, [project, ids[2], ids[3]]);
 
-  const result = await createProposalInboxRepository(db).query({ userId: user, allowedProjectIds: null, filters: { projectId: project, limit: 100 } });
+  const result = await createProposalInboxRepository(db).query({ userId: user, allowedProjectIds: null, filters: { projectId: project, search: "category fixture", limit: 100 } });
   expect(result.items.filter((item) => ids.includes(item.proposalId)).map((item) => item.attentionCategory).sort()).toEqual([
     "CHANGES_REQUESTED", "CHANGES_REQUESTED", "PROMOTION_COMPLETION_PENDING", "PROMOTED", "SUPERSEDED", "WITHDRAWN",
   ].sort());

@@ -276,6 +276,7 @@ export interface ServerProposalInbox {
     createdAt: string;
     submittedAt: string;
     lastActivityAt: string;
+    myReview: { decision: "APPROVE" | "REQUEST_CHANGES"; createdAt: string; updatedAt: string } | null;
     review: { status: "none" | "approved" | "changes-requested" | "mixed"; approvals: number; changesRequested: number };
     promotion: { status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED" | null; createdAt: string | null; completedAt: string | null };
     lifecycle: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
@@ -627,7 +628,24 @@ export class ServerApiClient {
     if (input.search) params.set("search", input.search);
     if (input.cursor) params.set("cursor", input.cursor);
     if (input.limit !== undefined) params.set("limit", String(input.limit));
-    return this.request<ServerProposalInbox>("GET", `/api/inbox/proposals${params.size ? `?${params}` : ""}`);
+    const result = await this.request<ServerProposalInbox>("GET", `/api/inbox/proposals${params.size ? `?${params}` : ""}`);
+    if (!Array.isArray(result.items)) throw new Error("The proposal inbox response was invalid.");
+    for (const item of result.items) {
+      if (item === null || typeof item !== "object") throw new Error("The proposal inbox response was invalid.");
+      const legacyItem = item as typeof item & { myReview?: typeof item.myReview };
+      if (legacyItem.myReview === undefined) legacyItem.myReview = null;
+      if (legacyItem.myReview !== null) {
+        const review = legacyItem.myReview as unknown;
+        if (typeof review !== "object" || review === null) throw new Error("The proposal inbox response was invalid.");
+        const value = review as { decision?: unknown; createdAt?: unknown; updatedAt?: unknown };
+        if (
+          (value.decision !== "APPROVE" && value.decision !== "REQUEST_CHANGES")
+          || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))
+          || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt))
+        ) throw new Error("The proposal inbox response was invalid.");
+      }
+    }
+    return result;
   }
 
   /** Create a project and return its listing (the caller becomes its owner). */

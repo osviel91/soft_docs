@@ -314,6 +314,7 @@ describe("two owners, two projects: neither can reach the other's", () => {
     const hidden = await call("GET", "/api/inbox/proposals?limit=10", { cookie: projectB.owner.cookie });
     expect(visible.status).toBe(200);
     expect(visible.body.items.map((entry: any) => entry.proposalId)).toContain(submitted.body.proposal.id);
+    expect(visible.body.items.find((entry: any) => entry.proposalId === submitted.body.proposal.id).myReview).toBeNull();
     expect(visible.body.items[0]).toMatchObject({ workspace: { id: projectA.owner.userId }, project: { id: projectA.projectId, name: "Project A" } });
     expect(visible.body.counts.PENDING_REVIEW).toBeGreaterThan(0);
     expect(hidden.status).toBe(200);
@@ -381,6 +382,7 @@ describe("two owners, two projects: neither can reach the other's", () => {
     const oneProjectToken = await mint([projectB.projectId]);
     const oneProject = await call("GET", "/api/inbox/proposals", { bearer: oneProjectToken });
     expect(oneProject.body.items.map((item: any) => item.project.id)).toEqual([projectB.projectId]);
+    expect(oneProject.body.items.every((item: any) => item.myReview === null)).toBe(true);
     expect(oneProject.body.counts.PENDING_REVIEW).toBe(1);
 
     const twoProjectToken = await mint([projectA.projectId, projectB.projectId]);

@@ -28,6 +28,11 @@ export interface ProposalInboxItem {
   createdAt: string;
   submittedAt: string;
   lastActivityAt: string;
+  myReview: {
+    decision: "APPROVE" | "REQUEST_CHANGES";
+    createdAt: string;
+    updatedAt: string;
+  } | null;
   review: {
     status: "none" | "approved" | "changes-requested" | "mixed";
     approvals: number;
