@@ -623,6 +623,12 @@ export default function App() {
     void server.openProject(project);
   }, [server.openProject, setBrowserLocation]);
 
+  const selectServerWorkspace = useCallback((workspaceId: string): void => {
+    navigationProjectRequested.current = browserLocation().projectId;
+    navigationProjectResolved.current = null;
+    setSelectedServerWorkspaceId(workspaceId);
+  }, []);
+
   useEffect(() => {
     const onPopState = () => {
       const location = browserLocation();
@@ -921,7 +927,7 @@ export default function App() {
       return;
     }
     const project = server.projects.find((entry) => entry.id === browserLocationState.projectId);
-    if (project) {
+    if (project?.workspaceId === selectedServerWorkspaceId) {
       navigationProjectRequested.current = browserLocationState.projectId;
       navigationProjectResolved.current = null;
       // URL synchronization waits until this project is actually active.
@@ -3429,7 +3435,7 @@ export default function App() {
           onCreatePasswordRecovery={createAdminPasswordRecovery}
           workspaces={serverWorkspaces}
           selectedWorkspaceId={selectedServerWorkspaceId}
-          onSelectWorkspace={setSelectedServerWorkspaceId}
+          onSelectWorkspace={selectServerWorkspace}
           workspaceMembersByWorkspaceId={workspaceMembersByWorkspaceId}
           onSetWorkspaceMemberRole={setWorkspaceMemberRole}
           onRemoveWorkspaceMember={removeWorkspaceMember}
@@ -3527,7 +3533,7 @@ export default function App() {
                       onCreateServerProject={(name) => {
                         void server.createProject(name);
                       }}
-                      onSelectServerWorkspace={setSelectedServerWorkspaceId}
+                      onSelectServerWorkspace={selectServerWorkspace}
                       onReloadServerProjects={() => {
                         void syncServerWorkspace();
                       }}
@@ -3940,7 +3946,7 @@ export default function App() {
                        serverProjects={server.projects}
                        serverWorkspaces={serverWorkspaces}
                        selectedServerWorkspaceId={selectedServerWorkspaceId}
-                       onSelectServerWorkspace={setSelectedServerWorkspaceId}
+                       onSelectServerWorkspace={selectServerWorkspace}
                         onOpenServerProject={selectServerProject}
                       relationships={metadata?.relationships ?? []}
                       comparisonOptions={comparisonOptions.length ? comparisonOptions : undefined}

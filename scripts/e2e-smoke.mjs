@@ -2523,9 +2523,11 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     let sameWorkspaceProjectId = null;
     let destinationProjectId = null;
     let destinationWorkspaceId = null;
+    const sourceAccessCount = { value: 0 };
     const targetAccessCount = { value: 0 };
     const sameWorkspaceAccessCount = { value: 0 };
     const catalogStatuses = [];
+    const browserErrors = [];
     try {
       await page.addInitScript(() => {
         const writes = [];
@@ -2545,17 +2547,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       const sourceWorkspace = (await apiRequest(page, "/api/workspaces")).json?.workspaces?.[0];
       if (!sourceWorkspace) throw new Error("the authenticated workspace catalog was empty");
-      const createProject = async (workspaceId, name, path) => {
-        const response = await apiRequest(page, "/api/projects/bootstrap", {
+      const createProject = async (workspaceId, name) => {
+        const response = await apiRequest(page, "/api/projects", {
           method: "POST",
-          body: JSON.stringify({ workspaceId, name, resources: [{ path, type: "sequence-diagram", content: `title ${name}\nparticipant Browser\n` }] }),
+          body: JSON.stringify({ workspaceId, name }),
         });
         if (response.status !== 201) throw new Error(`project setup failed (${response.status}): ${response.text}`);
         return response.json.project;
       };
-      const sourceProject = await createProject(sourceWorkspace.id, "Inbox navigation source", "source.seq");
+      const sourceProject = await createProject(sourceWorkspace.id, "Inbox navigation source");
       sourceProjectId = sourceProject.id;
-      const sameWorkspaceProject = await createProject(sourceWorkspace.id, "Inbox same-workspace project", "same-workspace.seq");
+      const sameWorkspaceProject = await createProject(sourceWorkspace.id, "Inbox same-workspace project");
       sameWorkspaceProjectId = sameWorkspaceProject.id;
       const sameWorkspace = await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}/private-work`, { method: "POST", body: JSON.stringify({ name: "Same workspace proposal draft" }) });
       if (sameWorkspace.status !== 201) throw new Error(`same-workspace proposal context setup failed (${sameWorkspace.status}): ${sameWorkspace.text}`);
@@ -2572,7 +2574,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const workspaceResponse = await apiRequest(page, "/api/workspaces", { method: "POST", body: JSON.stringify({ name: "Inbox destination workspace" }) });
       if (workspaceResponse.status !== 201) throw new Error(`destination workspace setup failed (${workspaceResponse.status}): ${workspaceResponse.text}`);
       destinationWorkspaceId = workspaceResponse.json.workspace.id;
-      const destinationProject = await createProject(destinationWorkspaceId, "Inbox destination project", "destination.seq");
+      const destinationProject = await createProject(destinationWorkspaceId, "Inbox destination project");
       destinationProjectId = destinationProject.id;
       const work = await apiRequest(page, `/api/projects/${destinationProjectId}/private-work`, { method: "POST", body: JSON.stringify({ name: "Inbox proposal draft" }) });
       if (work.status !== 201) throw new Error(`proposal context setup failed (${work.status}): ${work.text}`);
@@ -2590,16 +2592,34 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       await page.reload({ waitUntil: "domcontentloaded" });
       await waitForAuthEntry(page);
-      await openServerProject(page, "Inbox navigation source");
-      page.on("response", (response) => {
+      page.on("response", async (response) => {
         const url = new URL(response.url());
         if (url.pathname === "/api/workspaces" || (url.pathname === "/api/projects" && url.searchParams.has("workspaceId"))) catalogStatuses.push(`${response.status()} ${url.pathname}${url.search}`);
+        if (response.status() >= 400) browserErrors.push(`${response.status()} ${url.pathname}${url.search} ${await response.text().catch(() => "")}`);
       });
       page.on("request", (request) => {
         const url = new URL(request.url());
+        if (url.pathname === `/api/projects/${sourceProjectId}/access`) sourceAccessCount.value += 1;
         if (url.pathname === `/api/projects/${destinationProjectId}/access`) targetAccessCount.value += 1;
         if (url.pathname === `/api/projects/${sameWorkspaceProjectId}/access`) sameWorkspaceAccessCount.value += 1;
       });
+      page.on("pageerror", (error) => browserErrors.push(error.message));
+      page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+      await openServerProject(page, "Inbox navigation source");
+
+      await page.getByTestId("workspace-back-to-projects").click();
+      await page.getByTestId("workspace-server-workspace-select").selectOption(destinationWorkspaceId);
+      const destinationProjectRow = page.getByTestId("workspace-server-project").filter({ hasText: "Inbox destination project" });
+      try {
+        await destinationProjectRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      } catch {
+        throw new Error(`workspace switch did not load destination project: selected=${await page.getByTestId("workspace-server-workspace-select").inputValue().catch(() => "missing")}; active=${await page.getByTestId("workspace-active-project").innerText().catch(() => "none")}; loading=${await page.getByTestId("workspace-server-projects-loading").innerText().catch(() => "none")}; error=${await page.getByTestId("workspace-server-projects-error").innerText().catch(() => "none")}; catalog=${catalogStatuses.join(" | ")}`);
+      }
+      await destinationProjectRow.click();
+      await page.getByTestId("workspace-active-project").getByText("Inbox destination project").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("explorer switches from workspace A to project B", (await page.getByTestId("workspace-active-project").innerText()).includes("Inbox destination project") && (await page.getByTestId("workspace-active-project").innerText()).includes("Inbox destination workspace"));
+      check("switching workspaces does not reopen the stale project A URL", sourceAccessCount.value === 1, `project A access requests=${sourceAccessCount.value}`);
+
       await page.locator('[data-testid="open-architecture-inbox"]').click();
       await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByRole("button", { name: "Back to workspace" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2626,21 +2646,35 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         .map((entry) => new URL(entry.name))
         .filter((url) => url.pathname === `/api/architectural-proposals/${proposalId}` || url.pathname === `/api/architectural-proposals/${proposalId}/reviews` || url.pathname === `/api/architectural-proposals/${proposalId}/diff`)
         .map((url) => url.searchParams.get("projectId")), sameWorkspaceProposal.json.proposal.id);
-      check("same-workspace proposal detail stays bound to the selected project", page.url() === sameWorkspaceUrl && new URL(sameWorkspaceUrl).searchParams.get("project") === sameWorkspaceProjectId && sameWorkspaceAccessCount.value === 1 && sameWorkspaceProposalReads.length >= 3 && sameWorkspaceProposalReads.every((id) => id === sameWorkspaceProjectId), `access=${sameWorkspaceAccessCount.value}; detail projectIds=${sameWorkspaceProposalReads}`);
+      check("Inbox opens workspace A proposal from active workspace B", page.url() === sameWorkspaceUrl && new URL(sameWorkspaceUrl).searchParams.get("project") === sameWorkspaceProjectId && sameWorkspaceAccessCount.value === 1 && sameWorkspaceProposalReads.length >= 3 && sameWorkspaceProposalReads.every((id) => id === sameWorkspaceProjectId), `active=${await page.getByTestId("workspace-active-project").innerText()}; access=${sameWorkspaceAccessCount.value}; detail projectIds=${sameWorkspaceProposalReads}`);
 
       await page.goBack();
       await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Back to workspace" }).click();
+      await page.getByTestId("workspace-switcher").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("return to explorer preserves proposal project A", (await page.getByTestId("workspace-active-project").innerText()).includes("Inbox same-workspace project"));
+      await page.getByTestId("workspace-back-to-projects").click();
+      await page.getByTestId("workspace-server-workspace-select").selectOption(destinationWorkspaceId);
+      await page.getByTestId("workspace-server-projects-loading").waitFor({ state: "hidden", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("workspace-server-project").filter({ hasText: "Inbox destination project" }).click();
+      await page.getByTestId("workspace-active-project").getByText("Inbox destination project").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("explorer switches back from workspace A to project B", (await page.getByTestId("workspace-active-project").innerText()).includes("Inbox destination project") && (await page.getByTestId("workspace-active-project").innerText()).includes("Inbox destination workspace"));
+      check("second workspace switch opens project B once", targetAccessCount.value === 2, `access requests=${targetAccessCount.value}`);
+      await page.locator('[data-testid="open-architecture-inbox"]').click();
+      await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => [...document.querySelectorAll(".architecture-inbox__filters select")[1]?.options ?? []].some((option) => option.textContent === "Inbox destination project"), null, { timeout: UI_TIMEOUT_MS });
 
       await workspaces.selectOption(destinationWorkspaceId);
       await projects.selectOption(destinationProjectId);
-      await page.getByLabel("Situation").selectOption("PENDING_REVIEW");
+      await page.locator(".architecture-inbox__filters select").nth(2).selectOption("PENDING_REVIEW");
       await page.getByLabel("Proposal title").fill("Inbox cross-workspace");
       await page.getByRole("button", { name: "Search", exact: true }).click();
       const proposalRow = page.getByRole("button", { name: /Inbox cross-workspace proposal/ });
       await proposalRow.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const filteredUrl = new URL(page.url());
-      check("filters update the Inbox URL without navigating", filteredUrl.searchParams.get("workspace") === destinationWorkspaceId && filteredUrl.searchParams.get("projectFilter") === destinationProjectId && filteredUrl.searchParams.get("project") === null && targetAccessCount.value === 0);
+      check("filters update the Inbox URL without navigating", filteredUrl.searchParams.get("workspace") === destinationWorkspaceId && filteredUrl.searchParams.get("projectFilter") === destinationProjectId && filteredUrl.searchParams.get("project") === null && targetAccessCount.value === 2);
 
+      const destinationWritesBeforeProposal = await page.evaluate((id) => window.__inboxHistoryWrites.filter((entry) => new URL(entry.url, location.origin).searchParams.get("project") === id).length, destinationProjectId);
       await proposalRow.click();
       const proposalDetail = page.locator('section[aria-label="Architectural Proposal"]');
       await page.waitForFunction(() => document.querySelector('section[aria-label="Architectural Proposal"]')?.textContent?.includes("Inbox cross-workspace proposal"), null, { timeout: UI_TIMEOUT_MS });
@@ -2649,9 +2683,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const proposalUrl = page.url();
       await delay(700);
       check("proposal opens the destination and its URL settles", page.url() === proposalUrl && new URL(proposalUrl).searchParams.get("proposal") === proposalId);
-      check("the destination project is opened once", targetAccessCount.value === 1, `openProject access requests=${targetAccessCount.value}`);
+      check("same-project proposal navigation does not reopen the destination", targetAccessCount.value === 2, `openProject access requests=${targetAccessCount.value}`);
       const destinationWrites = await page.evaluate((id) => window.__inboxHistoryWrites.filter((entry) => new URL(entry.url, location.origin).searchParams.get("project") === id).length, destinationProjectId);
-      check("the proposal causes one destination URL write", destinationWrites === 1, `writes=${destinationWrites}`);
+      check("the proposal causes one destination URL write", destinationWrites - destinationWritesBeforeProposal === 1, `writes before=${destinationWritesBeforeProposal}; after=${destinationWrites}`);
 
       await page.goBack();
       await page.locator('[data-testid="architecture-inbox"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2661,7 +2695,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.locator('[data-testid="workspace-switcher"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const workspaceUrl = page.url();
       await delay(700);
-      check("return to explorer is stable and does not reopen the project", page.url() === workspaceUrl && new URL(workspaceUrl).searchParams.get("project") === destinationProjectId && targetAccessCount.value === 1, `url=${workspaceUrl}; opens=${targetAccessCount.value}`);
+      check("return to explorer is stable and does not reopen the project", page.url() === workspaceUrl && new URL(workspaceUrl).searchParams.get("project") === destinationProjectId && targetAccessCount.value === 2 && sameWorkspaceAccessCount.value === 1 && sourceAccessCount.value === 1, `url=${workspaceUrl}; project A opens=${sourceAccessCount.value}; Inbox A opens=${sameWorkspaceAccessCount.value}; project B opens=${targetAccessCount.value}`);
+      check("navigation has no browser console, page, or HTTP errors", browserErrors.length === 0, browserErrors.join(" | "));
+      console.log(`  TRACE URLs: ${await page.evaluate(() => window.__inboxHistoryWrites.map((entry) => entry.url).join(" -> "))}`);
+      console.log(`  TRACE catalog: ${catalogStatuses.join(" | ")}`);
+      console.log(`  TRACE project opens: A=${sourceAccessCount.value}, proposal A=${sameWorkspaceAccessCount.value}, B=${targetAccessCount.value}; final active=${await page.getByTestId("workspace-active-project").innerText()}`);
+      console.log(`  TRACE browser errors: ${browserErrors.length ? browserErrors.join(" | ") : "none"}`);
     } finally {
       if (sourceProjectId) await apiRequest(page, `/api/projects/${sourceProjectId}`, { method: "DELETE" });
       if (sameWorkspaceProjectId) await apiRequest(page, `/api/projects/${sameWorkspaceProjectId}`, { method: "DELETE" });
