@@ -25,6 +25,7 @@ import { apiErrorFromResponse, NetworkError } from "./api-errors";
 import type { ResourceMetadata } from "../../domain/workspace/resource-metadata";
 import type { MergeAnalysis } from "../../domain/diff/merge-analysis";
 import type { ResourceAuthorship } from "../../domain/workspace/resource-revision";
+import type { ResourceRepresentation } from "../../domain/workspace/resource-id";
 import type { ResourceDiff } from "../../domain/diff/resource-diff";
 import type { ResourceTrajectoryKind } from "../../domain/workspace/resource-trajectory";
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
@@ -124,6 +125,23 @@ export interface ServerResource {
   type: ServerResourceType;
   revision: number;
   metadata?: ResourceMetadata;
+}
+
+export interface ServerResourceRevisionSummary {
+  resourceId: string;
+  projectId: string;
+  contextId: string | null;
+  revision: number;
+  type: ServerResourceType;
+  representation: ResourceRepresentation;
+  createdAt: string;
+}
+
+export interface ServerResourceRevision extends ServerResourceRevisionSummary {
+  path: string;
+  content: string;
+  metadata?: ResourceMetadata;
+  authoredBy: ResourceAuthorship;
 }
 
 /** What the caller may do in a project, for rendering affordances. */
@@ -903,6 +921,35 @@ export class ServerApiClient {
       "GET",
       `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}${query}`,
     );
+  }
+
+  async listResourceRevisions(
+    projectId: string,
+    resourceId: string,
+    contextId: string | null,
+  ): Promise<ServerResourceRevisionSummary[]> {
+    const context = contextId === null ? "shared" : contextId;
+    const body = await this.request<{ revisions: ServerResourceRevisionSummary[] }>(
+      "GET",
+      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}/revisions?contextId=${encodeURIComponent(context)}`,
+    );
+    if (!Array.isArray(body.revisions)) throw new Error("The resource revision list response was invalid.");
+    return body.revisions;
+  }
+
+  async getResourceRevision(
+    projectId: string,
+    resourceId: string,
+    contextId: string | null,
+    revision: number,
+  ): Promise<ServerResourceRevision> {
+    const context = contextId === null ? "shared" : contextId;
+    const body = await this.request<{ snapshot: ServerResourceRevision }>(
+      "GET",
+      `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}/revisions/${revision}?contextId=${encodeURIComponent(context)}`,
+    );
+    if (!body.snapshot || typeof body.snapshot.content !== "string") throw new Error("The resource revision response was invalid.");
+    return body.snapshot;
   }
 
   async getProjectTrajectory(

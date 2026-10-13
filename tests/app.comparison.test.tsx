@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "./app-harness";
-import ComparisonView, { type ComparisonOption } from "../src/features/preview/ComparisonView";
+import ComparisonView, { RevisionDiffSummary, type ComparisonOption, type RevisionComparisonResource } from "../src/features/preview/ComparisonView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
 import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
+import type { ResourceDiff } from "../src/domain/diff/resource-diff";
+import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../src/workspace/server/api-client";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 
 const FLOW = [
@@ -34,6 +36,41 @@ async function importResources(project: Project, diagrams: DiagramFile[], notes:
   const input = screen.getByTestId("import-file-input") as HTMLInputElement;
   Object.defineProperty(input, "files", { value: [file], configurable: true });
   await act(async () => fireEvent.change(input));
+}
+
+const revisionResource: RevisionComparisonResource = { projectId: "project", resourceId: "stable-resource", contextId: null, path: "model.concept", type: "conceptual" };
+const revisionIndex = { projectId: "project", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
+
+function revisionSnapshot(revision: number, content: string, type: "conceptual" | "database" = "conceptual"): ServerResourceRevision {
+  return { ...revisionResource, revision, type, representation: type, content, authoredBy: { kind: "user", userId: "owner", subjectUserId: "owner" }, createdAt: `2026-01-0${revision}T00:00:00.000Z` };
+}
+
+function revisionClient(snapshots: ServerResourceRevision[]) {
+  const summaries: ServerResourceRevisionSummary[] = snapshots.map(({ resourceId, projectId, contextId, revision, type, representation, createdAt }) => ({ resourceId, projectId, contextId, revision, type, representation, createdAt }));
+  return {
+    listResourceRevisions: async () => summaries,
+    getResourceRevision: async (_projectId: string, _resourceId: string, _contextId: string | null, revision: number) => snapshots.find((snapshot) => snapshot.revision === revision)!,
+  };
+}
+
+function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conceptual" | "database" = "conceptual") {
+  const resource: DiagramFile = { id: "file-id", name: type === "conceptual" ? "model.concept" : "schema.dbschema", source: snapshots.at(-1)?.content ?? "", projectId: "project" };
+  return render(<ComparisonView
+    primary={resource}
+    primarySource={resource.source}
+    resources={[resource]}
+    index={revisionIndex}
+    resourceIdForFile={() => revisionResource.resourceId}
+    onExit={() => {}}
+    onOpenResource={() => {}}
+    maximizedPane={null}
+    onMaximize={() => {}}
+    onRestore={() => {}}
+    maximized={false}
+    onToggleMaximize={() => {}}
+    revisionClient={revisionClient(snapshots)}
+    revisionResource={{ ...revisionResource, type }}
+  />);
 }
 
 describe("App — dual viewer foundation", () => {
@@ -130,6 +167,117 @@ describe("App — dual viewer foundation", () => {
     await waitFor(() => expect(screen.getAllByTestId("database-preview-svg")).toHaveLength(1));
     expect(screen.getByTestId("comparison-parallel-view-notice")).toHaveTextContent("no compatible diff");
     expect(screen.queryByTestId("semantic-comparison-summary")).toBeNull();
+  });
+
+  it("compares revisions of one Conceptual resource and highlights only present entities on each side", async () => {
+    const snapshots = [
+      revisionSnapshot(1, 'concept account "Account"\nconcept order "Order"\nrelation places account -> order "places"'),
+      revisionSnapshot(2, 'concept account "Customer Account"\nconcept invoice "Invoice"\nrelation places account -- invoice "owns"'),
+    ];
+    renderRevisionCompare(snapshots);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+
+    await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Structural diff available"));
+    expect(screen.getByRole("combobox", { name: "Revision A" })).toHaveValue("1");
+    expect(screen.getByRole("combobox", { name: "Revision B" })).toHaveValue("2");
+    await waitFor(() => expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="concept:invoice"]')).toHaveClass("review-change--added"));
+    expect(screen.getByTestId("revision-pane-a").querySelector('[data-review-change="concept:order"]')).toHaveClass("review-change--removed");
+    expect(screen.getByTestId("revision-pane-a").querySelector('[data-review-change="concept:account"]')).toHaveClass("review-change--modified");
+    expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="relationship:places"]')).toHaveClass("review-change--modified");
+    expect(screen.getByTestId("revision-pane-b").querySelector('[data-concept-id="order"]')).toBeNull();
+  });
+
+  it("compares Database revisions using native row highlights and keeps implicit renames as remove plus add", async () => {
+    const snapshots = [
+      revisionSnapshot(1, 'table accounts - "Accounts"\ncolumn accounts account_id "id" {uuid} not-null\ncolumn accounts - "old_name" {text} nullable\nprimary-key accounts_pk accounts (id)', "database"),
+      revisionSnapshot(2, 'table accounts - "Customer Accounts"\ncolumn accounts account_id "account_id" {uuid} not-null\ncolumn accounts - "new_name" {text} nullable\nprimary-key accounts_pk accounts (account_id)', "database"),
+    ];
+    renderRevisionCompare(snapshots, "database");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector('[data-column-id="accounts:old_name"]')).toHaveClass("review-change--removed"));
+    expect(screen.getByTestId("revision-pane-b").querySelector('[data-column-id="accounts:new_name"]')).toHaveClass("review-change--added");
+    expect(screen.getByTestId("revision-pane-a").querySelector('[data-column-id="account_id"]')).toHaveClass("review-change--modified");
+    expect(screen.getByTestId("revision-pane-a").querySelector('[data-node-id="accounts"]')).toHaveClass("review-change--modified");
+  });
+
+  it("does not calculate a structural diff for invalid or incompatible revision snapshots", async () => {
+    const invalid = [
+      revisionSnapshot(1, 'concept account "Account"'),
+      revisionSnapshot(2, "concept invalid"),
+    ];
+    const invalidView = renderRevisionCompare(invalid);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Semantic diff unavailable"));
+    expect(screen.getByRole("heading", { name: "Validation diagnostics" })).toBeInTheDocument();
+    expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("Conceptual source has errors");
+    invalidView.unmount();
+
+    const mixed = [revisionSnapshot(1, 'concept account "Account"'), revisionSnapshot(2, 'table accounts - "Accounts"', "database")];
+    renderRevisionCompare(mixed);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByText(/incompatible representations/)).toBeInTheDocument());
+    expect(screen.queryByTestId("revision-diff-summary")).toBeNull();
+  });
+
+  it("distinguishes source-only changes from revisions with no changes", async () => {
+    const sourceOnly = renderRevisionCompare([
+      revisionSnapshot(1, 'concept account "Account"'),
+      revisionSnapshot(2, '# reviewed\nconcept account "Account"'),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Source/metadata-only changes"));
+    expect(screen.queryByRole("region", { name: "Structural changes" })).toBeNull();
+    sourceOnly.unmount();
+
+    renderRevisionCompare([
+      revisionSnapshot(1, 'concept account "Account"'),
+      revisionSnapshot(2, 'concept account "Account"'),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("No structural changes."));
+  });
+
+  it("ignores an obsolete snapshot pair after the revision selection changes", async () => {
+    const snapshots = [
+      revisionSnapshot(1, 'concept account "Revision One"'),
+      revisionSnapshot(2, 'concept account "Revision Two"'),
+      revisionSnapshot(3, 'concept account "Revision Three"'),
+    ];
+    const pending: Array<{ revision: number; resolve: (snapshot: ServerResourceRevision) => void }> = [];
+    const client = {
+      listResourceRevisions: async () => snapshots.map(({ resourceId, projectId, contextId, revision, type, representation, createdAt }) => ({ resourceId, projectId, contextId, revision, type, representation, createdAt })),
+      getResourceRevision: (_projectId: string, _resourceId: string, _contextId: string | null, revision: number) => new Promise<ServerResourceRevision>((resolve) => pending.push({ revision, resolve })),
+    };
+    const resource: DiagramFile = { id: "file-id", name: "model.concept", source: snapshots[2].content, projectId: "project" };
+    render(<ComparisonView primary={resource} primarySource={resource.source} resources={[resource]} index={revisionIndex} resourceIdForFile={() => revisionResource.resourceId} onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} revisionClient={client} revisionResource={revisionResource} />);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision A" }), { target: { value: "1" } });
+    await waitFor(() => expect(pending).toHaveLength(4));
+    await act(async () => {
+      pending[2].resolve(snapshots[0]);
+      pending[3].resolve(snapshots[2]);
+    });
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1"));
+    await act(async () => {
+      pending[0].resolve(snapshots[1]);
+      pending[1].resolve(snapshots[2]);
+    });
+    expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1");
+    expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("Revision One");
+  });
+
+  it("reports semantic truncation instead of implying the returned subset is complete", () => {
+    const diff = {
+      changed: true,
+      metadata: { changed: false, changes: [] },
+      content: { representation: "conceptual", available: true, changes: [], diagnostics: [], truncated: true, totalChanges: 2001, returnedChanges: 2000 },
+      source: { changed: false, hunks: [], truncated: false, totalHunks: 0, returnedHunks: 0 },
+      summary: { semanticChanges: 2001, sourceHunks: 0, byKind: { added: 2000, removed: 0, modified: 0 }, byEntity: { concept: 2000 } },
+    } as ResourceDiff;
+    render(<RevisionDiffSummary diff={diff} />);
+    expect(screen.getByText("Semantic diff truncated: showing 2000 of 2001 changes.")).toBeInTheDocument();
   });
 
   it("keeps maximize and restore inside comparison mode", async () => {
