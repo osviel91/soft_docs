@@ -8,7 +8,7 @@ import type { ComparisonOccurrence, SemanticComparison } from "./semantic-compar
 
 export interface AnalysisContext {
   projectId: string;
-  knowledgeContext: KnowledgeContext;
+  knowledgeContext: KnowledgeContext | { kind: "local"; id: string; projectId: string };
   index: ProjectIndex;
   resourceId: string | null;
   resourcePath?: string;

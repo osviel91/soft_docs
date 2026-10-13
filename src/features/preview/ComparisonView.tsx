@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DiagramFile } from "../../domain/workspace/types";
+import type { DiagramFile, NoteFile } from "../../domain/workspace/types";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
-import { resourceRepresentationOfName } from "../../domain/workspace/resource-id";
+import { resourceRepresentationOfName, type ResourceRepresentation } from "../../domain/workspace/resource-id";
 import { diagramDisplayName } from "../../language/diagram-title";
+import { noteDisplayName } from "../../language/markdown/note-title";
 import Preview from "./Preview";
 import EventFlowPreview, { type EventFlowView } from "./EventFlowPreview";
+import ConceptualPreview from "./ConceptualPreview";
+import DatabasePreview from "./DatabasePreview";
+import MarkdownView from "../notes/MarkdownView";
+import { diffResources } from "../../domain/diff/resource-diff";
+import { SourceDiffView } from "../diff/SourceDiffView";
 import SemanticMessageInspector from "./SemanticMessageInspector";
 import TraceSurface from "./TraceSurface";
 import { useDiagram } from "./use-diagram";
@@ -18,11 +24,11 @@ import { analysisProvenanceLabel, type KnowledgeContext } from "../../domain/wor
 import type { ServerProject, ServerWorkspace } from "../../workspace/server/api-client";
 
 export interface ComparisonViewProps {
-  primary: DiagramFile;
+  primary: ComparisonResource;
   primarySource: string;
-  diagrams: DiagramFile[];
+  resources: ComparisonResource[];
   index: ProjectIndex | null;
-  resourceIdForFile: (file: DiagramFile) => string | null;
+  resourceIdForFile: (file: ComparisonResource) => string | null;
   onExit: () => void;
   onOpenResource: (resourceId: string, nodeId?: string) => void;
   maximizedPane: "a" | "b" | null;
@@ -45,23 +51,51 @@ export interface ComparisonViewProps {
 
 export interface ComparisonOption {
   id: string;
-  diagram: DiagramFile;
-  resourceId: string | null;
+  resource: ComparisonResource;
+  resourceId: string;
+  representation: ResourceRepresentation;
+  source: string;
   context: AnalysisContext;
   label: string;
 }
 
+export type ComparisonResource = DiagramFile | NoteFile;
+
 type Pane = "a" | "b";
 
 interface Session {
-  resource: DiagramFile;
+  resource: ComparisonResource;
   resourceId: string | null;
   source: string;
-  representation: "sequence" | "event-flow";
+  representation: ResourceRepresentation;
 }
 
-function resourceLabel(file: DiagramFile): string {
-  return `${diagramDisplayName(file.name, file.source)} · ${file.name}`;
+function sourceOf(resource: ComparisonResource): string {
+  return "markdown" in resource ? resource.markdown : resource.source;
+}
+
+function displayName(resource: ComparisonResource, source: string): string {
+  return "markdown" in resource
+    ? noteDisplayName(resource.name, source)
+    : diagramDisplayName(resource.name, source);
+}
+
+function representationLabel(representation: ResourceRepresentation): string {
+  switch (representation) {
+    case "event-flow": return "Event Flow";
+    case "conceptual": return "Conceptual";
+    case "database": return "Database";
+    case "markdown": return "Markdown note";
+    default: return "Sequence diagram";
+  }
+}
+
+function isMessageRepresentation(representation: ResourceRepresentation): boolean {
+  return representation === "sequence" || representation === "event-flow";
+}
+
+function resourceLabel(resource: ComparisonResource): string {
+  return `${displayName(resource, sourceOf(resource))} · ${resource.name}`;
 }
 
 function ComparisonPane({
@@ -140,15 +174,21 @@ function ComparisonPane({
         <div>
           <strong>Viewer {pane.toUpperCase()}</strong>
           {context ? <span className="comparison__provenance">{analysisProvenanceLabel(context.knowledgeContext.kind === "private-work" ? { kind: "private-work", id: context.knowledgeContext.id, label: context.knowledgeContext.name } : { kind: context.knowledgeContext.kind, id: context.knowledgeContext.id })}</span> : null}
-          <h2>{diagramDisplayName(session.resource.name, session.source)}</h2>
-          <span>{session.resource.name} · {session.representation === "event-flow" ? "Event Flow" : "Sequence diagram"}</span>
+          <h2>{displayName(session.resource, session.source)}</h2>
+          <span>{session.resource.name} · {representationLabel(session.representation)}</span>
           {session.resource.metadata?.description ? <p>{session.resource.metadata.description}</p> : null}
           {session.resource.metadata?.tags?.length ? <div className="comparison__tags" aria-label="Resource tags">{session.resource.metadata.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
         </div>
         <button type="button" className="icon-button" aria-label={maximized ? `Restore Viewer ${pane.toUpperCase()}` : `Maximize Viewer ${pane.toUpperCase()}`} onClick={maximized ? onRestore : onMaximize}>{maximized ? "⊡" : "⤢"}</button>
       </header>
       <div className="comparison__viewer">
-        {session.representation === "event-flow" ? (
+        {session.representation === "markdown" ? (
+          <MarkdownView markdown={session.source} />
+        ) : session.representation === "conceptual" ? (
+          <ConceptualPreview source={session.source} onNodeSelect={selectNode} comparisonMode />
+        ) : session.representation === "database" ? (
+          <DatabasePreview source={session.source} onNodeSelect={selectNode} comparisonMode />
+        ) : session.representation === "event-flow" ? (
           <EventFlowPreview
             source={session.source}
             flow={flow}
@@ -173,7 +213,7 @@ function ComparisonPane({
           />
         )}
       </div>
-      <SemanticMessageInspector
+      {isMessageRepresentation(session.representation) ? <SemanticMessageInspector
         index={index}
         sequence={session.representation === "sequence" ? sequence : null}
         eventFlow={flow}
@@ -185,7 +225,7 @@ function ComparisonPane({
         counterpartResourceId={counterpartMessageId ? (pane === "a" ? comparison.occurrences.b[0]?.resourceId : comparison.occurrences.a[0]?.resourceId) ?? null : null}
         counterpartOccurrences={activeSemanticMessageId ? (pane === "a" ? comparison.occurrences.b : comparison.occurrences.a).filter((entry) => entry.messageId === activeSemanticMessageId) : []}
         onFocusOccurrence={onFocusOccurrence}
-      />
+      /> : null}
     </section>
   );
 }
@@ -193,7 +233,7 @@ function ComparisonPane({
 export default function ComparisonView({
   primary,
   primarySource,
-  diagrams,
+  resources,
   index,
   resourceIdForFile,
   onExit,
@@ -219,17 +259,30 @@ export default function ComparisonView({
   const summaryRef = useRef<HTMLElement | null>(null);
   const [summaryHeight, setSummaryHeight] = useState<number | null>(null);
   const [resizingSummary, setResizingSummary] = useState(false);
-  const choices = comparisonOptions ?? diagrams.map((diagram) => ({ id: diagram.id, diagram, label: resourceLabel(diagram), resourceId: resourceIdForFile(diagram), context: undefined as AnalysisContext | undefined }));
+  const sharedContext: KnowledgeContext = { kind: "shared", id: `shared:${primary.projectId}`, projectId: primary.projectId };
+  const localContext: AnalysisContext["knowledgeContext"] = { kind: "local", id: `local:${primary.projectId}`, projectId: primary.projectId };
+  const fallbackContext: AnalysisContext["knowledgeContext"] = activeProjectId ? sharedContext : localContext;
+  const choices: ComparisonOption[] = comparisonOptions ?? resources.map((resource) => {
+    const resourceId = resourceIdForFile(resource) ?? resource.id;
+    return {
+      id: resource.id,
+      resource,
+      label: resourceLabel(resource),
+      resourceId,
+      representation: resourceRepresentationOfName(resource.name),
+      source: sourceOf(resource),
+      context: { projectId: primary.projectId, knowledgeContext: fallbackContext, index: index ?? emptyIndex, resourceId },
+    };
+  });
   const [primaryId, setPrimaryId] = useState(primaryOptionId ?? primary.id);
   const [secondaryId, setSecondaryId] = useState<string | null>(() => choices.find((option) => option.id !== (primaryOptionId ?? primary.id))?.id ?? null);
   const primaryOption = choices.find((option) => option.id === primaryId);
   const secondaryOption = choices.find((option) => option.id === secondaryId);
-  const primaryResource = primaryOption?.diagram ?? (primaryId === primary.id ? primary : null);
-  const secondary = secondaryOption?.diagram ?? null;
-  const sharedContext: KnowledgeContext = { kind: "shared", id: `shared:${primary.projectId}`, projectId: primary.projectId };
+  const primaryResource = primaryOption?.resource ?? (primaryId === primary.id ? primary : null);
+  const secondary = secondaryOption?.resource ?? null;
   const contextFor = (resourceId: string | null): AnalysisContext | undefined => analysisContexts.find((context) => context.resourceId === resourceId);
   const contextOrShared = (resourceId: string | null, fallbackIndex: ProjectIndex | null, sessionId: string): AnalysisContext =>
-    contextFor(resourceId) ?? { projectId: primary.projectId, knowledgeContext: sharedContext, index: fallbackIndex ?? emptyIndex, resourceId, sessionId };
+    contextFor(resourceId) ?? { projectId: primary.projectId, knowledgeContext: fallbackContext, index: fallbackIndex ?? emptyIndex, resourceId, sessionId };
   const primaryContext = primaryOption?.context ?? contextOrShared(primaryResource ? resourceIdForFile(primaryResource) : null, index, "a");
   const secondaryContext = secondaryOption?.context ?? contextOrShared(secondary ? resourceIdForFile(secondary) : null, index, "b");
   useEffect(() => {
@@ -239,35 +292,50 @@ export default function ComparisonView({
     }
   }, [choices, primaryOptionId, primary.id, primaryId, primaryResource, secondaryId]);
 
-  const sourceFor = (optionId: string | null | undefined, diagram: DiagramFile) => optionId === (primaryOptionId ?? primary.id) ? primarySource : diagram.source;
+  const sourceFor = (optionId: string | null | undefined, optionSource: string) => optionId === (primaryOptionId ?? primary.id) ? primarySource : optionSource;
   const primarySession = primaryResource ? {
     resource: primaryResource,
     resourceId: primaryOption?.resourceId ?? resourceIdForFile(primaryResource),
-    source: sourceFor(primaryOption?.id, primaryResource),
-    representation: resourceRepresentationOfName(primaryResource.name) === "event-flow" ? "event-flow" : "sequence",
+    source: sourceFor(primaryOption?.id, primaryOption?.source ?? sourceOf(primaryResource)),
+    representation: primaryOption?.representation ?? resourceRepresentationOfName(primaryResource.name),
   } satisfies Session : null;
   const secondarySession = secondary ? {
     resource: secondary,
     resourceId: secondaryOption?.resourceId ?? resourceIdForFile(secondary),
-    source: sourceFor(secondaryOption?.id, secondary),
-    representation: resourceRepresentationOfName(secondary.name) === "event-flow" ? "event-flow" : "sequence",
+    source: sourceFor(secondaryOption?.id, secondaryOption?.source ?? sourceOf(secondary)),
+    representation: secondaryOption?.representation ?? resourceRepresentationOfName(secondary.name),
   } satisfies Session : null;
+  const semanticComparisonSupported = Boolean(
+    primarySession && secondarySession &&
+    isMessageRepresentation(primarySession.representation) &&
+    isMessageRepresentation(secondarySession.representation),
+  );
+  const markdownComparisonSupported = Boolean(
+    primarySession?.representation === "markdown" && secondarySession?.representation === "markdown",
+  );
   const comparison = useMemo(
-    () => semanticComparisonAcrossContexts(primaryContext, secondaryContext, relationships),
-    [index, primaryContext, secondaryContext, primarySession?.resource.id, secondary?.id, resourceIdForFile, relationships],
+    () => semanticComparisonSupported ? semanticComparisonAcrossContexts(primaryContext, secondaryContext, relationships) : emptySemanticComparison,
+    [index, primaryContext, secondaryContext, primarySession?.resource.id, secondary?.id, resourceIdForFile, relationships, semanticComparisonSupported],
   );
   const [selected, setSelected] = useState<{ pane: ComparisonPaneId; messageId: string } | null>(null);
   const [focused, setFocused] = useState<ComparisonOccurrence | null>(null);
   const [trace, setTrace] = useState<{ start: TraceQueryStart; direction: TraceDirection; pane: Pane } | null>(null);
   const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>({ direction: "both", maxDepth: 8, maxNodes: 120, includeCandidates: false, includeRecovery: false });
-  const analysis = useMemo<CrossContextAnalysis>(() => crossContextAnalysis(
+  const analysis = useMemo<CrossContextAnalysis | null>(() => semanticComparisonSupported ? crossContextAnalysis(
     primaryContext,
     secondaryContext,
     comparison,
     selected ? { messageId: selected.messageId } : null,
     analysisOptions,
     relationships,
-  ), [index, primary.projectId, primaryContext, secondaryContext, primarySession?.resource.id, secondary?.id, resourceIdForFile, comparison, selected?.messageId, analysisOptions, relationships]);
+  ) : null, [index, primary.projectId, primaryContext, secondaryContext, primarySession?.resource.id, secondary?.id, resourceIdForFile, comparison, semanticComparisonSupported, selected?.messageId, analysisOptions, relationships]);
+  const markdownDiff = useMemo(() => markdownComparisonSupported && primarySession && secondarySession
+    ? diffResources(
+        { content: primarySession.source, type: "markdown-document" },
+        { content: secondarySession.source, type: "markdown-document" },
+      ).source
+    : null,
+  [markdownComparisonSupported, primarySession?.source, secondarySession?.source]);
   const selectedCounterparts = selected
     ? (selected.pane === "a" ? comparison.occurrences.b : comparison.occurrences.a).filter((entry) => entry.messageId === selected.messageId)
     : [];
@@ -310,7 +378,7 @@ export default function ComparisonView({
   return (
     <div ref={comparisonRef} className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
       <header className="comparison__toolbar">
-        <strong>Compare diagrams</strong>
+        <strong>Compare resources</strong>
         {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
           {serverWorkspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
         </select></label> : null}
@@ -325,15 +393,18 @@ export default function ComparisonView({
           {choices.filter((option) => option.id !== secondaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
         <label>Viewer B <select aria-label="Viewer B resource" value={secondaryId ?? ""} onChange={(event) => setSecondaryId(event.target.value || null)}>
-          <option value="">Select a diagram</option>
+          <option value="">Select a resource</option>
           {choices.filter((option) => option.id !== primaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
          <button type="button" className="icon-button" onClick={swapViewers} disabled={!secondarySession} title="Swap viewers" aria-label="Swap viewers">⇄</button>
           <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
          <button type="button" className="icon-button" onClick={onExit} title="Close comparison" aria-label="Close comparison">×</button>
       </header>
-       <section ref={summaryRef} className="comparison__summary" aria-label="Architectural analysis summary" data-testid="semantic-comparison-summary" style={summaryHeight === null ? undefined : { flexBasis: summaryHeight }}>
-         <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
+       <section ref={summaryRef} className="comparison__summary" aria-label={semanticComparisonSupported ? "Architectural analysis summary" : "Resource comparison"} data-testid={semanticComparisonSupported ? "semantic-comparison-summary" : "resource-comparison-summary"} style={summaryHeight === null ? undefined : { flexBasis: summaryHeight }}>
+         {semanticComparisonSupported && analysis ? <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
+           : !secondarySession ? <p>Select a second resource to compare.</p>
+             : markdownDiff ? <section className="comparison__markdown-diff" data-testid="comparison-markdown-diff"><h2>Markdown text diff</h2><p>Textual source comparison only; this does not assert an architectural change.</p><SourceDiffView source={markdownDiff} beforeContent={primarySession!.source} afterContent={secondarySession.source} mode="side-by-side" beforeLabel={primarySession!.resource.name} afterLabel={secondarySession.resource.name} /></section>
+               : <section className="comparison__parallel-notice" role="status" data-testid="comparison-parallel-view-notice"><h2>Parallel views · no diff calculated</h2><p>{primarySession?.representation === secondarySession.representation ? `${representationLabel(primarySession.representation)} structural diff is not available in this comparison.` : `${representationLabel(primarySession!.representation)} and ${representationLabel(secondarySession.representation)} are different representations; no compatible diff is calculated.`}</p></section>}
        </section>
        <div
          className="comparison__summary-splitter"
@@ -373,6 +444,7 @@ function traceProvenance(context: AnalysisContext) {
     : { kind: context.knowledgeContext.kind, id: context.knowledgeContext.id };
 }
 
+const emptySemanticComparison: SemanticComparison = { occurrences: { a: [], b: [] }, identities: new Map(), shared: [], onlyA: [], onlyB: [], candidates: [], relationship: null };
 const emptyIndex = { projectId: "", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } satisfies ProjectIndex;
 
 function ComparisonSummary({ comparison, analysis, selected, onSelect, onFocus, onStep, onOpenResource, options, onOptionsChange, resourceNames }: { comparison: SemanticComparison; analysis: CrossContextAnalysis; selected: { pane: ComparisonPaneId; messageId: string } | null; onSelect: (pane: ComparisonPaneId, id: string) => void; onFocus: (occurrence: ComparisonOccurrence) => void; onStep: (direction: 1 | -1) => void; onOpenResource: (resourceId: string, nodeId?: string) => void; options: AnalysisOptions; onOptionsChange: (options: AnalysisOptions) => void; resourceNames: Record<ComparisonPaneId, string> }) {

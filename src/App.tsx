@@ -133,7 +133,7 @@ import { parseConceptual } from "./language/conceptual/analyze";
 import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
 import { parseDatabaseSyntax } from "./language/database/parser";
-import ComparisonView, { type ComparisonOption } from "./features/preview/ComparisonView";
+import ComparisonView, { type ComparisonOption, type ComparisonResource } from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
 import { renderEventFlowTopologyDocument } from "./renderer/pipeline/eventflow-to-topology-svg";
@@ -1363,23 +1363,24 @@ export default function App() {
   // the document helpers — because link resolution needs it too.
   const index = useProjectIndex(selectedProjectId, diagrams, notes, metadata);
   const sharedIndex = useProjectIndex(server.active?.project.id ?? null, sharedDiagrams, sharedNotes, sharedMetadata);
+  const selectedComparisonResource: ComparisonResource | null = selectedDiagram ?? selectedNote;
   const comparisonOptions: ComparisonOption[] = server.active && server.active.contextId && index && sharedIndex
     ? [
-        ...sharedDiagrams.map((diagram) => {
-          const resourceId = sharedResourceIdForFile(diagram);
-          return { id: `shared:${resourceId ?? diagram.id}`, diagram, resourceId, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "shared" as const, id: `shared:${server.active!.project.id}`, projectId: server.active!.project.id }, index: sharedIndex, resourceId }, label: `SHARED · ${diagram.name}` };
+        ...[...sharedDiagrams, ...sharedNotes].map((resource) => {
+          const resourceId = sharedResourceIdForFile(resource) ?? resource.id;
+          return { id: `shared:${resourceId ?? resource.id}`, resource, resourceId, representation: resourceRepresentationOfName(resource.name), source: "markdown" in resource ? resource.markdown : resource.source, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "shared" as const, id: `shared:${server.active!.project.id}`, projectId: server.active!.project.id }, index: sharedIndex, resourceId }, label: `SHARED · ${resource.name}` };
         }),
-        ...diagrams.map((diagram) => {
-          const resourceId = resourceIdForFile(diagram);
+        ...[...diagrams, ...notes].map((resource) => {
+          const resourceId = resourceIdForFile(resource) ?? resource.id;
           const work = server.privateWorkContexts.find((entry) => entry.id === server.active!.contextId);
-          return { id: `my-work:${server.active!.contextId}:${resourceId ?? diagram.id}`, diagram, resourceId, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "private-work" as const, id: server.active!.contextId!, projectId: server.active!.project.id, ownerUserId: work?.ownerUserId ?? "", name: work?.name ?? "MY WORK", lifecycle: work?.lifecycle ?? "active", createdAt: new Date(work?.createdAt ?? 0), updatedAt: new Date(work?.updatedAt ?? 0) }, index, resourceId }, label: `MY WORK · ${diagram.name}` };
+          return { id: `my-work:${server.active!.contextId}:${resourceId ?? resource.id}`, resource, resourceId, representation: resourceRepresentationOfName(resource.name), source: "markdown" in resource ? resource.markdown : resource.source, context: { projectId: server.active!.project.id, knowledgeContext: { kind: "private-work" as const, id: server.active!.contextId!, projectId: server.active!.project.id, ownerUserId: work?.ownerUserId ?? "", name: work?.name ?? "MY WORK", lifecycle: work?.lifecycle ?? "active", createdAt: new Date(work?.createdAt ?? 0), updatedAt: new Date(work?.updatedAt ?? 0) }, index, resourceId }, label: `MY WORK · ${resource.name}` };
         }),
       ]
     : [];
-  const comparisonPrimaryOptionId = selectedDiagram
+  const comparisonPrimaryOptionId = selectedComparisonResource
     ? server.active?.contextId
-      ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedDiagram) ?? selectedDiagram.id}`
-      : `shared:${sharedResourceIdForFile(selectedDiagram) ?? selectedDiagram.id}`
+      ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
+      : `shared:${sharedResourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
     : undefined;
   const activeBindingView = serverIndexedView(index, [...diagrams, ...notes]);
   const sharedBindingView = serverIndexedView(sharedIndex, [...sharedDiagrams, ...sharedNotes]);
@@ -3419,8 +3420,8 @@ export default function App() {
               type="button"
               className="button"
               data-testid="compare-mode-button"
-              aria-label="Compare current diagram with another diagram"
-              disabled={!selectedDiagram}
+              aria-label="Compare current resource with another resource"
+              disabled={!selectedComparisonResource}
               onClick={() => {
                 setComparisonOpen(true);
                 setComparisonMaximizedPane(null);
@@ -4006,11 +4007,11 @@ export default function App() {
                       mode={proposalInspector.mode}
                       onModeChange={handleProposalModeChange}
                     /> : <section className="proposal-inspector" aria-label="Change Inspector"><p className="governance-eyebrow">CHANGE INSPECTOR</p><p>Select a proposal change to inspect its canonical comparison.</p></section>
-                  ) : comparisonOpen && selectedDiagram ? (
+                  ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
-                      primary={selectedDiagram}
+                      primary={selectedComparisonResource}
                       primarySource={source}
-                      diagrams={allDiagrams}
+                      resources={[...allDiagrams, ...allNotes]}
                       index={index}
                       resourceIdForFile={resourceIdForFile}
                       onExit={() => {

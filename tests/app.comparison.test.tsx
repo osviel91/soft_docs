@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "./app-harness";
 import ComparisonView, { type ComparisonOption } from "../src/features/preview/ComparisonView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
-import type { DiagramFile } from "../src/domain/workspace/types";
+import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
+import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 
 const FLOW = [
   "event OrderCreated",
@@ -27,16 +28,24 @@ async function project(): Promise<void> {
   await waitFor(() => expect(screen.getByTestId("project-name")).toHaveTextContent("Compare"));
 }
 
+async function importResources(project: Project, diagrams: DiagramFile[], notes: NoteFile[] = []): Promise<void> {
+  const bytes = exportProjectToZip(project, diagrams, notes);
+  const file = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], "comparison.zip", { type: "application/zip" });
+  const input = screen.getByTestId("import-file-input") as HTMLInputElement;
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
+  await act(async () => fireEvent.change(input));
+}
+
 describe("App — dual viewer foundation", () => {
   it("labels same-path SHARED and MY WORK diagrams as distinct selectable versions", () => {
     const shared: DiagramFile = { id: "shared-file", name: "checkout.seq", source: "participant Shared", projectId: "p" };
     const work: DiagramFile = { id: "work-file", name: "checkout.seq", source: "participant Work", projectId: "p" };
     const index = { projectId: "p", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
     const options: ComparisonOption[] = [
-      { id: "shared:r1", diagram: shared, resourceId: "r1", label: "SHARED · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index, resourceId: "r1" } },
-      { id: "my-work:work1:r1", diagram: work, resourceId: "r1", label: "MY WORK · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "private-work", id: "work1", projectId: "p", ownerUserId: "u", name: "Draft", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index, resourceId: "r1" } },
+      { id: "shared:r1", resource: shared, resourceId: "r1", representation: "sequence", source: shared.source, label: "SHARED · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index, resourceId: "r1" } },
+      { id: "my-work:work1:r1", resource: work, resourceId: "r1", representation: "sequence", source: work.source, label: "MY WORK · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "private-work", id: "work1", projectId: "p", ownerUserId: "u", name: "Draft", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index, resourceId: "r1" } },
     ];
-    render(<ComparisonView primary={work} primarySource={work.source} diagrams={[work]} index={index} resourceIdForFile={() => "r1"} comparisonOptions={options} primaryOptionId="my-work:work1:r1" onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} />);
+    render(<ComparisonView primary={work} primarySource={work.source} resources={[work]} index={index} resourceIdForFile={() => "r1"} comparisonOptions={options} primaryOptionId="my-work:work1:r1" onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} />);
 
     expect(screen.getByRole("option", { name: "SHARED · checkout.seq" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "MY WORK · checkout.seq" })).toBeInTheDocument();
@@ -87,6 +96,40 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("event-catalog")).toBeInTheDocument();
     expect(screen.getAllByTestId("event-flow-preview")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
+  });
+
+  it("opens Compare for a selected Note and shows a real text diff", async () => {
+    render(<App />);
+    const notes: NoteFile[] = [
+      { id: "before", name: "before.md", projectId: "notes", markdown: "# Policy\n\nUnchanged context.\nOld rule.\n" },
+      { id: "after", name: "after.md", projectId: "notes", markdown: "# Policy\n\nUnchanged context.\nNew rule.\nAdded rule.\n" },
+    ];
+    await importResources({ id: "notes", name: "Notes", datasetIds: [], noteIds: notes.map((note) => note.id) }, [], notes);
+
+    expect(screen.getByTestId("compare-mode-button")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByTestId("comparison-markdown-diff")).toBeInTheDocument();
+    expect(within(screen.getByTestId("comparison-pane-a")).getByText("LOCAL")).toBeInTheDocument();
+    expect(within(screen.getByTestId("comparison-pane-b")).getByText("LOCAL")).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-markdown-diff")).toHaveTextContent("Unchanged context.");
+    expect(screen.getByTestId("comparison-markdown-diff")).toHaveTextContent("Old rule.");
+    expect(screen.getByTestId("comparison-markdown-diff")).toHaveTextContent("New rule.");
+    expect(screen.getByTestId("comparison-markdown-diff")).toHaveTextContent("Added rule.");
+  });
+
+  it("renders Conceptual and Database with their native previews and labels parallel views", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "concept", name: "model.concept", projectId: "models", source: 'concept customer "Customer"\nconcept order "Order"\nrelation places customer -> order "places"' },
+      { id: "database", name: "schema.dbschema", projectId: "models", source: 'table customers - "Customers"\ncolumn customers id "id" {uuid} not-null' },
+    ];
+    await importResources({ id: "models", name: "Models", datasetIds: diagrams.map((diagram) => diagram.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+
+    await waitFor(() => expect(screen.getAllByTestId("conceptual-preview-svg")).toHaveLength(1));
+    await waitFor(() => expect(screen.getAllByTestId("database-preview-svg")).toHaveLength(1));
+    expect(screen.getByTestId("comparison-parallel-view-notice")).toHaveTextContent("no compatible diff");
+    expect(screen.queryByTestId("semantic-comparison-summary")).toBeNull();
   });
 
   it("keeps maximize and restore inside comparison mode", async () => {
