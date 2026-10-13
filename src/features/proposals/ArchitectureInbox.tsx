@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ServerApiClient, ServerProject, ServerProposalInbox, ServerWorkspace } from "../../workspace/server/api-client";
 import { ResourceNotFoundError } from "../../workspace/server/api-errors";
 import PageHeader from "../ui/PageHeader";
@@ -28,12 +28,12 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
   const [submittedSearch, setSubmittedSearch] = useState(() => initialQuery.get("q") ?? "");
   const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
-  const [result, setResult] = useState<ServerProposalInbox | null>(null);
+  const [result, setResult] = useState<{ key: string; client: ServerApiClient; value: ServerProposalInbox } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ key: string; client: ServerApiClient; message: string } | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
-  const [inboxAttempt, setInboxAttempt] = useState(0);
+  const [queryGeneration, setQueryGeneration] = useState(0);
   const [unavailableNotice, setUnavailableNotice] = useState(() => initialQuery.get("unavailable") === "1");
 
   useEffect(() => {
@@ -62,22 +62,31 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
     return () => { active = false; };
   }, [client, catalogAttempt]);
 
+  const cursor = cursors[pageIndex];
+  const inboxQuery = useMemo(() => ({
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(category === "NEEDS_ATTENTION" ? { attentionCategory: ["PENDING_REVIEW", "CHANGES_REQUESTED", "APPROVED_PENDING_PROMOTION", "PROMOTION_COMPLETION_PENDING"] } : category ? { attentionCategory: [category] } : {}),
+    ...(submittedSearch ? { search: submittedSearch } : {}),
+    ...(cursor ? { cursor } : {}),
+    limit: 50,
+  }), [category, cursor, projectId, submittedSearch, workspaceId]);
+  const queryKey = JSON.stringify([inboxQuery, pageIndex, queryGeneration]);
+  const visibleResult = result?.key === queryKey && result.client === client ? result.value : null;
+  const visibleError = error?.key === queryKey && error.client === client ? error.message : null;
+  const queryLoading = loading || (!visibleResult && !visibleError);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError(null);
-    void client.listProposalInbox({
-      ...(workspaceId ? { workspaceId } : {}),
-      ...(projectId ? { projectId } : {}),
-      ...(category === "NEEDS_ATTENTION" ? { attentionCategory: ["PENDING_REVIEW", "CHANGES_REQUESTED", "APPROVED_PENDING_PROMOTION", "PROMOTION_COMPLETION_PENDING"] } : category ? { attentionCategory: [category] } : {}),
-      ...(submittedSearch ? { search: submittedSearch } : {}),
-      ...(cursors[pageIndex] ? { cursor: cursors[pageIndex] } : {}),
-      limit: 50,
-    }).then((value) => { if (active) setResult(value); }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Could not load the Architecture Inbox.");
+    void client.listProposalInbox(inboxQuery).then((value) => {
+      if (active) setResult({ key: queryKey, client, value });
+    }).catch((reason: unknown) => {
+      if (active) setError({ key: queryKey, client, message: reason instanceof Error ? reason.message : "Could not load the Architecture Inbox." });
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [category, client, cursors, inboxAttempt, pageIndex, projectId, submittedSearch, workspaceId]);
+  }, [client, inboxQuery, queryKey]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -89,7 +98,8 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
     window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
   }, [category, projectId, submittedSearch, workspaceId]);
 
-  const resetPage = () => { setCursors([undefined]); setPageIndex(0); };
+  const invalidateQuery = () => setQueryGeneration((generation) => generation + 1);
+  const resetPage = () => { invalidateQuery(); setCursors([undefined]); setPageIndex(0); };
   const visibleProjects = projects.filter((project) => !workspaceId || project.workspaceId === workspaceId);
   const returnParams = new URLSearchParams({ inbox: "proposals" });
   if (workspaceId) returnParams.set("workspace", workspaceId);
@@ -103,7 +113,7 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
     <PageHeader eyebrow="Cross-project governance" title="Architecture Inbox" description="Track governance state and activity for proposals across the workspaces you can access." />
     {unavailableNotice ? <p className="architecture-inbox__error" role="alert">This proposal is unavailable or you no longer have access. You are back in the Inbox. <button type="button" className="button button--small" onClick={() => { setUnavailableNotice(false); const params = new URLSearchParams(window.location.search); params.delete("unavailable"); window.history.replaceState({}, "", `${window.location.pathname}?${params}`); }}>Dismiss</button></p> : null}
     <section className="architecture-inbox__summary" aria-label="Proposal attention summary">
-      {Object.entries(categoryLabels).map(([key, label]) => <button key={key} type="button" aria-pressed={category === key} onClick={() => { setCategory(category === key ? "" : key); resetPage(); }}><strong>{result?.counts[key as keyof ServerProposalInbox["counts"]] ?? "—"}</strong><span>{label}</span></button>)}
+      {Object.entries(categoryLabels).map(([key, label]) => <button key={key} type="button" aria-pressed={category === key} onClick={() => { setCategory(category === key ? "" : key); resetPage(); }}><strong>{visibleResult?.counts[key as keyof ServerProposalInbox["counts"]] ?? "—"}</strong><span>{label}</span></button>)}
     </section>
     <form className="architecture-inbox__filters" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(search.trim()); resetPage(); }}>
       <label><span>Workspace</span><select value={workspaceId} onChange={(event) => { setWorkspaceId(event.target.value); setProjectId(""); resetPage(); }}><option value="">All accessible workspaces</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>
@@ -112,12 +122,12 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
       <label className="architecture-inbox__search"><span>Proposal title</span><input type="search" maxLength={200} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles" /></label>
       <button type="submit" className="button">Search</button>
     </form>
-    {catalogError ? <p className="architecture-inbox__error" role="alert">{catalogError} <button type="button" className="button button--small" onClick={() => { setCatalogError(null); setCatalogAttempt((attempt) => attempt + 1); }}>Retry</button></p> : error ? <p className="architecture-inbox__error" role="alert">{error} <button type="button" className="button button--small" onClick={() => setInboxAttempt((attempt) => attempt + 1)}>Retry</button></p> : null}
-    {loading && !result ? <p role="status">Loading proposals…</p> : null}
-    {!catalogError && !error && !loading && result?.items.length === 0 ? <p className="architecture-inbox__empty">{!workspaceId && !projectId && !submittedSearch && Object.values(result.counts).every((count) => count === 0) ? "No proposals are available in your accessible workspaces." : "No proposals match these filters."}</p> : null}
-    {result?.items.length ? <>
-      <ul className="architecture-inbox__list" aria-busy={loading}>
-        {result.items.map((item) => <li key={`${item.project.id}:${item.proposalId}`}>
+    {catalogError ? <p className="architecture-inbox__error" role="alert">{catalogError} <button type="button" className="button button--small" onClick={() => { setCatalogError(null); setCatalogAttempt((attempt) => attempt + 1); }}>Retry</button></p> : visibleError ? <p className="architecture-inbox__error" role="alert">{visibleError} <button type="button" className="button button--small" onClick={() => { invalidateQuery(); setLoading(true); }}>Retry</button></p> : null}
+    {queryLoading ? <p role="status">Loading proposals…</p> : null}
+    {!catalogError && !visibleError && !queryLoading && visibleResult?.items.length === 0 ? <p className="architecture-inbox__empty">{!workspaceId && !projectId && !submittedSearch && Object.values(visibleResult.counts).every((count) => count === 0) ? "No proposals are available in your accessible workspaces." : "No proposals match these filters."}</p> : null}
+    {visibleResult?.items.length ? <>
+      <ul className="architecture-inbox__list" aria-busy={queryLoading}>
+        {visibleResult.items.map((item) => <li key={`${item.project.id}:${item.proposalId}`}>
           <button type="button" className="architecture-inbox__item" onClick={() => onOpen(item, returnTo)}>
             <span className="architecture-inbox__item-heading"><strong>{item.title}</strong><span>{categoryLabels[item.attentionCategory]}</span></span>
             <span className="architecture-inbox__location">{item.workspace.name} <span aria-hidden="true">/</span> {item.project.name}</span>
@@ -129,9 +139,9 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
         </li>)}
       </ul>
       <nav className="architecture-inbox__pagination" aria-label="Inbox pages">
-        <button type="button" className="button" disabled={pageIndex === 0 || loading} onClick={() => setPageIndex((index) => index - 1)}>Previous</button>
+        <button type="button" className="button" disabled={pageIndex === 0 || queryLoading} onClick={() => { invalidateQuery(); setPageIndex((index) => index - 1); }}>Previous</button>
         <span>Page {pageIndex + 1}</span>
-        <button type="button" className="button" disabled={!result.nextCursor || loading} onClick={() => { setCursors((current) => [...current.slice(0, pageIndex + 1), result.nextCursor!]); setPageIndex((index) => index + 1); }}>Next</button>
+        <button type="button" className="button" disabled={!visibleResult.nextCursor || queryLoading} onClick={() => { invalidateQuery(); setCursors((current) => [...current.slice(0, pageIndex + 1), visibleResult.nextCursor!]); setPageIndex((index) => index + 1); }}>Next</button>
       </nav>
     </> : null}
   </main>;
