@@ -30,6 +30,7 @@ describe("Database SVG renderer", () => {
     expect(svg).toContain("PK");
     expect(svg).toContain("NOT NULL");
     expect(svg).toContain('data-edge-id="billing_customer"');
+    expect(svg).toContain('markerUnits="userSpaceOnUse"');
     expect(svg).toContain("customer_id → id");
     expect(svg).toContain("default gen()");
   });

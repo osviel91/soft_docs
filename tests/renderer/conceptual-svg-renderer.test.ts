@@ -15,6 +15,8 @@ describe("Conceptual SVG renderer", () => {
     expect(svg).toContain('data-node-id="customer"');
     expect(svg).toContain('data-review-change="concept:customer"');
     expect(svg).toContain('marker-end="url(#conceptual-arrow-proposed)"');
+    expect(svg).toContain('markerUnits="userSpaceOnUse"');
+    expect(svg).toContain('fill="var(--text-muted,var(--muted,#5b6472))"');
   });
 
   it("renders every wrapped relationship-label line without changing its text", async () => {

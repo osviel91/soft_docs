@@ -158,8 +158,8 @@ export const COMMAND_CATALOG: CommandSpec[] = [
   },
   {
     id: "export-diagram",
-    label: "Export Diagram…",
-    description: "Export the open diagram as SVG, PNG or PDF.",
+    label: "Export Resource…",
+    description: "Export the open diagram or download the open Markdown document.",
     category: "Export",
     binding: chord("e"),
   },

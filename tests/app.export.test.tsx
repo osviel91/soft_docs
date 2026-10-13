@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./app-harness";
-import type { DiagramFile, Project } from "../src/domain/workspace/types";
+import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
 import { readZip } from "../src/workspace/transfer/zip";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 
@@ -63,6 +63,20 @@ describe("App — export", () => {
     'concept customer "Customer"',
     'concept order "Order"',
     'relation places customer -> order "places orders"',
+  ].join("\n");
+  const DATABASE = [
+    'table customers - "Customers"',
+    'column customers customer_id "id" {uuid} not-null',
+    'primary-key customers_pk customers (id)',
+  ].join("\n");
+  const CAUSAL_EVENT_FLOW = [
+    "title Causal delivery",
+    "event DeliveryRequested",
+    "event DeliverySucceeded",
+    "handler DeliveryHandler",
+    "DeliveryRequested handled by DeliveryHandler",
+    "DeliveryHandler causes DeliverySucceeded",
+    "effect send-delivery on DeliveryHandler kind external: Send delivery",
   ].join("\n");
 
   afterEach(() => {
@@ -125,6 +139,14 @@ describe("App — export", () => {
     await waitFor(() => expect(screen.getByTestId("conceptual-preview-svg")).toBeInTheDocument());
   }
 
+  async function importArchive(project: Project, diagrams: DiagramFile[], notes: NoteFile[] = []): Promise<void> {
+    const input = screen.getByTestId("import-file-input") as HTMLInputElement;
+    const bytes = exportProjectToZip(project, diagrams, notes);
+    const file = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], "export-fixture.zip", { type: "application/zip" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => fireEvent.change(input));
+  }
+
   it("exports the current Event Flow as a rendered SVG document", async () => {
     render(<App />);
     fireEvent.click(screen.getByTestId("local-create-toggle"));
@@ -156,6 +178,26 @@ describe("App — export", () => {
     expect(text).toContain("OrderCreated");
   });
 
+  it("exports the selected causal Event Flow representation, not Flow", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId("local-create-toggle"));
+    fireEvent.change(screen.getByTestId("project-name-input"), { target: { value: "Delivery" } });
+    fireEvent.click(screen.getByTestId("create-project-button"));
+    await waitFor(() => expect(screen.getByTestId("project-name")).toHaveTextContent("Delivery"));
+    await runCommand("New Event Flow");
+    fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: CAUSAL_EVENT_FLOW } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Causal" })).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(screen.getByTestId("resource-export-action")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("resource-export-action"));
+    expect.soft(screen.getByTestId("export-preview")).toHaveAttribute("src", expect.stringContaining("Causal%20event%20flow"));
+    await act(async () => fireEvent.click(screen.getByTestId("export-confirm")));
+    await waitFor(() => expect(transfer.downloads).toHaveLength(1));
+    const svg = new TextDecoder().decode(transfer.downloads[0].bytes);
+    expect.soft(svg).toContain('aria-label="Causal event flow"');
+    expect.soft(svg).toContain("Send delivery");
+  });
+
   it("exports a Conceptual diagram as its rendered SVG", async () => {
     render(<App />);
     await importConceptualProject();
@@ -171,6 +213,37 @@ describe("App — export", () => {
     expect(svg).toContain('data-node-id="order"');
     expect(svg).toContain('data-edge-id="places"');
     expect(svg).toContain("places orders");
+  });
+
+  it.each(["svg", "png", "pdf"] as const)("exports a Database diagram as %s", async (format) => {
+    render(<App />);
+    const project: Project = { id: "stores", name: "Stores", datasetIds: ["schema"], noteIds: [] };
+    const database: DiagramFile = { id: "schema", name: "stores.dbschema", projectId: project.id, source: DATABASE };
+    await importArchive(project, [database]);
+    await waitFor(() => expect(screen.getByTestId("database-preview-svg")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("resource-export-action")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("resource-export-action"));
+    if (format !== "svg") fireEvent.click(screen.getByTestId(`export-format-${format}`));
+    await act(async () => fireEvent.click(screen.getByTestId("export-confirm")));
+    await waitFor(() => expect(transfer.downloads).toHaveLength(1));
+    const svg = format === "svg"
+      ? new TextDecoder().decode(transfer.downloads[0].bytes)
+      : (format === "png" ? transfer.pngSources : transfer.pdfSources)[0];
+    expect(svg).toContain('aria-label="Database Diagram"');
+    expect(svg).toContain('data-node-id="customers"');
+  });
+
+  it("exports a Markdown note as its source file", async () => {
+    render(<App />);
+    const project: Project = { id: "notes", name: "Notes", datasetIds: [], noteIds: ["readme"] };
+    const note: NoteFile = { id: "readme", name: "readme.md", projectId: project.id, markdown: "# Architecture\n\nExact source.\n" };
+    await importArchive(project, [], [note]);
+    await waitFor(() => expect(screen.getByTestId("markdown-textarea")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("resource-export-action")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("resource-export-action"));
+    await waitFor(() => expect(transfer.downloads).toHaveLength(1));
+    expect(transfer.downloads[0].filename).toBe("readme.md");
+    expect(new TextDecoder().decode(transfer.downloads[0].bytes)).toBe(note.markdown);
   });
 
   it.each(["png", "pdf"] as const)("exports Conceptual %s from its rendered SVG", async (format) => {
@@ -268,7 +341,7 @@ describe("App — export", () => {
     expect(screen.getByTestId("export-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("export-cancel"));
 
-    await runCommand("Export Diagram");
+    await runCommand("Export Resource");
     await waitFor(() => {
       expect(screen.getByTestId("export-dialog")).toBeInTheDocument();
     });
