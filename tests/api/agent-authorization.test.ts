@@ -515,4 +515,24 @@ describe("the shared API serves a credential too", () => {
     const listed = await dependencies.catalog.listProjects(context, owner);
     expect(listed).toHaveLength(1);
   });
+
+  it("protects revision history with resource scope and project restrictions", async () => {
+    const owner = await aUser();
+    const projectId = await aProject(owner, "Revision scopes");
+    const workId = workFor(projectId);
+    const resource = await dependencies.catalog.createResource(sessionContext(owner), projectId, {
+      path: "private.concept",
+      type: "conceptual",
+      content: 'concept customer "Customer"',
+      contextId: workId,
+    });
+    const noResourceRead = await credentialContext(owner, ["project:read"]);
+    const otherProjectId = await aProject(owner, "Other restricted project");
+    const restricted = await credentialContext(owner, ["project:read", "resource:read"], [otherProjectId]);
+    const reader = await credentialContext(owner, ["project:read", "resource:read"]);
+
+    await expect(dependencies.resourceRevisions.list(noResourceRead, projectId, resource.id, workId)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(dependencies.resourceRevisions.get(restricted, projectId, resource.id, workId, 1)).rejects.toMatchObject({ code: "not_found" });
+    await expect(dependencies.resourceRevisions.get(reader, projectId, resource.id, workId, 1)).resolves.toMatchObject({ resourceId: resource.id, projectId, contextId: workId, revision: 1 });
+  });
 });

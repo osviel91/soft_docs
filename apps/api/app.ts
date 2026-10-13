@@ -27,6 +27,7 @@ import { createProjectShareService } from "../../src/application/project-share-s
 import { createAgentService } from "../../src/application/agent-service";
 import { createChangeProposalService } from "../../src/application/change-proposal-service";
 import { createResourceTrajectoryService } from "../../src/application/resource-trajectory-service";
+import { createResourceRevisionService } from "../../src/application/resource-revision-service";
 import { createProposalInboxService } from "../../src/application/proposal-inbox-service";
 import { createArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createPromotionService } from "../../src/application/promotion-service";
@@ -73,6 +74,7 @@ export interface AppDependencies {
   capabilities: ReturnType<typeof createCapabilityService>;
   bootstrap: ReturnType<typeof createProjectBootstrapService>;
   trajectory: ReturnType<typeof createResourceTrajectoryService>;
+  resourceRevisions: ReturnType<typeof createResourceRevisionService>;
   proposalInbox: ReturnType<typeof createProposalInboxService>;
   /** Where a project's files live. Never derived from a request. */
   storageFor: ServerRuntime["storageFor"];
@@ -241,6 +243,11 @@ export async function createApp(
     capabilities,
     bootstrap,
     trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
+    resourceRevisions: createResourceRevisionService({
+      projects: runtime.projects,
+      knowledgeContexts: runtime.knowledgeContexts,
+      policy,
+    }),
     proposalInbox: createProposalInboxService({ repository: runtime.proposalInbox, cursorSecret: config.tokenPepper }),
     storageFor: runtime.storageFor,
     locationFor: runtime.locationFor,

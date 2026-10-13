@@ -133,7 +133,7 @@ import { parseConceptual } from "./language/conceptual/analyze";
 import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
 import { parseDatabaseSyntax } from "./language/database/parser";
-import ComparisonView, { type ComparisonOption, type ComparisonResource } from "./features/preview/ComparisonView";
+import ComparisonView, { type ComparisonOption, type ComparisonResource, type RevisionComparisonResource } from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
 import { renderEventFlowTopologyDocument } from "./renderer/pipeline/eventflow-to-topology-svg";
@@ -1382,6 +1382,17 @@ export default function App() {
       ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
       : `shared:${sharedResourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
     : undefined;
+  const historicalComparisonResource: RevisionComparisonResource | null = workspaceMode === "server" && server.active && selectedComparisonResource
+    ? {
+        projectId: server.active.project.id,
+        resourceId: server.active.contextId
+          ? resourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id
+          : sharedResourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id,
+        contextId: server.active.contextId ?? null,
+        path: selectedComparisonResource.name,
+        type: resourceTypeOfName(selectedComparisonResource.name),
+      }
+    : null;
   const activeBindingView = serverIndexedView(index, [...diagrams, ...notes]);
   const sharedBindingView = serverIndexedView(sharedIndex, [...sharedDiagrams, ...sharedNotes]);
   const bindingEntities = [...new Map([...activeBindingView.entities, ...sharedBindingView.entities].map(entity => [entityAnchorKey(entity.anchor), entity])).values()];
@@ -4030,11 +4041,13 @@ export default function App() {
                        serverProjects={server.projects}
                        serverWorkspaces={serverWorkspaces}
                        selectedServerWorkspaceId={selectedServerWorkspaceId}
-                       onSelectServerWorkspace={selectServerWorkspace}
-                        onOpenServerProject={selectServerProject}
+                      onSelectServerWorkspace={selectServerWorkspace}
+                      onOpenServerProject={selectServerProject}
                       relationships={metadata?.relationships ?? []}
                       comparisonOptions={comparisonOptions.length ? comparisonOptions : undefined}
                       primaryOptionId={comparisonOptions.length ? comparisonPrimaryOptionId : undefined}
+                      revisionClient={historicalComparisonResource ? apiClient : undefined}
+                      revisionResource={historicalComparisonResource}
                     />
                   ) : noteMode ? (
                     <MarkdownView

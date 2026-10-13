@@ -1103,6 +1103,37 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/projects/:projectId/resources/:resourceId/revisions", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const contextId = resourceRevisionContextId(request);
+      const revisions = await dependencies.resourceRevisions.list(
+        context,
+        params.projectId,
+        params.resourceId,
+        contextId,
+      );
+      return json(200, { revisions });
+    }),
+  );
+
+  router.get("/api/projects/:projectId/resources/:resourceId/revisions/:revision", async (request, params) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const contextId = resourceRevisionContextId(request);
+      const revision = Number(params.revision);
+      if (!Number.isSafeInteger(revision) || revision < 1) throw invalid("revision must be a positive integer.");
+      const snapshot = await dependencies.resourceRevisions.get(
+        context,
+        params.projectId,
+        params.resourceId,
+        contextId,
+        revision,
+      );
+      return json(200, { snapshot });
+    }),
+  );
+
   router.get(
     "/api/projects/:projectId/resources/:resourceId",
     async (request, params) =>
@@ -1417,6 +1448,14 @@ function requireQueryString(
     throw invalid(`The "${name}" query parameter is required.`);
   }
   return single;
+}
+
+function resourceRevisionContextId(request: ServerRequest): string | null {
+  const value = request.query.contextId;
+  if (typeof value !== "string" || value === "") {
+    throw invalid('contextId is required; use "shared" for SHARED or a MY WORK context id.');
+  }
+  return value === "shared" ? null : value;
 }
 
 function trajectoryPage(request: ServerRequest): { limit?: number; cursor?: number } {

@@ -3,7 +3,7 @@ import type { DiagramFile, NoteFile } from "../../domain/workspace/types";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
-import { resourceRepresentationOfName, type ResourceRepresentation } from "../../domain/workspace/resource-id";
+import { resourceRepresentationOfName, resourceRepresentationOfType, type ResourceRepresentation } from "../../domain/workspace/resource-id";
 import { diagramDisplayName } from "../../language/diagram-title";
 import { noteDisplayName } from "../../language/markdown/note-title";
 import Preview from "./Preview";
@@ -11,7 +11,7 @@ import EventFlowPreview, { type EventFlowView } from "./EventFlowPreview";
 import ConceptualPreview from "./ConceptualPreview";
 import DatabasePreview from "./DatabasePreview";
 import MarkdownView from "../notes/MarkdownView";
-import { diffResources } from "../../domain/diff/resource-diff";
+import { diffResources, type ResourceDiff, type SemanticChange } from "../../domain/diff/resource-diff";
 import { SourceDiffView } from "../diff/SourceDiffView";
 import SemanticMessageInspector from "./SemanticMessageInspector";
 import TraceSurface from "./TraceSurface";
@@ -21,7 +21,7 @@ import { crossContextAnalysis, type AnalysisOptions, type CrossContextAnalysis }
 import type { ResourceRelationship } from "../../domain/workspace/resource-relationship";
 import type { AnalysisContext } from "./cross-context-analysis";
 import { analysisProvenanceLabel, type KnowledgeContext } from "../../domain/workspace/knowledge-context";
-import type { ServerProject, ServerWorkspace } from "../../workspace/server/api-client";
+import type { ServerApiClient, ServerProject, ServerResourceRevision, ServerResourceRevisionSummary, ServerResourceType, ServerWorkspace } from "../../workspace/server/api-client";
 
 export interface ComparisonViewProps {
   primary: ComparisonResource;
@@ -47,6 +47,8 @@ export interface ComparisonViewProps {
   analysisContexts?: AnalysisContext[];
   comparisonOptions?: ComparisonOption[];
   primaryOptionId?: string;
+  revisionClient?: Pick<ServerApiClient, "listResourceRevisions" | "getResourceRevision">;
+  revisionResource?: RevisionComparisonResource | null;
 }
 
 export interface ComparisonOption {
@@ -60,6 +62,14 @@ export interface ComparisonOption {
 }
 
 export type ComparisonResource = DiagramFile | NoteFile;
+
+export interface RevisionComparisonResource {
+  projectId: string;
+  resourceId: string;
+  contextId: string | null;
+  path: string;
+  type: ServerResourceType;
+}
 
 type Pane = "a" | "b";
 
@@ -254,11 +264,14 @@ export default function ComparisonView({
   analysisContexts = [],
   comparisonOptions,
   primaryOptionId,
+  revisionClient,
+  revisionResource = null,
 }: ComparisonViewProps) {
   const comparisonRef = useRef<HTMLDivElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [summaryHeight, setSummaryHeight] = useState<number | null>(null);
   const [resizingSummary, setResizingSummary] = useState(false);
+  const [revisionMode, setRevisionMode] = useState(false);
   const sharedContext: KnowledgeContext = { kind: "shared", id: `shared:${primary.projectId}`, projectId: primary.projectId };
   const localContext: AnalysisContext["knowledgeContext"] = { kind: "local", id: `local:${primary.projectId}`, projectId: primary.projectId };
   const fallbackContext: AnalysisContext["knowledgeContext"] = activeProjectId ? sharedContext : localContext;
@@ -375,10 +388,15 @@ export default function ComparisonView({
     setSummaryHeight(Math.max(180, current + (event.key === "ArrowUp" ? 32 : -32)));
   };
 
+  const canCompareRevisions = Boolean(
+    revisionClient && revisionResource &&
+    (revisionResource.type === "conceptual" || revisionResource.type === "database"),
+  );
+
   return (
     <div ref={comparisonRef} className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
       <header className="comparison__toolbar">
-        <strong>Compare resources</strong>
+        <strong>{revisionMode ? "Compare revisions" : "Compare resources"}</strong>
         {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
           {serverWorkspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
         </select></label> : null}
@@ -389,6 +407,7 @@ export default function ComparisonView({
           {activeProjectName && !serverProjects.some((project) => project.id === activeProjectId) ? <option value={activeProjectId ?? ""}>{activeProjectName}</option> : null}
           {serverProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select></label> : null}
+        {!revisionMode ? <>
         <label>Viewer A <select aria-label="Viewer A resource" value={primaryId} onChange={(event) => setPrimaryId(event.target.value)}>
           {choices.filter((option) => option.id !== secondaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
@@ -397,9 +416,20 @@ export default function ComparisonView({
           {choices.filter((option) => option.id !== primaryId).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select></label>
          <button type="button" className="icon-button" onClick={swapViewers} disabled={!secondarySession} title="Swap viewers" aria-label="Swap viewers">⇄</button>
+        </> : <span>{revisionResource?.path ?? "Selected resource"}</span>}
+        {!revisionMode && canCompareRevisions ? <button type="button" className="button button--small" onClick={() => setRevisionMode(true)} aria-label="Compare revisions">Compare revisions</button> : null}
+        {revisionMode ? <button type="button" className="button button--small" onClick={() => setRevisionMode(false)} aria-label="Return to parallel views">Parallel views</button> : null}
           <button type="button" className="icon-button" onClick={onToggleMaximize} title={maximized ? "Restore comparison" : "Maximize comparison"} aria-label={maximized ? "Restore comparison" : "Maximize comparison"}>{maximized ? "⊡" : "⤢"}</button>
          <button type="button" className="icon-button" onClick={onExit} title="Close comparison" aria-label="Close comparison">×</button>
       </header>
+      {revisionMode ? canCompareRevisions && revisionResource && revisionClient ? <HistoricalRevisionComparison
+        key={`${revisionResource.projectId}:${revisionResource.contextId ?? "shared"}:${revisionResource.resourceId}`}
+        client={revisionClient}
+        resource={revisionResource}
+        maximizedPane={maximizedPane}
+        onMaximize={onMaximize}
+        onRestore={onRestore}
+      /> : <p role="status">Revision comparison is unavailable for this resource.</p> : <>
        <section ref={summaryRef} className="comparison__summary" aria-label={semanticComparisonSupported ? "Architectural analysis summary" : "Resource comparison"} data-testid={semanticComparisonSupported ? "semantic-comparison-summary" : "resource-comparison-summary"} style={summaryHeight === null ? undefined : { flexBasis: summaryHeight }}>
          {semanticComparisonSupported && analysis ? <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
            : !secondarySession ? <p>Select a second resource to compare.</p>
@@ -434,8 +464,181 @@ export default function ComparisonView({
       </div>
        {trace && index ? <TraceSurface index={(trace.pane === "a" ? primaryContext.index : secondaryContext.index)} start={trace.start} direction={trace.direction} provenance={`Viewer ${trace.pane.toUpperCase()}`} contextProvenance={trace.pane === "a" ? traceProvenance(primaryContext) : traceProvenance(secondaryContext)} onOpenResource={onOpenResource} /> : null}
       </div>
+      </>}
     </div>
   );
+}
+
+function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaximize, onRestore }: {
+  client: Pick<ServerApiClient, "listResourceRevisions" | "getResourceRevision">;
+  resource: RevisionComparisonResource;
+  maximizedPane: "a" | "b" | null;
+  onMaximize: (pane: "a" | "b") => void;
+  onRestore: () => void;
+}) {
+  const [revisions, setRevisions] = useState<ServerResourceRevisionSummary[]>([]);
+  const [revisionA, setRevisionA] = useState<number | null>(null);
+  const [revisionB, setRevisionB] = useState<number | null>(null);
+  const [snapshotA, setSnapshotA] = useState<ServerResourceRevision | null>(null);
+  const [snapshotB, setSnapshotB] = useState<ServerResourceRevision | null>(null);
+  const [loadedPair, setLoadedPair] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const pairKey = revisionA === null || revisionB === null ? null : `${revisionA}:${revisionB}`;
+
+  useEffect(() => {
+    let active = true;
+    setListLoading(true);
+    setListError(null);
+    setRevisions([]);
+    setRevisionA(null);
+    setRevisionB(null);
+    void client.listResourceRevisions(resource.projectId, resource.resourceId, resource.contextId).then((result) => {
+      if (!active) return;
+      if (result.some((entry) => !summaryMatchesResource(entry, resource))) {
+        setListError("The revision list did not match the selected project, resource and context.");
+        return;
+      }
+      const ordered = [...result].sort((a, b) => a.revision - b.revision);
+      setRevisions(ordered);
+      setRevisionA(ordered.at(-2)?.revision ?? ordered.at(-1)?.revision ?? null);
+      setRevisionB(ordered.at(-1)?.revision ?? null);
+    }).catch((error: unknown) => {
+      if (active) setListError(error instanceof Error ? error.message : "Could not list resource revisions.");
+    }).finally(() => {
+      if (active) setListLoading(false);
+    });
+    return () => { active = false; };
+  }, [client, resource.projectId, resource.resourceId, resource.contextId, retry]);
+
+  useEffect(() => {
+    let active = true;
+    setSnapshotA(null);
+    setSnapshotB(null);
+    setLoadedPair(null);
+    setSnapshotError(null);
+    if (revisionA === null || revisionB === null) {
+      setSnapshotsLoading(false);
+      return () => { active = false; };
+    }
+    const requestedPair = `${revisionA}:${revisionB}`;
+    setSnapshotsLoading(true);
+    void Promise.all([
+      client.getResourceRevision(resource.projectId, resource.resourceId, resource.contextId, revisionA),
+      client.getResourceRevision(resource.projectId, resource.resourceId, resource.contextId, revisionB),
+    ]).then(([a, b]) => {
+      if (!active) return;
+      if (!snapshotMatchesResource(a, resource, revisionA) || !snapshotMatchesResource(b, resource, revisionB)) {
+        setSnapshotError("A revision snapshot did not match the selected project, resource, context and revision.");
+        return;
+      }
+      setSnapshotA(a);
+      setSnapshotB(b);
+      setLoadedPair(requestedPair);
+    }).catch((error: unknown) => {
+      if (active) setSnapshotError(error instanceof Error ? error.message : "Could not load the selected revisions.");
+    }).finally(() => {
+      if (active) setSnapshotsLoading(false);
+    });
+    return () => { active = false; };
+  }, [client, resource.projectId, resource.resourceId, resource.contextId, revisionA, revisionB, retry]);
+
+  const snapshotsReady = loadedPair === pairKey && snapshotA !== null && snapshotB !== null;
+  const sameRepresentation = snapshotsReady && snapshotA.type === snapshotB.type && (snapshotA.type === "conceptual" || snapshotA.type === "database");
+  const diff = useMemo<ResourceDiff | null>(() => {
+    if (!snapshotsReady || !sameRepresentation || !snapshotA || !snapshotB) return null;
+    return diffResources(
+      { content: snapshotA.content, type: snapshotA.type, ...(snapshotA.metadata === undefined ? {} : { metadata: snapshotA.metadata }) },
+      { content: snapshotB.content, type: snapshotB.type, ...(snapshotB.metadata === undefined ? {} : { metadata: snapshotB.metadata }) },
+    );
+  }, [snapshotsReady, sameRepresentation, snapshotA, snapshotB]);
+
+  return <>
+    <section className="comparison__summary" aria-label="Structural revision comparison" data-testid="revision-structural-diff">
+      <header className="proposal-inspector__header">
+        <div><p className="governance-eyebrow">FIXED RESOURCE · {resource.contextId === null ? "SHARED" : "MY WORK"}</p><h2>{resource.path}</h2></div>
+        <div className="comparison__analysis-controls">
+          <label>Revision A <select aria-label="Revision A" value={revisionA ?? ""} disabled={listLoading || revisions.length === 0} onChange={(event) => setRevisionA(Number(event.target.value))}>
+            {revisions.map((entry) => <option key={entry.revision} value={entry.revision}>r{entry.revision} · {entry.type} · {new Date(entry.createdAt).toLocaleString()}</option>)}
+          </select></label>
+          <label>Revision B <select aria-label="Revision B" value={revisionB ?? ""} disabled={listLoading || revisions.length === 0} onChange={(event) => setRevisionB(Number(event.target.value))}>
+            {revisions.map((entry) => <option key={entry.revision} value={entry.revision}>r{entry.revision} · {entry.type} · {new Date(entry.createdAt).toLocaleString()}</option>)}
+          </select></label>
+          {listError || snapshotError ? <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button> : null}
+        </div>
+      </header>
+      {listLoading ? <p role="status">Loading resource revisions…</p> : listError ? <p role="alert">{listError}</p> : revisions.length === 0 ? <p role="status">No revisions are available for this resource.</p> : null}
+      {snapshotsLoading ? <p role="status">Loading selected snapshots…</p> : snapshotError ? <p role="alert">{snapshotError}</p> : null}
+      {snapshotsReady && snapshotA && snapshotB && !sameRepresentation ? <p role="status">The selected revisions have incompatible representations; no structural diff was calculated.</p> : null}
+      {diff ? <RevisionDiffSummary diff={diff} /> : null}
+      {diff?.content.available === false ? <section aria-label="Revision diagnostics"><h3>Validation diagnostics</h3><ul>{diff.content.diagnostics.map((diagnostic, index) => <li key={index}>{diagnosticMessage(diagnostic)}</li>)}</ul></section> : null}
+      {diff?.content.changes.length ? <section aria-label="Structural changes"><h3>Changes</h3><ul>{diff.content.changes.map((change, index) => <li key={`${change.entity}:${change.identity}:${index}`} className={`comparison__revision-change comparison__revision-change--${change.kind}`}>
+        <strong>{change.kind}</strong> {change.entity} · {change.identity}
+      </li>)}</ul></section> : null}
+      {diff?.metadata.changes.length ? <section aria-label="Metadata changes"><h3>Metadata changes</h3><ul>{diff.metadata.changes.map((change, index) => <li key={`${change.field}:${change.identity}:${index}`}><strong>{change.kind}</strong> {change.field} · {change.identity}</li>)}</ul></section> : null}
+    </section>
+    <div className="comparison__content"><div className="comparison__panes">
+      <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
+        {snapshotsReady && snapshotA ? <RevisionPreviewPane pane="a" snapshot={snapshotA} reviewChanges={diff?.content.available ? diff.content.changes : []} reviewSide="base" maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+      </div>
+      <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
+        {snapshotsReady && snapshotB ? <RevisionPreviewPane pane="b" snapshot={snapshotB} reviewChanges={diff?.content.available ? diff.content.changes : []} reviewSide="proposed" maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+      </div>
+    </div></div>
+  </>;
+}
+
+function summaryMatchesResource(summary: ServerResourceRevisionSummary, resource: RevisionComparisonResource): boolean {
+  return summary.projectId === resource.projectId && summary.resourceId === resource.resourceId && summary.contextId === resource.contextId && summary.representation === resourceRepresentationOfType(summary.type) && Number.isSafeInteger(summary.revision) && summary.revision > 0;
+}
+
+function snapshotMatchesResource(snapshot: ServerResourceRevision, resource: RevisionComparisonResource, revision: number): boolean {
+  return summaryMatchesResource(snapshot, resource) && snapshot.revision === revision && snapshot.representation === resourceRepresentationOfType(snapshot.type) && typeof snapshot.content === "string";
+}
+
+export function RevisionDiffSummary({ diff }: { diff: ResourceDiff }) {
+  const structuralChanges = diff.content.totalChanges;
+  return <section aria-label="Diff summary" data-testid="revision-diff-summary">
+    <h3>Structural diff</h3>
+    {!diff.content.available ? <p role="status">Semantic diff unavailable because one or both revisions have validation errors.</p>
+      : structuralChanges > 0 ? <p role="status">Structural diff available · {structuralChanges} change(s).</p>
+        : diff.metadata.changed || diff.source.changed ? <p role="status">Source/metadata-only changes; no structural changes.</p>
+          : <p role="status">No structural changes.</p>}
+    <p>{diff.content.truncated ? "Returned change kinds: " : "Change kinds: "}Added {diff.summary.byKind.added} · Removed {diff.summary.byKind.removed} · Modified {diff.summary.byKind.modified}</p>
+    <p>Source hunks: {diff.source.totalHunks} · Metadata changes: {diff.metadata.changes.length}</p>
+    {diff.content.truncated ? <p role="status">Semantic diff truncated: showing {diff.content.returnedChanges} of {diff.content.totalChanges} changes.</p> : null}
+    {diff.source.truncated ? <p role="status">Source diff truncated: showing {diff.source.returnedHunks} of {diff.source.totalHunks} hunks.</p> : null}
+  </section>;
+}
+
+function RevisionPreviewPane({ pane, snapshot, reviewChanges, reviewSide, maximized, onMaximize, onRestore }: {
+  pane: "a" | "b";
+  snapshot: ServerResourceRevision;
+  reviewChanges: SemanticChange[];
+  reviewSide: "base" | "proposed";
+  maximized: boolean;
+  onMaximize: () => void;
+  onRestore: () => void;
+}) {
+  const representation = resourceRepresentationOfType(snapshot.type);
+  return <section className={`comparison__pane${maximized ? " comparison__pane--maximized" : ""}`} aria-label={`Revision ${pane.toUpperCase()}`} data-testid={`revision-pane-${pane}`}>
+    <header className="comparison__header"><div><strong>Revision {pane.toUpperCase()}</strong><span>{snapshot.contextId === null ? "SHARED" : "MY WORK"} · r{snapshot.revision} · {new Date(snapshot.createdAt).toLocaleString()}</span><h2>{snapshot.path}</h2><span>{representationLabel(representation)}</span></div>
+      <button type="button" className="icon-button" aria-label={maximized ? `Restore revision ${pane.toUpperCase()}` : `Maximize revision ${pane.toUpperCase()}`} onClick={maximized ? onRestore : onMaximize}>{maximized ? "⊡" : "⤢"}</button>
+    </header>
+    <div className="comparison__viewer">
+      {snapshot.type === "conceptual" ? <ConceptualPreview source={snapshot.content} reviewChanges={reviewChanges} reviewSide={reviewSide} comparisonMode />
+        : snapshot.type === "database" ? <DatabasePreview source={snapshot.content} reviewChanges={reviewChanges} comparisonMode />
+          : <p role="status">This representation has no structural preview in revision comparison.</p>}
+    </div>
+  </section>;
+}
+
+function diagnosticMessage(diagnostic: unknown): string {
+  if (typeof diagnostic === "object" && diagnostic !== null && "message" in diagnostic && typeof diagnostic.message === "string") return diagnostic.message;
+  return typeof diagnostic === "string" ? diagnostic : JSON.stringify(diagnostic);
 }
 
 function traceProvenance(context: AnalysisContext) {

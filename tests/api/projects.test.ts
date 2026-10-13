@@ -474,6 +474,57 @@ describe("resource routes", () => {
     });
   });
 
+  it("lists light history and reads snapshots only from the explicitly selected context", async () => {
+    const owner = await aProject("Resource history");
+    const created = await call("POST", `/api/projects/${owner.projectId}/resources`, {
+      cookie: owner.cookie,
+      body: { path: "model.concept", type: "conceptual", content: 'concept account "Account v1"', contextId: owner.contextId },
+    });
+    const resourceId = created.body.resource.id as string;
+    await call("PUT", `/api/projects/${owner.projectId}/resources/${resourceId}`, {
+      cookie: owner.cookie,
+      body: { content: 'concept account "Account v2"', expectedRevision: 1, contextId: owner.contextId },
+    });
+    const otherContext = await call("POST", `/api/projects/${owner.projectId}/private-work`, { cookie: owner.cookie, body: { name: "other-history-context" } });
+
+    const revisionsPath = `/api/projects/${owner.projectId}/resources/${resourceId}/revisions`;
+    const listUrl = `${revisionsPath}?contextId=${owner.contextId}`;
+    const listed = await call("GET", listUrl, { cookie: owner.cookie });
+    expect(listed.status).toBe(200);
+    expect(listed.body.revisions).toHaveLength(2);
+    expect(listed.body.revisions[0]).toMatchObject({ resourceId, projectId: owner.projectId, contextId: owner.contextId, revision: 1, type: "conceptual", representation: "conceptual" });
+    expect(listed.body.revisions[0]).not.toHaveProperty("content");
+
+    const first = await call("GET", `${revisionsPath}/1?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    const current = await call("GET", `${revisionsPath}/2?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(first.body.snapshot).toMatchObject({ resourceId, projectId: owner.projectId, contextId: owner.contextId, revision: 1, content: 'concept account "Account v1"', authoredBy: { kind: "user" } });
+    expect(current.body.snapshot).toMatchObject({ revision: 2, content: 'concept account "Account v2"', type: "conceptual", representation: "conceptual" });
+
+    expect((await call("GET", `/api/projects/${owner.projectId}/resources/${resourceId}/revisions`, { cookie: owner.cookie })).status).toBe(422);
+    expect((await call("GET", `/api/projects/${owner.projectId}/resources/${resourceId}/revisions?contextId=shared`, { cookie: owner.cookie })).status).toBe(404);
+    expect((await call("GET", `/api/projects/${owner.projectId}/resources/${resourceId}/revisions?contextId=${otherContext.body.context.id}`, { cookie: owner.cookie })).status).toBe(404);
+    expect((await call("GET", `${revisionsPath}/99?contextId=${owner.contextId}`, { cookie: owner.cookie })).status).toBe(404);
+    expect((await call("GET", `/api/projects/${crypto.randomUUID()}/resources/${resourceId}/revisions?contextId=${owner.contextId}`, { cookie: owner.cookie })).status).toBe(404);
+
+    const bootstrapped = await call("POST", "/api/projects/bootstrap", { cookie: owner.cookie, body: { workspaceId: owner.userId, name: "Shared revision history", resources: [{ path: "schema.dbschema", type: "database", content: 'table accounts - "Accounts"' }] } });
+    const sharedProjectId = bootstrapped.body.project.id as string;
+    const sharedRows = await call("GET", `/api/projects/${sharedProjectId}/resources`, { cookie: owner.cookie });
+    const sharedId = sharedRows.body.resources[0].id as string;
+    const sharedList = await call("GET", `/api/projects/${sharedProjectId}/resources/${sharedId}/revisions?contextId=shared`, { cookie: owner.cookie });
+    expect(sharedList.status).toBe(200);
+    expect(sharedList.body.revisions[0]).toMatchObject({ projectId: sharedProjectId, resourceId: sharedId, contextId: null, revision: 1, type: "database" });
+    const sharedSnapshot = await call("GET", `/api/projects/${sharedProjectId}/resources/${sharedId}/revisions/1?contextId=shared`, { cookie: owner.cookie });
+    expect(sharedSnapshot.body.snapshot).toMatchObject({ projectId: sharedProjectId, resourceId: sharedId, contextId: null, content: 'table accounts - "Accounts"' });
+
+    const viewer = await signIn();
+    await addWorkspaceMember(owner, viewer.userId);
+    await call("PUT", `/api/projects/${owner.projectId}/members/${viewer.userId}`, { cookie: owner.cookie, body: { role: "VIEWER" } });
+    const denied = await call("GET", listUrl, { cookie: viewer.cookie });
+    expect(denied.status).toBe(404);
+    expect(JSON.stringify(denied.body)).not.toContain("Account v1");
+    expect(JSON.stringify(denied.body)).not.toContain("model.concept");
+  });
+
   it("exposes normalized metadata and preserves it when omitted", async () => {
     const { cookie, projectId, contextId } = await aProject("Metadata API");
     const created = await call("POST", `/api/projects/${projectId}/resources`, {
