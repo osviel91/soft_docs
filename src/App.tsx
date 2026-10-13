@@ -136,7 +136,9 @@ import { parseDatabaseSyntax } from "./language/database/parser";
 import ComparisonView, { type ComparisonOption } from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
+import { renderEventFlowTopologyDocument } from "./renderer/pipeline/eventflow-to-topology-svg";
 import { conceptualSourceToSvgDocument } from "./renderer/pipeline/conceptual-to-svg";
+import { databaseSourceToSvgDocument } from "./renderer/pipeline/database-to-svg";
 import { analyzeEventFlow } from "./language/eventflow/parser";
 import { eventsOf } from "./domain/eventflow/ast";
 import {
@@ -1442,6 +1444,18 @@ export default function App() {
     return () => { current = false; };
   }, [isConceptual, source]);
   const currentConceptualExport = conceptualExport?.source === source ? conceptualExport.document : null;
+  const [databaseExport, setDatabaseExport] = useState<{ source: string; document: Awaited<ReturnType<typeof databaseSourceToSvgDocument>> } | null>(null);
+  useEffect(() => {
+    let current = true;
+    setDatabaseExport(null);
+    if (!isDatabase) return () => { current = false; };
+    void databaseSourceToSvgDocument(source).then(
+      document => { if (current) setDatabaseExport(document ? { source, document } : null); },
+      () => { if (current) setDatabaseExport(null); },
+    );
+    return () => { current = false; };
+  }, [isDatabase, source]);
+  const currentDatabaseExport = databaseExport?.source === source ? databaseExport.document : null;
   const noteMode = selectedNote !== null;
 
   // Keep the displayed source in step with the editor while auto-update is on.
@@ -1860,13 +1874,25 @@ export default function App() {
     [isEventFlow, source],
   );
   const eventFlow = eventFlowAnalysis?.flow ?? null;
+  const [causalExport, setCausalExport] = useState<{ source: string; document: Awaited<ReturnType<typeof renderEventFlowCausalDocument>> } | null>(null);
+  useEffect(() => {
+    let current = true;
+    setCausalExport(null);
+    if (!isEventFlow || eventFlowView !== "causal" || !eventFlow) return () => { current = false; };
+    void renderEventFlowCausalDocument(eventFlow).then(
+      document => { if (current) setCausalExport({ source, document }); },
+      () => { if (current) setCausalExport(null); },
+    );
+    return () => { current = false; };
+  }, [isEventFlow, eventFlowView, eventFlow, source]);
+  const currentCausalExport = causalExport?.source === source ? causalExport.document : null;
   const hasActiveSemanticOccurrence = activeSemanticMessageId !== null || (
     activeNodeId !== null && (isEventFlow
       ? Boolean(eventFlow && eventsOf(eventFlow).some((event) => nodeIdOf("event", event.range) === activeNodeId))
       : Boolean(isSequence && ast && semanticMessagesOf(ast).some((message) => nodeIdOf("message", message.range) === activeNodeId)))
   );
   const canExportActiveDiagram =
-    !noteMode && (isEventFlow ? eventFlow !== null : isConceptual ? !!currentConceptualExport && !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? false : ast !== null && isValid(ast));
+    !noteMode && (isEventFlow ? eventFlow !== null && eventFlowView !== "catalog" && (eventFlowView !== "causal" || currentCausalExport !== null) : isConceptual ? !!currentConceptualExport && !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? !!currentDatabaseExport && !!databaseAnalysis?.model && !databaseAnalysis.diagnostics.some(d => d.severity === "error") : ast !== null && isValid(ast));
 
   // Causal is the investigation default only when entering a new causal flow;
   // a later view click remains the user's choice while that document is open.
@@ -2473,13 +2499,17 @@ export default function App() {
   // Rendered once for the export dialog's preview and its size, rather than
   // three times in the markup.
   const exportPreview = useMemo(
-    () =>
-      isEventFlow
-        ? renderEventFlowDocument(eventFlow)
-        : isConceptual
-          ? currentConceptualExport ?? { svg: "", width: 0, height: 0 }
-          : renderDiagramDocument(ast),
-    [ast, currentConceptualExport, eventFlow, isConceptual, isEventFlow],
+    () => {
+      if (isEventFlow) {
+        if (eventFlowView === "causal") return currentCausalExport ?? { svg: "", width: 0, height: 0 };
+        if (eventFlowView === "topology") return renderEventFlowTopologyDocument(eventFlow);
+        return eventFlowView === "catalog" ? { svg: "", width: 0, height: 0 } : renderEventFlowDocument(eventFlow);
+      }
+      if (isConceptual) return currentConceptualExport ?? { svg: "", width: 0, height: 0 };
+      if (isDatabase) return currentDatabaseExport ?? { svg: "", width: 0, height: 0 };
+      return renderDiagramDocument(ast);
+    },
+    [ast, currentCausalExport, currentConceptualExport, currentDatabaseExport, eventFlow, eventFlowView, isConceptual, isDatabase, isEventFlow],
   );
 
   /** The file name stem for an export: the active document's own name. */
@@ -2496,29 +2526,36 @@ export default function App() {
    */
   const runDiagramExport = useCallback(
     async (options: DiagramExportOptions): Promise<void> => {
-      if (isConceptual && !currentConceptualExport) {
-        setTransferError("The Conceptual diagram is not ready to export.");
+      if (isEventFlow && (eventFlowView === "catalog" || eventFlowView === "causal" && !currentCausalExport) || isConceptual && !currentConceptualExport || isDatabase && !currentDatabaseExport) {
+        setTransferError("The selected representation is not ready to export.");
         return;
       }
       setExportDiagramOpen(false);
-      // One export path for both languages: an event flow renders through its own
-      // pipeline, and PNG/PDF derive from whatever SVG that produced.
-      const rendered = isEventFlow && eventFlowView === "causal"
-        ? await renderEventFlowCausalDocument(eventFlow, {
+      const rendered = isEventFlow
+        ? eventFlowView === "causal"
+          ? await renderEventFlowCausalDocument(eventFlow, {
             background: options.background,
             includeTitle: options.includeTitle,
             padding: options.padding,
           })
-        : isEventFlow
-        ? renderEventFlowDocument(eventFlow, {
+          : eventFlowView === "topology"
+            ? renderEventFlowTopologyDocument(eventFlow, {
+                theme: options.theme,
+                background: options.background,
+                includeTitle: options.includeTitle,
+                padding: options.padding,
+              })
+            : renderEventFlowDocument(eventFlow, {
             theme: options.theme,
             background: options.background,
             includeTitle: options.includeTitle,
             padding: options.padding,
-        })
+            })
         : isConceptual
-          ? (await conceptualSourceToSvgDocument(source, options)) ?? currentConceptualExport ?? { svg: "", width: 0, height: 0 }
-          : exportDiagramSvg(ast, options);
+          ? (await conceptualSourceToSvgDocument(source, options)) ?? currentConceptualExport!
+          : isDatabase
+            ? (await databaseSourceToSvgDocument(source, options)) ?? currentDatabaseExport!
+            : exportDiagramSvg(ast, options);
       const filename = exportFileName({
         ...options,
         title: options.title ?? activeDocumentName,
@@ -2548,8 +2585,19 @@ export default function App() {
         );
       }
     },
-    [isConceptual, isEventFlow, currentConceptualExport, eventFlow, ast, activeDocumentName],
+    [isConceptual, isDatabase, isEventFlow, currentCausalExport, currentConceptualExport, currentDatabaseExport, eventFlow, eventFlowView, ast, source, activeDocumentName],
   );
+
+  const exportActiveResource = useCallback((): void => {
+    if (noteMode && selectedNote) {
+      const stem = selectedNote.name.replace(/\.md$/i, "");
+      const filename = exportFileName({ format: "svg", title: stem }).replace(/\.svg$/, ".md");
+      downloadBytes(new TextEncoder().encode(source), filename, "text/markdown");
+      setTransferError(null);
+      return;
+    }
+    if (canExportActiveDiagram) setExportDiagramOpen(true);
+  }, [noteMode, selectedNote, source, canExportActiveDiagram]);
 
   /** Write the project's documentation as a self-contained site, zipped. */
   const runSiteExport = useCallback(async (): Promise<void> => {
@@ -2646,7 +2694,7 @@ export default function App() {
       const name = symbolAtCaret();
       if (name) setPrompt({ kind: "rename-symbol", name });
     },
-    exportDiagram: () => { if (!isConceptual || canExportActiveDiagram) setExportDiagramOpen(true); },
+    exportDiagram: exportActiveResource,
     exportSite: runSiteExport,
     exportProject: exportProjectCommand,
     importProject: beginImportProject,
@@ -3816,6 +3864,7 @@ export default function App() {
                           }
                         : undefined
                     }
+                    onExport={selectedNote ? exportActiveResource : undefined}
                   />
                   <MarkdownEditor
                     value={source}
@@ -3877,7 +3926,7 @@ export default function App() {
                           }
                         : undefined
                     }
-                    onExport={canExportActiveDiagram ? () => setExportDiagramOpen(true) : undefined}
+                    onExport={canExportActiveDiagram ? exportActiveResource : undefined}
                   />
                   <Editor
                     value={source}
