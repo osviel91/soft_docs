@@ -8,6 +8,7 @@ import EventFlowPreview from "../preview/EventFlowPreview";
 import ConceptualPreview from "../preview/ConceptualPreview";
 import DatabasePreview from "../preview/DatabasePreview";
 import MarkdownView from "../notes/MarkdownView";
+import { SourceDiffView } from "../diff/SourceDiffView";
 import { resourceRepresentationOfType } from "../../domain/workspace/resource-id";
 import { diffResources } from "../../domain/diff/resource-diff";
 import type { ServerArchitecturalProposalDiff, ServerArchitecturalProposalDiffResource } from "../../workspace/server/api-client";
@@ -169,66 +170,9 @@ export function ProposalResourceComparison({ resource, mode, onModeChange, befor
   const source = resource.source.changed === hasTextChanges && (!hasTextChanges || resource.source.hunks.length > 0)
     ? resource.source
     : diffResources({ content: resource.baseContent, type: resource.type }, { content: resource.proposedContent, type: resource.type }).source;
-  const comparedResource = source === resource.source ? resource : { ...resource, source };
   const representation = resourceRepresentationOfType(resource.type);
   const textMode = representation === "markdown";
   const activeMode = textMode && !["unified", "side-by-side", "rendered"].includes(mode) ? "unified" : !textMode && !["before", "after", "compare"].includes(mode) ? "compare" : mode;
   if (representation === "conceptual" || representation === "database") return <section className="proposal-inspector" aria-label={`Comparison for ${resource.path}`}><header className="proposal-inspector__header"><div><p className="governance-eyebrow">{inspectorLabel}</p><h3>{headingLabel ? `${headingLabel} ${resource.path}` : `${resource.operation} ${resource.path}`}</h3></div><nav aria-label="Comparison mode">{([["before", "Before"], ["after", "After"], ["compare", "Compare"]] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={activeMode === key} onClick={() => onModeChange(key)}>{label}</button>)}</nav></header><div className="proposal-detail__comparison-panes">{activeMode !== "after" ? <section><h4>{beforeLabel}</h4>{representation === "database" ? <DatabasePreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode /> : <ConceptualPreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" />}</section> : null}{activeMode !== "before" ? <section><h4>{afterLabel}</h4>{representation === "database" ? <DatabasePreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode /> : <ConceptualPreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" />}</section> : null}</div></section>;
-  return <section className="proposal-inspector" aria-label={`Comparison for ${resource.path}`}><header className="proposal-inspector__header"><div><p className="governance-eyebrow">{inspectorLabel}</p><h3>{headingLabel ? `${headingLabel} ${resource.path}` : `${resource.operation} ${resource.path}`}</h3></div><nav aria-label="Comparison mode">{(textMode ? [["unified", "Unified"], ["side-by-side", "Side-by-side"], ["rendered", "Rendered"]] : [["before", "Before"], ["after", "After"], ["compare", "Compare"]]).map(([key, label]) => <button type="button" key={key} aria-pressed={activeMode === key} onClick={() => onModeChange(key as typeof activeMode)}>{label}</button>)}</nav></header>{textMode ? activeMode === "unified" ? <SourceDiff resource={comparedResource} /> : activeMode === "side-by-side" ? <SideBySideDiff resource={comparedResource} beforeLabel={beforeLabel} afterLabel={afterLabel} /> : <div className="proposal-detail__comparison-panes"><section><h4>{beforeLabel}</h4><MarkdownView markdown={resource.baseContent} /></section><section><h4>{afterLabel}</h4><MarkdownView markdown={resource.proposedContent} /></section></div> : <div className="proposal-detail__comparison-panes">{activeMode !== "after" ? <section><h4>{beforeLabel}</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" /> : <Preview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" />}</section> : null}{activeMode !== "before" ? <section><h4>{afterLabel}</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" /> : <Preview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" />}</section> : null}</div>}<details><summary>Technical source diff</summary><SourceDiff resource={comparedResource} /></details></section>;
-}
-
-function SideBySideDiff({ resource, beforeLabel, afterLabel }: { resource: ServerArchitecturalProposalDiffResource; beforeLabel: string; afterLabel: string }) {
-  if (resource.baseContent === resource.proposedContent) return <p>No textual changes.</p>;
-  const oldLines = resource.baseContent.replace(/\r\n?/g, "\n").split("\n");
-  const newLines = resource.proposedContent.replace(/\r\n?/g, "\n").split("\n");
-  const rows = alignLines(oldLines, newLines, resource.source.hunks);
-  return <div className="proposal-detail__side-by-side"><div><h4>{beforeLabel}</h4>{rows.map((row, index) => <div key={`old-${index}`} className={`proposal-review__line${row.changed ? " proposal-review__line--removed" : ""}`}><span>{row.oldNumber ?? ""}</span> {row.oldLine}</div>)}</div><div><h4>{afterLabel}</h4>{rows.map((row, index) => <div key={`new-${index}`} className={`proposal-review__line${row.changed ? " proposal-review__line--added" : ""}`}><span>{row.newNumber ?? ""}</span> {row.newLine}</div>)}</div></div>;
-}
-
-function alignLines(oldLines: string[], newLines: string[], hunks: ServerArchitecturalProposalDiffResource["source"]["hunks"]): Array<{ oldLine: string; newLine: string; oldNumber: number | null; newNumber: number | null; changed: boolean }> {
-  const rows: Array<{ oldLine: string; newLine: string; oldNumber: number | null; newNumber: number | null; changed: boolean }> = [];
-  let oldIndex = 0;
-  let newIndex = 0;
-  for (const hunk of hunks) {
-    const oldStart = Math.max(oldIndex, hunk.oldStart - 1);
-    const newStart = Math.max(newIndex, hunk.newStart - 1);
-    while (oldIndex < oldStart && newIndex < newStart) {
-      rows.push({ oldLine: oldLines[oldIndex], newLine: newLines[newIndex], oldNumber: oldIndex + 1, newNumber: newIndex + 1, changed: false });
-      oldIndex += 1;
-      newIndex += 1;
-    }
-    while (oldIndex < oldStart) {
-      rows.push({ oldLine: oldLines[oldIndex], newLine: "", oldNumber: oldIndex + 1, newNumber: null, changed: true });
-      oldIndex += 1;
-    }
-    while (newIndex < newStart) {
-      rows.push({ oldLine: "", newLine: newLines[newIndex], oldNumber: null, newNumber: newIndex + 1, changed: true });
-      newIndex += 1;
-    }
-    for (let index = 0; index < Math.max(hunk.oldLines.length, hunk.newLines.length); index += 1) {
-      const oldLine = hunk.oldLines[index];
-      const newLine = hunk.newLines[index];
-      rows.push({ oldLine: oldLine ?? "", newLine: newLine ?? "", oldNumber: oldLine === undefined ? null : oldIndex + 1, newNumber: newLine === undefined ? null : newIndex + 1, changed: true });
-      if (oldLine !== undefined) oldIndex += 1;
-      if (newLine !== undefined) newIndex += 1;
-    }
-  }
-  while (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
-    rows.push({ oldLine: oldLines[oldIndex], newLine: newLines[newIndex], oldNumber: oldIndex + 1, newNumber: newIndex + 1, changed: false });
-    oldIndex += 1;
-    newIndex += 1;
-  }
-  while (oldIndex < oldLines.length) {
-    rows.push({ oldLine: oldLines[oldIndex], newLine: "", oldNumber: oldIndex + 1, newNumber: null, changed: true });
-    oldIndex += 1;
-  }
-  while (newIndex < newLines.length) {
-    rows.push({ oldLine: "", newLine: newLines[newIndex], oldNumber: null, newNumber: newIndex + 1, changed: true });
-    newIndex += 1;
-  }
-  return rows;
-}
-
-function SourceDiff({ resource }: { resource: ServerArchitecturalProposalDiffResource }) {
-  return resource.source.changed ? <div className="proposal-detail__source-diff">{resource.source.hunks.map((hunk, index) => <div key={`${hunk.oldStart}-${hunk.newStart}-${index}`}><div>@@ {hunk.oldStart} / {hunk.newStart} @@</div>{hunk.oldLines.map((line, lineIndex) => <div className="proposal-review__line proposal-review__line--removed" key={`old-${lineIndex}`}>- {line}</div>)}{hunk.newLines.map((line, lineIndex) => <div className="proposal-review__line proposal-review__line--added" key={`new-${lineIndex}`}>+ {line}</div>)}</div>)} </div> : <p>No textual changes.</p>;
+  return <section className="proposal-inspector" aria-label={`Comparison for ${resource.path}`}><header className="proposal-inspector__header"><div><p className="governance-eyebrow">{inspectorLabel}</p><h3>{headingLabel ? `${headingLabel} ${resource.path}` : `${resource.operation} ${resource.path}`}</h3></div><nav aria-label="Comparison mode">{(textMode ? [["unified", "Unified"], ["side-by-side", "Side-by-side"], ["rendered", "Rendered"]] : [["before", "Before"], ["after", "After"], ["compare", "Compare"]]).map(([key, label]) => <button type="button" key={key} aria-pressed={activeMode === key} onClick={() => onModeChange(key as typeof activeMode)}>{label}</button>)}</nav></header>{textMode ? activeMode === "unified" ? <SourceDiffView source={source} beforeContent={resource.baseContent} afterContent={resource.proposedContent} /> : activeMode === "side-by-side" ? <SourceDiffView source={source} beforeContent={resource.baseContent} afterContent={resource.proposedContent} mode="side-by-side" beforeLabel={beforeLabel} afterLabel={afterLabel} /> : <div className="proposal-detail__comparison-panes"><section><h4>{beforeLabel}</h4><MarkdownView markdown={resource.baseContent} /></section><section><h4>{afterLabel}</h4><MarkdownView markdown={resource.proposedContent} /></section></div> : <div className="proposal-detail__comparison-panes">{activeMode !== "after" ? <section><h4>{beforeLabel}</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" /> : <Preview source={resource.baseContent} reviewChanges={resource.content.changes} reviewMode reviewSide="base" />}</section> : null}{activeMode !== "before" ? <section><h4>{afterLabel}</h4>{representation === "event-flow" ? <EventFlowPreview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" /> : <Preview source={resource.proposedContent} reviewChanges={resource.content.changes} reviewMode reviewSide="proposed" />}</section> : null}</div>}<details><summary>Technical source diff</summary><SourceDiffView source={source} beforeContent={resource.baseContent} afterContent={resource.proposedContent} /></details></section>;
 }
