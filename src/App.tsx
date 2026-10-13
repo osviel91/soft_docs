@@ -136,6 +136,7 @@ import { parseDatabaseSyntax } from "./language/database/parser";
 import ComparisonView, { type ComparisonOption } from "./features/preview/ComparisonView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
+import { conceptualSourceToSvgDocument } from "./renderer/pipeline/conceptual-to-svg";
 import { analyzeEventFlow } from "./language/eventflow/parser";
 import { eventsOf } from "./domain/eventflow/ast";
 import {
@@ -1429,6 +1430,18 @@ export default function App() {
   const { ast, diagnostics } = useDiagram(isSequence ? source : "");
   const conceptualAnalysis = useMemo(() => isConceptual ? parseConceptual(source) : null, [isConceptual, source]);
   const databaseAnalysis = useMemo(() => isDatabase ? parseDatabase(source) : null, [isDatabase, source]);
+  const [conceptualExport, setConceptualExport] = useState<{ source: string; document: Awaited<ReturnType<typeof conceptualSourceToSvgDocument>> } | null>(null);
+  useEffect(() => {
+    let current = true;
+    setConceptualExport(null);
+    if (!isConceptual) return () => { current = false; };
+    void conceptualSourceToSvgDocument(source).then(
+      document => { if (current) setConceptualExport(document ? { source, document } : null); },
+      () => { if (current) setConceptualExport(null); },
+    );
+    return () => { current = false; };
+  }, [isConceptual, source]);
+  const currentConceptualExport = conceptualExport?.source === source ? conceptualExport.document : null;
   const noteMode = selectedNote !== null;
 
   // Keep the displayed source in step with the editor while auto-update is on.
@@ -1853,7 +1866,7 @@ export default function App() {
       : Boolean(isSequence && ast && semanticMessagesOf(ast).some((message) => nodeIdOf("message", message.range) === activeNodeId)))
   );
   const canExportActiveDiagram =
-    !noteMode && (isEventFlow ? eventFlow !== null : isConceptual ? !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? false : ast !== null && isValid(ast));
+    !noteMode && (isEventFlow ? eventFlow !== null : isConceptual ? !!currentConceptualExport && !!conceptualAnalysis?.model && !conceptualAnalysis.diagnostics.some(d => d.severity === "error") : isDatabase ? false : ast !== null && isValid(ast));
 
   // Causal is the investigation default only when entering a new causal flow;
   // a later view click remains the user's choice while that document is open.
@@ -2463,8 +2476,10 @@ export default function App() {
     () =>
       isEventFlow
         ? renderEventFlowDocument(eventFlow)
-        : renderDiagramDocument(ast),
-    [ast, eventFlow, isEventFlow],
+        : isConceptual
+          ? currentConceptualExport ?? { svg: "", width: 0, height: 0 }
+          : renderDiagramDocument(ast),
+    [ast, currentConceptualExport, eventFlow, isConceptual, isEventFlow],
   );
 
   /** The file name stem for an export: the active document's own name. */
@@ -2481,6 +2496,10 @@ export default function App() {
    */
   const runDiagramExport = useCallback(
     async (options: DiagramExportOptions): Promise<void> => {
+      if (isConceptual && !currentConceptualExport) {
+        setTransferError("The Conceptual diagram is not ready to export.");
+        return;
+      }
       setExportDiagramOpen(false);
       // One export path for both languages: an event flow renders through its own
       // pipeline, and PNG/PDF derive from whatever SVG that produced.
@@ -2496,8 +2515,10 @@ export default function App() {
             background: options.background,
             includeTitle: options.includeTitle,
             padding: options.padding,
-          })
-        : exportDiagramSvg(ast, options);
+        })
+        : isConceptual
+          ? (await conceptualSourceToSvgDocument(source, options)) ?? currentConceptualExport ?? { svg: "", width: 0, height: 0 }
+          : exportDiagramSvg(ast, options);
       const filename = exportFileName({
         ...options,
         title: options.title ?? activeDocumentName,
@@ -2527,11 +2548,11 @@ export default function App() {
         );
       }
     },
-    [isEventFlow, eventFlow, ast, activeDocumentName],
+    [isConceptual, isEventFlow, currentConceptualExport, eventFlow, ast, activeDocumentName],
   );
 
   /** Write the project's documentation as a self-contained site, zipped. */
-  const runSiteExport = useCallback((): void => {
+  const runSiteExport = useCallback(async (): Promise<void> => {
     if (!index || !selectedProjectId) {
       setTransferError("Open a project before exporting its documentation.");
       return;
@@ -2546,12 +2567,25 @@ export default function App() {
       const id = resourceIdForFile(note);
       if (id) contents.set(id, note.markdown);
     }
+    const conceptualRenders = new Map<string, string | null>();
+    let conceptualLayoutFailures = 0;
+    await Promise.all(diagrams.filter((diagram) => resourceRepresentationOfName(diagram.name) === "conceptual").map(async (diagram) => {
+      const id = resourceIdForFile(diagram);
+      if (!id) return;
+      try {
+        conceptualRenders.set(id, (await conceptualSourceToSvgDocument(diagram.source))?.svg ?? null);
+      } catch {
+        conceptualRenders.set(id, null);
+        conceptualLayoutFailures += 1;
+      }
+    }));
     const result = exportDocumentationSite(
       {
         projectName: project?.name ?? selectedProjectId,
         index,
         contents,
         renderDiagram: (resourceId) => {
+          if (conceptualRenders.has(resourceId)) return conceptualRenders.get(resourceId)!;
           const resource = index.resources.find(
             (entry) => entry.id === resourceId,
           );
@@ -2571,7 +2605,7 @@ export default function App() {
       `${archiveSlug(project?.name ?? "project")}-docs.zip`,
       "application/zip",
     );
-    setTransferError(null);
+    setTransferError(conceptualLayoutFailures ? `${conceptualLayoutFailures} Conceptual diagram(s) could not be laid out for the documentation site.` : null);
   }, [index, selectedProjectId, projects, diagrams, notes, resourceIdForFile]);
 
   // Command palette: open state/shortcut, and the registry built from current
@@ -2612,7 +2646,7 @@ export default function App() {
       const name = symbolAtCaret();
       if (name) setPrompt({ kind: "rename-symbol", name });
     },
-    exportDiagram: () => setExportDiagramOpen(true),
+    exportDiagram: () => { if (!isConceptual || canExportActiveDiagram) setExportDiagramOpen(true); },
     exportSite: runSiteExport,
     exportProject: exportProjectCommand,
     importProject: beginImportProject,

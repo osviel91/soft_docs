@@ -41,6 +41,7 @@ import type {
   MarkdownHeading,
   ProjectDiagnostic,
   ProjectIndex,
+  ResourceDescriptor,
 } from "../../../domain/project/project-index";
 import { slugify } from "../../../domain/workspace/resource-id";
 import {
@@ -76,6 +77,8 @@ export interface SiteNavItem {
   /** A secondary line under the title, when there is one (usually the path). */
   detail?: string;
 }
+
+type SiteDiagramDescriptor = DiagramDescriptor | (ResourceDescriptor & { type: "conceptual" });
 
 /** A titled section of the sidebar. */
 export interface SiteNavGroup {
@@ -317,7 +320,7 @@ function groupTitleOf(path: string): string {
  */
 export function buildSiteNav(
   documents: DocumentDescriptor[],
-  diagrams: DiagramDescriptor[],
+  diagrams: SiteDiagramDescriptor[],
   docSlugs: Map<string, string>,
   diagramSlugs: Map<string, string>,
   extras: SiteNavItem[] = [],
@@ -1017,7 +1020,7 @@ ${items}
 
 /** One diagram's own page: the SVG, its metadata, and a link to the raw file. */
 function renderDiagramPage(
-  descriptor: DiagramDescriptor,
+  descriptor: SiteDiagramDescriptor,
   context: PageContext,
   renders: Map<string, string | null>,
 ): SiteFile {
@@ -1037,12 +1040,14 @@ ${svg}
             relativeHref(pagePath, svgPath),
           )}">Download the raw SVG</a></p>`;
 
-  const meta = [
-    `path: ${escapeHtml(descriptor.path)}`,
-    `${descriptor.participants} participants`,
-    `${descriptor.messages} messages`,
-    descriptor.titled ? "titled" : "untitled",
-  ].join(" · ");
+  const meta = descriptor.type === "conceptual"
+    ? `path: ${escapeHtml(descriptor.path)} · Conceptual model`
+    : [
+        `path: ${escapeHtml(descriptor.path)}`,
+        `${descriptor.participants} participants`,
+        `${descriptor.messages} messages`,
+        descriptor.titled ? "titled" : "untitled",
+      ].join(" · ");
 
   const main = `        <article class="${CLASS.markdown}">
           <h1 class="${CLASS.pageTitle}">${escapeHtml(descriptor.title)}</h1>
@@ -1067,9 +1072,9 @@ ${body}
 }
 
 /** The overview page: counts, the nav in full, and a card per resource. */
-function renderIndexPage(context: PageContext): SiteFile {
+function renderIndexPage(context: PageContext, diagrams: SiteDiagramDescriptor[]): SiteFile {
   const pagePath = SITE_LAYOUT.index;
-  const { documents, diagrams } = context.index;
+  const { documents } = context.index;
   const counts = `${documents.length} ${
     documents.length === 1 ? "document" : "documents"
   }, ${diagrams.length} ${diagrams.length === 1 ? "diagram" : "diagrams"}${
@@ -1108,7 +1113,9 @@ function renderIndexPage(context: PageContext): SiteFile {
         path: diagramPagePath(
           context.diagramSlugs.get(diagram.id) ?? "resource",
         ),
-        detail: `${diagram.path} · ${diagram.participants} participants · ${diagram.messages} messages`,
+        detail: diagram.type === "conceptual"
+          ? `${diagram.path} · Conceptual model`
+          : `${diagram.path} · ${diagram.participants} participants · ${diagram.messages} messages`,
       }),
   );
 
@@ -1590,7 +1597,13 @@ export function buildDocumentationSite(input: SiteExportInput): SiteFile[] {
   const { index } = input;
 
   const documents = sortedBy(index.documents, (entry) => entry.path);
-  const diagrams = sortedBy(index.diagrams, (entry) => entry.path);
+  const conceptualResources = index.resources.filter(
+    (entry): entry is ResourceDescriptor & { type: "conceptual" } => entry.type === "conceptual",
+  );
+  const diagrams: SiteDiagramDescriptor[] = sortedBy(
+    [...index.diagrams, ...conceptualResources],
+    (entry) => entry.path,
+  );
 
   // The renderer is called once per diagram and the result reused for the page
   // and the raw .svg file; it may be as expensive as a full layout, so the
@@ -1651,7 +1664,7 @@ export function buildDocumentationSite(input: SiteExportInput): SiteFile[] {
   });
   if (input.includeProblems) files.push(renderProblemsPage(context));
   files.push(renderEventsPage(context));
-  files.push(renderIndexPage(context));
+  files.push(renderIndexPage(context, diagrams));
   files.push(textFile(SITE_LAYOUT.stylesheet, buildSiteCss(), "text/css"));
 
   return files.sort((a, b) => a.path.localeCompare(b.path));
