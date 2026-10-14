@@ -27,4 +27,17 @@ export const CAUSAL_GOLDEN_FIXTURES = {
   "Disconnected components": [
     "event Primary", "event Isolated", "handler PrimaryHandler", "Primary handled by PrimaryHandler", "effect persist on PrimaryHandler: persist primary state",
   ],
+  "Branch and converge": [
+    "event Root", "event Left", "event Right", "event Joined", "handler FanOut", "handler MergeLeft", "handler MergeRight",
+    "Root handled by FanOut", "FanOut causes Left", "FanOut causes Right", "Left handled by MergeLeft", "Right handled by MergeRight",
+    "MergeLeft causes Joined", "MergeRight causes Joined",
+  ],
+  "Disconnected causal components": [
+    "event First", "event Second", "event Isolated", "handler FirstHandler", "handler SecondHandler",
+    "First handled by FirstHandler", "Second handled by SecondHandler", "effect persist-first on FirstHandler: persist first", "effect persist-second on SecondHandler: persist second",
+  ],
+  "Cyclic failure retry": [
+    "event Work", "handler Worker", "Work handled by Worker", "failure worker-failed on handler Worker",
+    "retry retry-worker for worker-failed {", "  mechanism: handler", "  target: same-execution", "}",
+  ],
 } as const;
