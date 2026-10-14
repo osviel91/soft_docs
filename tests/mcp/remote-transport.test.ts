@@ -21,6 +21,7 @@ import { projectDatabase } from "../../src/domain/database/visual-projection";
 import { layoutGeometry } from "../../src/layout/elk-geometry-adapter";
 import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
+import type { ApplicationContext } from "../../src/application/context";
 import { startHarness, type McpHarness } from "./harness";
 
 let harness: McpHarness;
@@ -29,6 +30,7 @@ let projectId: string;
 let contextId: string;
 let token: string;
 let discoveryProjectToDelete: string | undefined;
+let trajectoryProjectToDelete: string | undefined;
 
 beforeAll(async () => {
   harness = await startHarness();
@@ -54,6 +56,10 @@ afterEach(async () => {
   if (discoveryProjectToDelete !== undefined) {
     await harness.service.runtime.projects.delete(discoveryProjectToDelete);
     discoveryProjectToDelete = undefined;
+  }
+  if (trajectoryProjectToDelete !== undefined) {
+    await harness.service.runtime.projects.delete(trajectoryProjectToDelete);
+    trajectoryProjectToDelete = undefined;
   }
 });
 
@@ -97,6 +103,52 @@ function textualResult(result: unknown): Record<string, any> {
 }
 
 describe("the remote MCP service over Streamable HTTP", () => {
+  it("keeps project and resource trajectories in SHARED by default and scopes explicit MY WORK", async () => {
+    const trajectoryProjectId = await harness.aProject(ownerId, "Trajectory privacy project");
+    trajectoryProjectToDelete = trajectoryProjectId;
+    const workA = await harness.aPrivateWork(trajectoryProjectId, ownerId);
+    const ownerContext: ApplicationContext = { requestId: "trajectory-owner", principal: { subjectUserId: ownerId, actor: { kind: "user", userId: ownerId }, authType: "session", scopes: [...ALL_PERMISSIONS] } };
+    const shared = await harness.service.runtime.mutations.createResource(ownerContext, trajectoryProjectId, {
+      path: `trajectory-shared-${crypto.randomUUID()}.md`, type: "markdown-document", content: "shared history", contextId: null,
+    });
+    const privateA = await harness.service.runtime.mutations.createResource(ownerContext, trajectoryProjectId, {
+      path: `trajectory-a-${crypto.randomUUID()}.md`, type: "markdown-document", content: "private A", contextId: workA,
+    });
+    const otherOwner = await harness.aUser("Trajectory owner B");
+    const project = await harness.service.runtime.projects.findById(trajectoryProjectId);
+    await harness.service.runtime.workspaces.setMember(project!.workspaceId, otherOwner, "EDITOR");
+    await harness.service.runtime.projects.setMember(trajectoryProjectId, otherOwner, "EDITOR");
+    const otherContextId = await harness.aPrivateWork(trajectoryProjectId, otherOwner);
+    const otherContext: ApplicationContext = { requestId: "trajectory-owner-b", principal: { subjectUserId: otherOwner, actor: { kind: "user", userId: otherOwner }, authType: "session", scopes: [...ALL_PERMISSIONS] } };
+    const privateB = await harness.service.runtime.mutations.createResource(otherContext, trajectoryProjectId, {
+      path: `trajectory-b-${crypto.randomUUID()}.md`, type: "markdown-document", content: "private B", contextId: otherContextId,
+    });
+    const client = await connect(token);
+
+    const defaultProject = structured(await client.callTool({ name: "get_project_trajectory", arguments: { projectId: trajectoryProjectId } }));
+    expect(defaultProject.entries.map((entry: any) => entry.resourceId)).toContain(shared.id);
+    expect(defaultProject.entries.map((entry: any) => entry.resourceId)).not.toContain(privateA.id);
+    expect(defaultProject.entries.map((entry: any) => entry.resourceId)).not.toContain(privateB.id);
+
+    const ownProject = structured(await client.callTool({ name: "get_project_trajectory", arguments: { projectId: trajectoryProjectId, contextId: workA } }));
+    expect(ownProject.entries.map((entry: any) => entry.resourceId)).toEqual([privateA.id]);
+    const ownResource = structured(await client.callTool({ name: "get_resource_trajectory", arguments: { projectId: trajectoryProjectId, resource: privateA.id, contextId: workA } }));
+    expect(ownResource.entries.map((entry: any) => entry.resourceId)).toEqual([privateA.id]);
+
+    const privateWithoutContext = await client.callTool({ name: "get_resource_trajectory", arguments: { projectId: trajectoryProjectId, resource: privateA.id } });
+    const foreignProject = await client.callTool({ name: "get_project_trajectory", arguments: { projectId: trajectoryProjectId, contextId: otherContextId } });
+    const foreignResource = await client.callTool({ name: "get_resource_trajectory", arguments: { projectId: trajectoryProjectId, resource: privateB.id, contextId: otherContextId } });
+    const noReadToken = await harness.aToken(ownerId, ["project:read"]);
+    const noReadClient = await connect(noReadToken.token);
+    const noRead = await noReadClient.callTool({ name: "get_project_trajectory", arguments: { projectId: trajectoryProjectId } });
+    await noReadClient.close();
+    expect(privateWithoutContext.isError).toBe(true);
+    expect(foreignProject.isError).toBe(true);
+    expect(foreignResource.isError).toBe(true);
+    expect(noRead.isError).toBe(true);
+    await client.close();
+  });
+
   it("keeps initialize guidance aligned with exposed tool names", () => {
     const tools = new Set(createMcpTools().map((tool) => tool.name));
     const numberedTools = [

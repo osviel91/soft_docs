@@ -1430,6 +1430,7 @@ export default function App() {
     apiClient,
     selectedProjectId,
     historyResourceScoped ? selectedDiagram?.id ?? null : null,
+    workspaceMode === "server" ? server.active?.contextId ?? null : null,
     workspaceMode === "server",
   );
 

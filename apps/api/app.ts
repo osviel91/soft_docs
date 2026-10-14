@@ -242,7 +242,7 @@ export async function createApp(
     promotion,
     capabilities,
     bootstrap,
-    trajectory: createResourceTrajectoryService({ projects: runtime.projects }),
+    trajectory: createResourceTrajectoryService({ projects: runtime.projects, knowledgeContexts: runtime.knowledgeContexts, policy }),
     resourceRevisions: createResourceRevisionService({
       projects: runtime.projects,
       knowledgeContexts: runtime.knowledgeContexts,

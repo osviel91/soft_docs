@@ -535,4 +535,25 @@ describe("the shared API serves a credential too", () => {
     await expect(dependencies.resourceRevisions.get(restricted, projectId, resource.id, workId, 1)).rejects.toMatchObject({ code: "not_found" });
     await expect(dependencies.resourceRevisions.get(reader, projectId, resource.id, workId, 1)).resolves.toMatchObject({ resourceId: resource.id, projectId, contextId: workId, revision: 1 });
   });
+
+  it("scopes PAT project and resource trajectories to SHARED or the owned MY WORK context", async () => {
+    const owner = await aUser();
+    const projectId = await aProject(owner, "Trajectory PAT scope");
+    const workId = workFor(projectId);
+    const shared = await dependencies.runtime.mutations.createResource(sessionContext(owner), projectId, { path: "shared-history.md", type: "markdown-document", content: "shared", contextId: null });
+    const privateResource = await dependencies.catalog.createResource(sessionContext(owner), projectId, { path: "private-history.md", type: "markdown-document", content: "private", contextId: workId });
+    const reader = await credentialContext(owner, ["project:read", "resource:read"]);
+    const noResourceRead = await credentialContext(owner, ["project:read"]);
+    const otherProjectId = await aProject(owner, "Restricted trajectory project");
+    const restricted = await credentialContext(owner, ["project:read", "resource:read"], [otherProjectId]);
+
+    const sharedHistory = await dependencies.trajectory.getProjectTrajectory(reader, projectId);
+    const privateHistory = await dependencies.trajectory.getProjectTrajectory(reader, projectId, {}, workId);
+    expect(sharedHistory.entries.map((entry) => entry.resourceId)).toEqual([shared.id]);
+    expect(privateHistory.entries.map((entry) => entry.resourceId)).toEqual([privateResource.id]);
+    await expect(dependencies.trajectory.getProjectTrajectory(noResourceRead, projectId)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(dependencies.trajectory.getResourceTrajectory(restricted, projectId, shared.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(dependencies.trajectory.getResourceTrajectory(reader, projectId, privateResource.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(dependencies.trajectory.getResourceTrajectory(reader, projectId, privateResource.id, {}, workId)).resolves.toMatchObject({ entries: [expect.objectContaining({ resourceId: privateResource.id })] });
+  });
 });

@@ -5,33 +5,31 @@ export function useServerTrajectory(
   client: ServerApiClient,
   projectId: string | null,
   resourceId: string | null,
+  contextId: string | null,
   enabled: boolean,
 ): { entries: ServerTrajectoryEntry[]; isLoading: boolean } {
-  const [entries, setEntries] = useState<ServerTrajectoryEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const key = JSON.stringify([projectId, contextId, resourceId]);
+  const [result, setResult] = useState<{ key: string; entries: ServerTrajectoryEntry[]; isLoading: boolean }>({ key: "", entries: [], isLoading: false });
   useEffect(() => {
     if (!enabled || !projectId) {
-      setEntries([]);
+      setResult({ key, entries: [], isLoading: false });
       return;
     }
     let active = true;
-    setIsLoading(true);
+    setResult({ key, entries: [], isLoading: true });
     void (resourceId
-      ? client.getResourceTrajectory(projectId, resourceId)
-      : client.getProjectTrajectory(projectId)
+      ? client.getResourceTrajectory(projectId, resourceId, {}, contextId)
+      : client.getProjectTrajectory(projectId, {}, contextId)
     )
       .then((result) => {
-        if (active) setEntries(result.entries);
+        if (active) setResult({ key, entries: result.entries, isLoading: false });
       })
       .catch(() => {
-        if (active) setEntries([]);
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
+        if (active) setResult({ key, entries: [], isLoading: false });
       });
     return () => {
       active = false;
     };
-  }, [client, enabled, projectId, resourceId]);
-  return { entries, isLoading };
+  }, [client, enabled, projectId, resourceId, contextId, key]);
+  return result.key === key ? { entries: result.entries, isLoading: result.isLoading } : { entries: [], isLoading: enabled && projectId !== null };
 }

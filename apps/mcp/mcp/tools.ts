@@ -45,6 +45,7 @@ import type { ArchitecturalProposalService } from "../../../src/application/arch
 import type { PromotionService } from "../../../src/application/promotion-service";
 import type { CapabilityService } from "../../../src/application/capability-service";
 import type { ResourceTrajectoryService } from "../../../src/application/resource-trajectory-service";
+import { normalizeTrajectoryContextId } from "../../../src/application/resource-trajectory-service";
 import type { ResourceRecord } from "../../../src/application/ports/project-repository";
 import { invalid, notFound } from "../../../src/application/errors";
 import { analyze } from "../../../src/language/analyze";
@@ -985,26 +986,27 @@ export function createMcpTools(): McpTool[] {
     {
       name: "get_project_trajectory",
       title: "Get project trajectory",
-      description: "Read the bounded canonical history of every resource in a project.",
-      inputSchema: { projectId: projectId(), limit: z.number().int().min(1).max(100).optional(), cursor: z.number().int().min(0).optional() },
+      description: "Read bounded history for SHARED by default, or for an explicitly selected owned MY WORK context.",
+      inputSchema: { projectId: projectId(), contextId: z.string().min(1).optional().describe('Omit or use "shared" for SHARED; supply an owned MY WORK context id for private history.'), limit: z.number().int().min(1).max(100).optional(), cursor: z.number().int().min(0).optional() },
       annotations: { ...READ_ONLY, title: "Get project trajectory" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
-        const result = await toolContext.trajectory.getProjectTrajectory(toolContext.context, stringArg(args, "projectId"), { limit: numberArg(args, "limit"), cursor: numberArg(args, "cursor") });
+        const result = await toolContext.trajectory.getProjectTrajectory(toolContext.context, stringArg(args, "projectId"), { limit: numberArg(args, "limit"), cursor: numberArg(args, "cursor") }, normalizeTrajectoryContextId(typeof args.contextId === "string" ? args.contextId : null));
         return { text: `${result.entries.length} trajectory entries.`, structured: result };
       },
     },
     {
       name: "get_resource_trajectory",
       title: "Get resource trajectory",
-      description: "Read the bounded canonical history of one resource.",
-      inputSchema: { projectId: projectId(), resource: resourceReference(), limit: z.number().int().min(1).max(100).optional(), cursor: z.number().int().min(0).optional() },
+      description: "Read bounded history of one SHARED resource by default, or one resource in an explicitly selected owned MY WORK context.",
+      inputSchema: { projectId: projectId(), contextId: z.string().min(1).optional().describe('Omit or use "shared" for SHARED; supply an owned MY WORK context id for private history.'), resource: resourceReference(), limit: z.number().int().min(1).max(100).optional(), cursor: z.number().int().min(0).optional() },
       annotations: { ...READ_ONLY, title: "Get resource trajectory" },
       requiredPermissions: ["resource:read"],
       async run(args, toolContext) {
         const project = stringArg(args, "projectId");
-        const resource = await resolveResource(toolContext, project, stringArg(args, "resource"));
-        const result = await toolContext.trajectory.getResourceTrajectory(toolContext.context, project, resource.id, { limit: numberArg(args, "limit"), cursor: numberArg(args, "cursor") });
+        const contextId = normalizeTrajectoryContextId(typeof args.contextId === "string" ? args.contextId : null);
+        const resource = await resolveResource(toolContext, project, stringArg(args, "resource"), contextId);
+        const result = await toolContext.trajectory.getResourceTrajectory(toolContext.context, project, resource.id, { limit: numberArg(args, "limit"), cursor: numberArg(args, "cursor") }, contextId);
         return { text: `${result.entries.length} trajectory entries.`, structured: result };
       },
     },
