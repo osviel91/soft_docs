@@ -3,6 +3,7 @@ import { createAuthorizationPolicy, type AuthorizationPolicy } from "./authoriza
 import { ApplicationError, notFound } from "./errors";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { ProjectRepository, ResourceRecord } from "./ports/project-repository";
+import { findReadableResource } from "./resource-read-authorization";
 import { resourceRepresentationOfType, type ResourceRepresentation, type ResourceType } from "../domain/workspace/resource-id";
 import type { ResourceRevision, ResourceAuthorship } from "../domain/workspace/resource-revision";
 import type { ResourceMetadata } from "../domain/workspace/resource-metadata";
@@ -35,27 +36,7 @@ export function createResourceRevisionService(options: {
   policy?: AuthorizationPolicy;
 }): ResourceRevisionService {
   const policy = options.policy ?? createAuthorizationPolicy(options.projects);
-
-  const authorizeResource = async (
-    context: ApplicationContext,
-    projectId: string,
-    resourceId: string,
-    contextId: string | null,
-  ): Promise<ResourceRecord> => {
-    await policy.requirePermission(context, projectId, "resource:read");
-    if (contextId !== null) {
-      await policy.requirePermission(context, projectId, "project:read");
-      const privateContext = await options.knowledgeContexts.findPrivate(
-        projectId,
-        contextId,
-        context.principal.subjectUserId,
-      );
-      if (!privateContext) throw notFound(`No resource with id ${resourceId}.`);
-    }
-    const resource = await options.projects.findResource(projectId, resourceId, contextId);
-    if (!resource) throw notFound(`No resource with id ${resourceId}.`);
-    return resource;
-  };
+  const access = { ...options, policy };
 
   const snapshot = (
     resource: ResourceRecord,
@@ -82,7 +63,7 @@ export function createResourceRevisionService(options: {
 
   return {
     async list(context, projectId, resourceId, contextId) {
-      const resource = await authorizeResource(context, projectId, resourceId, contextId);
+      const resource = await findReadableResource(context, projectId, resourceId, contextId, access);
       // ponytail: reuse the existing history query; add paged summaries if histories become large.
       const revisions = await options.projects.listRevisions(resource.id);
       if (revisions.some((revision) => revision.resourceId !== resource.id)) {
@@ -99,7 +80,7 @@ export function createResourceRevisionService(options: {
       }));
     },
     async get(context, projectId, resourceId, contextId, revisionNumber) {
-      const resource = await authorizeResource(context, projectId, resourceId, contextId);
+      const resource = await findReadableResource(context, projectId, resourceId, contextId, access);
       if (!Number.isSafeInteger(revisionNumber) || revisionNumber < 1) {
         throw notFound(`No revision ${revisionNumber} for resource ${resourceId}.`);
       }

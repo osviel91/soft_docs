@@ -359,8 +359,9 @@ export type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-function queryString(options: { limit?: number; cursor?: number }): string {
+function queryString(options: { limit?: number; cursor?: number }, contextId: string | null): string {
   const params = new URLSearchParams();
+  params.set("contextId", contextId ?? "shared");
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
   const value = params.toString();
@@ -955,16 +956,18 @@ export class ServerApiClient {
   async getProjectTrajectory(
     projectId: string,
     options: { limit?: number; cursor?: number } = {},
+    contextId: string | null = null,
   ): Promise<{ entries: ServerTrajectoryEntry[]; nextCursor: number | null }> {
-    return this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/trajectory${queryString(options)}`);
+    return this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/trajectory${queryString(options, contextId)}`);
   }
 
   async getResourceTrajectory(
     projectId: string,
     resourceId: string,
     options: { limit?: number; cursor?: number } = {},
+    contextId: string | null = null,
   ): Promise<{ entries: ServerTrajectoryEntry[]; nextCursor: number | null }> {
-    return this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}/trajectory${queryString(options)}`);
+    return this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}/trajectory${queryString(options, contextId)}`);
   }
 
   async listChangeProposals(

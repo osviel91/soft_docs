@@ -122,8 +122,8 @@ export interface ProjectRepository {
     contextId?: string | null,
   ): Promise<ResourceRecord | null>;
 
-  /** One resource by id including RETIRED records for historical inspection. */
-  findHistoricalResource?(projectId: string, resourceId: string): Promise<ResourceRecord | null>;
+  /** One resource by id and exact context, including RETIRED records. */
+  findHistoricalResource?(projectId: string, resourceId: string, contextId: string | null): Promise<ResourceRecord | null>;
 
   /** One resource by its globally unique id. */
   findResourceById(resourceId: string): Promise<ResourceRecord | null>;
@@ -180,6 +180,6 @@ export interface ProjectRepository {
   /** Bounded, deterministic canonical history for a project or one resource. */
   listTrajectory(
     projectId: string,
-    options?: { resourceId?: string; limit?: number; cursor?: number },
+    options: { contextId: string | null; resourceId?: string; limit?: number; cursor?: number },
   ): Promise<{ entries: import("../../domain/workspace/resource-trajectory").TrajectoryEntry[]; nextCursor: number | null }>;
 }

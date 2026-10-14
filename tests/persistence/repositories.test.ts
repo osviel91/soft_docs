@@ -604,3 +604,53 @@ describe("audit repository", () => {
     expect(await audit.listForProject(project.id, 2)).toHaveLength(2);
   });
 });
+
+describe("resource trajectory context isolation", () => {
+  it("filters context before pagination and retains retired SHARED history", async () => {
+    const owner = await aUser("Trajectory owner");
+    const other = await aUser("Other trajectory owner");
+    const project = await projects.create({ ownerId: owner.id, name: "Trajectory isolation" });
+    const workA = testUuid(8_100_001);
+    const workB = testUuid(8_100_002);
+    await client.query("INSERT INTO knowledge_contexts (id, project_id, owner_user_id, name) VALUES ($1, $2, $3, $4), ($5, $2, $6, $7)", [workA, project.id, owner.id, "Work A", workB, other.id, "Work B"]);
+
+    const shared = await projects.createResource(project.id, { path: "shared.md", type: "markdown-document" });
+    const privateA = await projects.createResource(project.id, { path: "a.md", type: "markdown-document", contextId: workA });
+    const privateB = await projects.createResource(project.id, { path: "b.md", type: "markdown-document", contextId: workB });
+    const addRevision = async (resourceId: string, revision: number, contextId: string | null, createdAt: string) => {
+      await client.query(
+        `INSERT INTO resource_revisions (resource_id, revision, content, type, metadata, authorship, knowledge_context_id, created_at)
+         VALUES ($1, $2, $3, 'markdown-document', '{}'::jsonb, $4::jsonb, $5, $6)`,
+        [resourceId, revision, `synthetic-${resourceId}-${revision}`, JSON.stringify({ kind: "user", userId: owner.id, subjectUserId: owner.id }), contextId, createdAt],
+      );
+    };
+    await addRevision(shared.id, 1, null, "2026-01-01T00:00:00Z");
+    await addRevision(shared.id, 2, null, "2026-01-05T00:00:00Z");
+    await addRevision(privateA.id, 1, workA, "2026-01-02T00:00:00Z");
+    await addRevision(privateA.id, 2, workA, "2026-01-03T00:00:00Z");
+    await addRevision(privateB.id, 1, workB, "2026-01-04T00:00:00Z");
+    await client.query("UPDATE resources SET revision = 2 WHERE id = $1", [privateA.id]);
+    await client.query("UPDATE resources SET revision = 2 WHERE id = $1", [shared.id]);
+    await projects.deleteResource(project.id, shared.id);
+
+    const first = await projects.listTrajectory(project.id, { contextId: workA, limit: 1 });
+    const second = await projects.listTrajectory(project.id, { contextId: workA, limit: 1, cursor: first.nextCursor ?? 0 });
+    const workEntries = [...first.entries, ...second.entries];
+    expect(first.entries).toHaveLength(1);
+    expect(first.nextCursor).toBe(1);
+    expect(workEntries.map((entry) => entry.resourceId)).toEqual([privateA.id, privateA.id]);
+    expect(workEntries.map((entry) => entry.resultingRevision).sort()).toEqual([1, 2]);
+
+    const sharedHistory = await projects.listTrajectory(project.id, { contextId: null, limit: 10 });
+    expect(sharedHistory.entries.map((entry) => entry.resourceId)).toEqual([shared.id, shared.id, shared.id]);
+    expect(sharedHistory.entries.map((entry) => entry.kind)).toContain("RESOURCE_RETIRED");
+    expect(workEntries.some((entry) => entry.resourceId === privateB.id)).toBe(false);
+
+    const sharedPageOne = await projects.listTrajectory(project.id, { contextId: null, limit: 1 });
+    const sharedPageTwo = await projects.listTrajectory(project.id, { contextId: null, limit: 1, cursor: sharedPageOne.nextCursor ?? 0 });
+    const pagedSharedEntries = [...sharedPageOne.entries, ...sharedPageTwo.entries];
+    expect(pagedSharedEntries).toHaveLength(3);
+    expect(new Set(pagedSharedEntries.map((entry) => entry.id)).size).toBe(3);
+    expect(pagedSharedEntries.map((entry) => entry.kind)).toContain("RESOURCE_RETIRED");
+  });
+});

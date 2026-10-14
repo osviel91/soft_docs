@@ -36,6 +36,7 @@ import type { AppDependencies } from "./app";
 import { normalizeResourceMetadata } from "../../src/domain/workspace/resource-metadata";
 import type { ArchitecturalProposalService } from "../../src/application/architectural-proposal-service";
 import { createDiscoverSemanticCandidatesUseCase } from "../../src/application/discover-semantic-candidates";
+import { normalizeTrajectoryContextId } from "../../src/application/resource-trajectory-service";
 import type { EntityKind } from "../../src/domain/workspace/semantic-binding";
 import type { ProposalAttentionCategory, ProposalInboxStatus } from "../../src/application/ports/proposal-inbox-repository";
 import { createHash, randomBytes } from "node:crypto";
@@ -479,7 +480,7 @@ export function createRouter(dependencies: AppDependencies): Router {
       const context = await contextOf(request);
       const page = trajectoryPage(request);
       return json(200, {
-        ...await dependencies.trajectory.getProjectTrajectory(context, params.projectId, page),
+        ...await dependencies.trajectory.getProjectTrajectory(context, params.projectId, page, normalizeTrajectoryContextId(request.query.contextId)),
       });
     }),
   );
@@ -496,6 +497,7 @@ export function createRouter(dependencies: AppDependencies): Router {
             params.projectId,
             params.resourceId,
             page,
+            normalizeTrajectoryContextId(request.query.contextId),
           ),
         });
       }),

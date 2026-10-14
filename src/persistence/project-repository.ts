@@ -364,10 +364,10 @@ export function createProjectRepository(
 
     findResource,
 
-    async findHistoricalResource(projectId, resourceId) {
+    async findHistoricalResource(projectId, resourceId, contextId) {
       const result = await client.query(
-        "SELECT * FROM resources WHERE project_id = $1 AND id = $2",
-        [projectId, resourceId],
+        "SELECT * FROM resources WHERE project_id = $1 AND id = $2 AND knowledge_context_id IS NOT DISTINCT FROM $3",
+        [projectId, resourceId, contextId],
       );
       const row = result.rows[0];
       return row ? toResourceRecord(row) : null;
@@ -537,38 +537,43 @@ export function createProjectRepository(
       return row ? toResourceRevision(row) : null;
     },
 
-    async listTrajectory(projectId, options = {}) {
+    async listTrajectory(projectId, options) {
       const limit = Math.min(100, Math.max(1, Math.floor(options.limit ?? 50)));
       const cursor = Math.max(0, Math.floor(options.cursor ?? 0));
-      const resourceFilter = options.resourceId === undefined ? "" : " AND r.id = $2";
-      const params: SqlValue[] = [projectId];
+      const resourceFilter = options.resourceId === undefined ? "" : " AND r.id = $3";
+      const params: SqlValue[] = [projectId, options.contextId];
       if (options.resourceId !== undefined) params.push(options.resourceId);
       const result = await client.query(
-       `SELECT r.id, r.project_id, r.path, r.type, r.lifecycle, r.retired_at, r.retired_by,
+       `SELECT r.id, r.project_id, r.path, r.type, r.revision AS resource_revision, r.lifecycle, r.retired_at, r.retired_by,
                 rr.revision, rr.content, rr.metadata, rr.authorship, rr.created_at,
                 cp.id AS proposal_id, cp.title AS proposal_title,
                 cp.authorship AS proposal_authorship,
                 cp.merge_authorship, cp.merged_at, cp.base_revision
            FROM resources r
-           JOIN resource_revisions rr ON rr.resource_id = r.id
+           JOIN resource_revisions rr
+             ON rr.resource_id = r.id
+            AND rr.knowledge_context_id IS NOT DISTINCT FROM r.knowledge_context_id
            LEFT JOIN change_proposals cp
              ON cp.resource_id = rr.resource_id
             AND cp.merged_revision = rr.revision
             AND cp.status = 'merged'
-          WHERE r.project_id = $1${resourceFilter}
+            AND r.knowledge_context_id IS NULL
+          WHERE r.project_id = $1
+            AND r.knowledge_context_id IS NOT DISTINCT FROM $2${resourceFilter}
           ORDER BY rr.created_at DESC, r.id DESC, rr.revision DESC
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit + 1, cursor],
       );
       const rows = result.rows;
-      const grouped = new Map<string, { revisions: ResourceRevision[]; proposals: import("../domain/workspace/change-proposal").ChangeProposal[]; resource: { projectId: string; path: string; type: ResourceType } }>();
-      for (const row of rows.slice(0, limit + 1)) {
+      const grouped = new Map<string, { revisions: ResourceRevision[]; proposals: import("../domain/workspace/change-proposal").ChangeProposal[]; resourceRevision: number; resource: { projectId: string; path: string; type: ResourceType; lifecycle?: "RETIRED"; retiredAt?: Date; retiredBy?: string } }>();
+      for (const row of rows.slice(0, limit)) {
         const resourceId = text(row, "id");
         let group = grouped.get(resourceId);
         if (!group) {
           group = {
             revisions: [],
             proposals: [],
+            resourceRevision: integer(row, "resource_revision"),
              resource: {
                projectId: text(row, "project_id"), path: text(row, "path"), type: toResourceType(row.type),
                ...(row.lifecycle === "RETIRED" ? { lifecycle: "RETIRED" as const } : {}),
@@ -595,10 +600,16 @@ export function createProjectRepository(
         }
       }
       const entries = [...grouped.entries()].flatMap(([resourceId, group]) =>
-        resourceTrajectoryOf(resourceId, group.revisions, group.proposals, group.resource).entries,
+        resourceTrajectoryOf(
+          resourceId,
+          group.revisions,
+          group.proposals,
+          group.revisions.some((revision) => revision.revision === group.resourceRevision)
+            ? group.resource
+            : { projectId: group.resource.projectId, path: group.resource.path, type: group.resource.type },
+        ).entries,
       ).sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || b.id.localeCompare(a.id));
-      const page = entries.slice(0, limit);
-      return { entries: page, nextCursor: rows.length > limit ? cursor + limit : null };
+      return { entries, nextCursor: rows.length > limit ? cursor + limit : null };
     },
   };
 }

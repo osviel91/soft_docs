@@ -18,7 +18,9 @@ import { createRouter } from "../../apps/api/routes";
 import {
   SESSION_COOKIE,
   createSessionToken,
+  contextFor,
   hashSessionToken,
+  SESSION_SCOPES,
 } from "../../apps/api/context";
 import {
   parseCookies,
@@ -561,6 +563,64 @@ describe("resource routes", () => {
       },
     );
     expect(cleared.body.resource).not.toHaveProperty("metadata");
+  });
+});
+
+describe("trajectory context isolation API", () => {
+  it("defaults to SHARED and scopes project/resource history to the owned context", async () => {
+    const owner = await aProject("Trajectory scope");
+    const ownerContext = contextFor({ subjectUserId: owner.userId, actor: { kind: "user", userId: owner.userId }, authType: "session", scopes: SESSION_SCOPES }, "synthetic-owner");
+    const shared = await dependencies.runtime.mutations.createResource(ownerContext, owner.projectId, {
+      path: "shared-history.md", type: "markdown-document", content: "shared r1", contextId: null,
+    });
+    await dependencies.runtime.mutations.updateResource(ownerContext, owner.projectId, shared.id, {
+      content: "shared r2", expectedRevision: 1, contextId: null,
+    });
+    await dependencies.runtime.mutations.deleteResource(ownerContext, owner.projectId, shared.id, { expectedRevision: 2, contextId: null });
+    const privateAResponse = await call("POST", `/api/projects/${owner.projectId}/resources`, {
+      cookie: owner.cookie,
+      body: { path: "private-a.md", type: "markdown-document", content: "private A", contextId: owner.contextId },
+    });
+    const privateAId = privateAResponse.body.resource.id as string;
+
+    const userB = await signIn();
+    await addWorkspaceMember(owner, userB.userId, "EDITOR");
+    await call("PUT", `/api/projects/${owner.projectId}/members/${userB.userId}`, { cookie: owner.cookie, body: { role: "EDITOR" } });
+    const contextB = await call("POST", `/api/projects/${owner.projectId}/private-work`, { cookie: userB.cookie, body: { name: "trajectory B" } });
+    const privateBResponse = await call("POST", `/api/projects/${owner.projectId}/resources`, {
+      cookie: userB.cookie,
+      body: { path: "private-b.md", type: "markdown-document", content: "private B", contextId: contextB.body.context.id },
+    });
+    const privateBId = privateBResponse.body.resource.id as string;
+
+    const sharedDefault = await call("GET", `/api/projects/${owner.projectId}/trajectory`, { cookie: userB.cookie });
+    const sharedExplicit = await call("GET", `/api/projects/${owner.projectId}/trajectory?contextId=shared`, { cookie: userB.cookie });
+    expect(sharedDefault.body.entries.map((entry: any) => entry.resourceId)).toEqual(expect.arrayContaining([shared.id]));
+    expect(sharedExplicit.body.entries.map((entry: any) => entry.resourceId)).toEqual(expect.arrayContaining([shared.id]));
+    expect(sharedDefault.body.entries.map((entry: any) => entry.kind)).toContain("RESOURCE_RETIRED");
+    expect(sharedDefault.body.entries.some((entry: any) => [privateAId, privateBId].includes(entry.resourceId))).toBe(false);
+
+    const ownA = await call("GET", `/api/projects/${owner.projectId}/trajectory?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(ownA.body.entries.map((entry: any) => entry.resourceId)).toEqual([privateAId]);
+    const moved = await call("POST", `/api/projects/${owner.projectId}/resources/${privateAId}/move`, { cookie: owner.cookie, body: { path: "renamed-private-a.md", expectedRevision: 1, contextId: owner.contextId } });
+    expect(moved.body.resource.revision).toBe(2);
+    const movedHistory = await call("GET", `/api/projects/${owner.projectId}/resources/${privateAId}/trajectory?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(movedHistory.body.entries).toHaveLength(2);
+    expect(movedHistory.body.entries.every((entry: any) => entry.resourceId === privateAId && entry.path === "renamed-private-a.md")).toBe(true);
+    const ownB = await call("GET", `/api/projects/${owner.projectId}/resources/${privateBId}/trajectory?contextId=${contextB.body.context.id}`, { cookie: userB.cookie });
+    expect(ownB.body.entries.map((entry: any) => entry.resourceId)).toEqual([privateBId]);
+
+    const foreignProjectHistory = await call("GET", `/api/projects/${owner.projectId}/trajectory?contextId=${contextB.body.context.id}`, { cookie: owner.cookie });
+    const knownPrivateId = await call("GET", `/api/projects/${owner.projectId}/resources/${privateAId}/trajectory?contextId=${contextB.body.context.id}`, { cookie: userB.cookie });
+    const implicitPrivate = await call("GET", `/api/projects/${owner.projectId}/resources/${privateAId}/trajectory`, { cookie: userB.cookie });
+    expect(foreignProjectHistory.status).toBe(404);
+    expect(knownPrivateId.status).toBe(404);
+    expect(implicitPrivate.status).toBe(404);
+    expect(JSON.stringify(foreignProjectHistory.body)).not.toContain("private-b.md");
+
+    await call("DELETE", `/api/projects/${owner.projectId}/resources/${privateAId}?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    const deletedPrivateHistory = await call("GET", `/api/projects/${owner.projectId}/resources/${privateAId}/trajectory?contextId=${owner.contextId}`, { cookie: owner.cookie });
+    expect(deletedPrivateHistory.status).toBe(404);
   });
 });
 

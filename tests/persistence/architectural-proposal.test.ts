@@ -346,7 +346,7 @@ it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", asy
   expect(promotion.entries.map((entry) => entry.operation).sort()).toEqual(["CREATE", "RETIRE", "UPDATE"]);
   expect((await catalog.readResource(contextFor(owner), project.id, sharedA.id)).resource.revision).toBe(sharedA.revision + 1);
   await expect(catalog.readResource(contextFor(owner), project.id, sharedB.id)).rejects.toMatchObject({ code: "not_found" });
-  expect(await (createProjectRepository(client).findHistoricalResource?.(project.id, sharedB.id))).toMatchObject({ lifecycle: "RETIRED", revision: sharedB.revision });
+  expect(await (createProjectRepository(client).findHistoricalResource?.(project.id, sharedB.id, null))).toMatchObject({ lifecycle: "RETIRED", revision: sharedB.revision });
   const promotedStorage = createFsProjectStorage({ root: path.join(volume, project.id) });
   expect((await promotedStorage.read("b.md"))).toMatchObject({ ok: true, value: null });
   const manifest = await promotedStorage.read("project.json");
