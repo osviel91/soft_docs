@@ -38,6 +38,24 @@ describe("causal React Flow adapter", () => {
     expect(graph.edges[0]!.data!.sourceNodeIds.length).toBeGreaterThan(0);
   });
 
+  it("passes all source references through on one projected edge", () => {
+    const view = projectEventFlowToCausalView(analyzeEventFlow([
+      "event Input",
+      "handler H",
+      "Input handled by H",
+      "Input handled by H",
+    ].join("\n")).flow);
+    const projectedEdge = view.edges.find((edge) => edge.type === "MESSAGE_HANDLED_BY_HANDLER")!;
+    const adaptedEdges = causalFlowElements(view).edges;
+
+    expect(adaptedEdges).toHaveLength(1);
+    expect(adaptedEdges[0]!.id).toBe(projectedEdge.id);
+    expect(adaptedEdges[0]!.data!.sourceNodeIds).toEqual([
+      "handler-input@2:0",
+      "handler-input@3:0",
+    ]);
+  });
+
   it("creates a direct ELK graph with all entities and no subordinate filtering", () => {
     const view = projectEventFlowToCausalView(analyzeEventFlow("event A\nhandler H\nA handled by H\neffect save on H: Save state").flow);
     const graph = causalElkGraph(view);

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import ELK from "elkjs/lib/elk.bundled.js";
@@ -68,6 +68,29 @@ describe("causal graph interaction", () => {
     expect(container.querySelector('[data-id="message:Second"]')).toHaveClass("is-dimmed");
     fireEvent.click(screen.getByRole("button", { name: "Source line 5" }));
     expect(onSourceSelect).toHaveBeenCalledWith(selected.sourceNodeIds[0]);
+  });
+
+  it("shows and reveals every source line for one selected causal edge", async () => {
+    const view = projectEventFlowToCausalView(analyzeEventFlow([
+      "event Input",
+      "handler H",
+      "Input handled by H",
+      "Input handled by H",
+    ].join("\n")).flow);
+    const onSourceSelect = vi.fn();
+    const { container } = render(<CausalFlowView view={view} workerFactory={elkWorkerFactory()} onSourceSelect={onSourceSelect} />);
+    await waitFor(() => expect(container.querySelectorAll(".react-flow__edge")).toHaveLength(1));
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".react-flow__edge")!);
+
+    const details = await screen.findByTestId("causal-edge-details");
+    expect(within(details).getByRole("button", { name: "Source line 3" })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Source line 4" })).toBeInTheDocument();
+    fireEvent.click(within(details).getByRole("button", { name: "Source line 3" }));
+    fireEvent.click(within(details).getByRole("button", { name: "Source line 4" }));
+    expect(onSourceSelect.mock.calls).toEqual([
+      ["handler-input@2:0"],
+      ["handler-input@3:0"],
+    ]);
   });
 
   it("highlights the full directed reachable component and dims unrelated components", async () => {

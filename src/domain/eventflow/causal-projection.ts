@@ -381,14 +381,21 @@ function addEdge(
   kind: "handler-input" | "handler-output" | "effect" | "failure" | "retry",
 ): void {
   const key = `${type}\u0000${from}\u0000${to}`;
-  if (keys.has(key)) return;
+  const sourceNodeId = range ? nodeIdOf(kind, range) : undefined;
+  if (keys.has(key)) {
+    const existing = edges.find((edge) => edge.type === type && edge.from === from && edge.to === to);
+    if (sourceNodeId && existing && !existing.sourceNodeIds.includes(sourceNodeId)) {
+      existing.sourceNodeIds.push(sourceNodeId);
+    }
+    return;
+  }
   keys.add(key);
   edges.push({
     id: `causal:${type}:${from}->${to}`,
     type,
     from,
     to,
-    sourceNodeIds: range ? [nodeIdOf(kind, range)] : [],
+    sourceNodeIds: sourceNodeId ? [sourceNodeId] : [],
   });
 }
 
