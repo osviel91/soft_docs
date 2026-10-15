@@ -60,6 +60,32 @@ describe("DiagramViewport", () => {
     expect(onSemanticMessageSelect).toHaveBeenCalledTimes(3);
   });
 
+  it("does not capture the pointer on an interactive SVG node but still captures blank-canvas pans", () => {
+    const onNodeSelect = vi.fn();
+    const capture = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "setPointerCapture");
+    const originalPointerEvent = Object.getOwnPropertyDescriptor(window, "PointerEvent");
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", { configurable: true, value: capture });
+    Object.defineProperty(window, "PointerEvent", { configurable: true, value: MouseEvent });
+    try {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g data-node-id="concept:account"><rect x="20" y="20" width="120" height="60"/></g></svg>';
+      render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+      const node = document.querySelector('[data-node-id="concept:account"]')!;
+      fireEvent.pointerDown(node, { button: 0, pointerId: 1, clientX: 30, clientY: 30 });
+      expect(capture).not.toHaveBeenCalled();
+      fireEvent.click(node);
+      expect(onNodeSelect).toHaveBeenCalledWith("concept:account");
+
+      fireEvent.pointerDown(screen.getByTestId("viewport-pane"), { button: 0, pointerId: 2, clientX: 200, clientY: 200 });
+      expect(capture).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, "setPointerCapture", original);
+      else Reflect.deleteProperty(HTMLElement.prototype, "setPointerCapture");
+      if (originalPointerEvent) Object.defineProperty(window, "PointerEvent", originalPointerEvent);
+      else Reflect.deleteProperty(window, "PointerEvent");
+    }
+  });
+
   it("highlights every current-resource occurrence by identity", () => {
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">' +

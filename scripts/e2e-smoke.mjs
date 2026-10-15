@@ -1924,15 +1924,19 @@ async function runChecks(page, idp) {
     completionText.includes("PaymentService"),
   );
 
-  // Clicking a rendered message selects exactly that statement in the source.
+  // Clicking a rendered message with a real mouse selects that statement.
   await page.locator('[data-testid="dsl-textarea"]').press("Escape");
-  // A message is drawn as a horizontal `<line>`, whose bounding box has no
-  // height — Playwright therefore refuses a real click. The delegated handler is
-  // what is under test, so the event is dispatched directly.
-  await page
-    .locator('[data-testid="preview-svg"] [data-node-id^="message@"]')
-    .first()
-    .dispatchEvent("click");
+  // SVG lines have a zero-height bounding box, so click their painted stroke by
+  // transforming a point on the line into screen coordinates.
+  const message = page.locator('[data-testid="preview-svg"] [data-node-id^="message@"]');
+  const clickPoint = await message.first().evaluate((line) => {
+    const point = line.ownerSVGElement.createSVGPoint();
+    point.x = (Number(line.getAttribute("x1")) + Number(line.getAttribute("x2"))) / 2;
+    point.y = Number(line.getAttribute("y1"));
+    const screenPoint = point.matrixTransform(line.getScreenCTM());
+    return { x: screenPoint.x, y: screenPoint.y };
+  });
+  await page.mouse.click(clickPoint.x, clickPoint.y);
   const selectedText = await page
     .locator('[data-testid="dsl-textarea"]')
     .evaluate((element) =>
@@ -3956,7 +3960,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await waitForText(editedSvg, text => text.includes("Account Holder") && text.includes("Order") && text.includes("places"), "renamed Conceptual preview");
       check("stable customer ID rename updates canonical preview and preserves relationship", true);
       const selectedConcept = editedSvg.locator('[data-node-id="customer"]');
-      await selectedConcept.dispatchEvent("click");
+      await selectedConcept.click();
       await page.waitForFunction(() => {
         const editor = document.querySelector('[data-testid="dsl-textarea"]');
         return editor instanceof HTMLTextAreaElement && editor.value.slice(editor.selectionStart, editor.selectionEnd).includes("concept customer");
@@ -4156,7 +4160,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("stable table ID rename updates MY WORK render and preserves FK", true);
       check("MY WORK edit leaves SHARED Database source unchanged", (await currentServerResource(page, projectName)).content === sharedBefore.content);
       const selectedTable = page.getByTestId("database-preview-svg").locator('[data-node-id="customer"]');
-      await selectedTable.dispatchEvent("click");
+      await selectedTable.click();
       await page.waitForFunction(() => {
         const sourceEditor = document.querySelector('[data-testid="dsl-textarea"]');
         return sourceEditor instanceof HTMLTextAreaElement && sourceEditor.value.slice(sourceEditor.selectionStart, sourceEditor.selectionEnd).includes("table customer");
@@ -4319,9 +4323,19 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const panel = page.getByTestId("semantic-bindings");
       await panel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
       await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("initial Project has no explicit binding while any suggestion remains labeled unconfirmed", (await panel.getByTestId("semantic-candidates").textContent()).includes("Candidate · not a binding") && (await panel.locator('[data-testid^="semantic-binding-"]').count()) === 0 && (await panel.textContent()).includes("No explicit bindings"));
+      await page.getByRole("button", { name: "Load diagram Persistence" }).click();
+      const sharedDatabaseSvg = page.getByTestId("database-preview-svg");
+      await sharedDatabaseSvg.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const databaseSelectionStyles = await sharedDatabaseSvg.locator(".database__table, .database__column, .database__fk").evaluateAll(nodes => nodes.map(node => ({
+        className: node.getAttribute("class") ?? "",
+        opacity: getComputedStyle(node).opacity,
+      })));
+      check("changing from Conceptual to Database clears the previous resource selection", databaseSelectionStyles.length > 0 && databaseSelectionStyles.every(node => !node.className.includes("is-unrelated") && node.opacity === "1"));
+      await page.getByRole("button", { name: "Load diagram Domain" }).click();
+      await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 
       const myWorkButton = page.getByTestId("explorer-my-work-create");
       await myWorkButton.click();
@@ -4338,9 +4352,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.locator(".explorer__context-note").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       await page.getByTestId("explorer-private-context").getByRole("button", { name: "Load diagram MY WORK Domain" }).click();
+      await page.getByTestId("explorer-private-context").getByRole("button", { name: "Load diagram MY WORK Domain" }).click();
       await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
       await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       if (!(await panel.getByLabel("Exact indexed endpoint").count())) throw new Error(`MY WORK binding editor unavailable: context=${await panel.getAttribute("data-context-id")} writable=${await panel.getAttribute("data-writable")} contextNote=${await page.locator(".explorer__context-note").textContent()}`);
       const endpointOptions = await panel.getByLabel("Exact indexed endpoint").locator("option").allTextContents();
@@ -4362,9 +4376,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
        await panel.getByRole("button", { name: "Open related entity" }).click();
       await page.getByTestId("database-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       await page.waitForFunction(() => document.querySelector('[data-testid="database-preview-svg"] [data-node-id="projects"]')?.classList.contains("svg-node--active") ?? true, undefined, { timeout: UI_TIMEOUT_MS });
-       check("Conceptual Project navigates to and selects Database projects by stable identity", (await page.getByTestId("resource-header").textContent()).includes("schema-work.dbschema") && (await page.locator('[data-testid="database-preview-svg"] [data-node-id="projects"]').getAttribute("class") ?? "").includes("svg-node--active"));
-      await page.getByTestId("database-preview-svg").locator('[data-node-id="projects"]').dispatchEvent("click");
+      await page.waitForFunction(() => document.querySelector('[data-testid="database-preview-svg"] [data-node-id="projects"]')?.classList.contains("svg-node--active") ?? true, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Conceptual Project navigates to and selects Database projects by stable identity", (await page.getByTestId("resource-header").textContent()).includes("schema-work.dbschema") && (await page.locator('[data-testid="database-preview-svg"] [data-node-id="projects"]').getAttribute("class") ?? "").includes("svg-node--active"));
+      await page.getByTestId("database-preview-svg").locator('[data-node-id="projects"]').click();
       await panel.getByRole("button", { name: "Open related entity" }).click();
       await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        check("Database projects navigates back to Conceptual Project", (await page.getByTestId("resource-header").textContent()).includes("domain-work.concept"));
@@ -4380,7 +4394,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await reviewerPage.reload({ waitUntil: "domcontentloaded" });
       await openServerProject(reviewerPage, projectName);
       await reviewerPage.getByRole("button", { name: "Load diagram Domain" }).click();
-      await reviewerPage.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+      await reviewerPage.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
       await reviewerPage.getByTestId("semantic-bindings").getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const anotherContext = await apiRequest(reviewerPage, `/api/projects/${projectId}/semantic-bindings?contextId=${work.id}`);
       check("another user's MY WORK binding is not visible", anotherContext.status === 404);
@@ -4448,7 +4462,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Base status", exact: true }).click();
       await page.getByRole("button", { name: "Open resulting SHARED knowledge" }).click();
        await page.locator('[data-testid="explorer-shared-section"] [data-testid="explorer-diagram"]').filter({ hasText: "MY WORK Domain" }).getByTestId("select-diagram-button").click();
-       await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').dispatchEvent("click");
+       await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
        const sharedPanel = page.getByTestId("semantic-bindings");
        await sharedPanel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        await sharedPanel.getByText("represents-in", { exact: true }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });

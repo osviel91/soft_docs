@@ -35,6 +35,7 @@ import {
   SEQUENCE_SNIPPETS,
 } from "./features/editor/snippets";
 import Preview from "./features/preview/Preview";
+import { activeNodeScopeKey } from "./features/preview/active-node-scope";
 import SemanticMessageInspector from "./features/preview/SemanticMessageInspector";
 import AnalysisSurface from "./features/preview/AnalysisSurface";
 import TraceSurface from "./features/preview/TraceSurface";
@@ -584,7 +585,10 @@ export default function App() {
   // highlight, hover cards and source↔diagram selection.
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [caretOffset, setCaretOffset] = useState(0);
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeNodeSelection, setActiveNodeSelection] = useState<{ scope: string; nodeId: string } | null>(null);
+  const setActiveNodeId = useCallback((nodeId: string | null, scope: string) => {
+    setActiveNodeSelection(nodeId === null ? null : { scope, nodeId });
+  }, []);
   const [activeSemanticMessageId, setActiveSemanticMessageId] = useState<string | null>(null);
   const [activeEntityAnchor, setActiveEntityAnchor] = useState<EntityAnchor | null>(null);
   const [traceStart, setTraceStart] = useState<TraceQueryStart | null>(null);
@@ -1512,14 +1516,24 @@ export default function App() {
       const diagram = allDiagrams.find((entry) => entry.id === resourceId || resourceIdForFile(entry) === resource?.id);
       if (diagram) {
         setView("code");
-        setActiveNodeId(nodeId ?? null);
+        setActiveNodeId(nodeId ?? null, activeNodeScopeKey({
+          workspaceMode,
+          projectId: diagram.projectId,
+          contextId: workspaceMode === "server" ? server.active?.contextId ?? null : workspaceMode === "folder" ? openedFolder?.folderName ?? null : null,
+          resourceId: workspaceMode === "server" ? diagram.id : resourceIdForFile(diagram) ?? diagram.id,
+          representation: resourceRepresentationOfName(diagram.name),
+        }));
         loadDiagram(diagram);
         return;
       }
       const sharedDiagram = sharedDiagrams.find(entry => entry.id === resourceId || sharedResourceIdForFile(entry) === resource?.id);
-      if (sharedDiagram) { setView("code"); setActiveNodeId(nodeId ?? null); loadSharedDiagram(sharedDiagram); }
+      if (sharedDiagram) {
+        setView("code");
+        setActiveNodeId(nodeId ?? null, activeNodeScopeKey({ workspaceMode: "server", projectId: sharedDiagram.projectId, contextId: null, resourceId: sharedDiagram.id, representation: resourceRepresentationOfName(sharedDiagram.name) }));
+        loadSharedDiagram(sharedDiagram);
+      }
     },
-    [index, sharedIndex, allDiagrams, loadDiagram, sharedDiagrams, sharedResourceIdForFile, loadSharedDiagram],
+    [index, sharedIndex, allDiagrams, resourceIdForFile, loadDiagram, sharedDiagrams, sharedResourceIdForFile, loadSharedDiagram, workspaceMode, server.active?.contextId, openedFolder?.folderName],
   );
 
   // Every resource a document may link to, in the shared shape the project-link
@@ -1843,6 +1857,19 @@ export default function App() {
   const activeBindingResourceId = workspaceMode === "server"
     ? selectedDiagram?.id ?? selectedNote?.id ?? activeResourceId
     : activeResourceId;
+  const activeNodeScope = activeNodeScopeKey({
+    workspaceMode,
+    projectId: workspaceMode === "server"
+      ? server.active?.project.id ?? selectedDiagram?.projectId ?? selectedNote?.projectId ?? null
+      : selectedProjectId ?? selectedDiagram?.projectId ?? selectedNote?.projectId ?? null,
+    contextId: workspaceMode === "server" ? server.active?.contextId ?? null : workspaceMode === "folder" ? openedFolder?.folderName ?? null : null,
+    resourceId: activeBindingResourceId ?? selectedDiagram?.id ?? selectedNote?.id ?? null,
+    representation: activeRepresentation,
+  });
+  const activeNodeId = activeNodeSelection?.scope === activeNodeScope ? activeNodeSelection.nodeId : null;
+  useEffect(() => {
+    setActiveNodeSelection((selection) => selection?.scope === activeNodeScope ? selection : null);
+  }, [activeNodeScope]);
   const previousBindingResourceId = useRef(activeBindingResourceId);
   useEffect(() => {
     if (previousBindingResourceId.current === activeBindingResourceId) return;
@@ -1851,8 +1878,8 @@ export default function App() {
   }, [activeBindingResourceId]);
   useEffect(() => {
     if (!activeEntityAnchor || activeEntityAnchor.resourceId !== activeBindingResourceId || activeEntityAnchor.identity.kind !== "local-id") return;
-    setActiveNodeId(activeEntityAnchor.identity.value);
-  }, [activeBindingResourceId, activeEntityAnchor]);
+    setActiveNodeId(activeEntityAnchor.identity.value, activeNodeScope);
+  }, [activeBindingResourceId, activeEntityAnchor, activeNodeScope, setActiveNodeId]);
   const canReviewProposals =
     workspaceMode === "server" &&
     activeResourceId !== null &&
@@ -2080,7 +2107,7 @@ export default function App() {
     (offset: number) => {
       setCaretOffset(offset);
       if (noteMode) {
-        setActiveNodeId(null);
+        setActiveNodeId(null, activeNodeScope);
         return;
       }
       if (isEventFlow) {
@@ -2089,18 +2116,19 @@ export default function App() {
             ? (eventFlowNodeAtPosition(
                 eventFlow,
                 offsetToPosition(source, offset),
-              )?.id ?? null)
+            )?.id ?? null)
             : null,
+          activeNodeScope,
         );
         return;
       }
       if (!isSequence) {
-        setActiveNodeId(null);
+        setActiveNodeId(null, activeNodeScope);
         return;
       }
-      setActiveNodeId(ast ? nodeIdAtOffset(source, ast, offset) : null);
+      setActiveNodeId(ast ? nodeIdAtOffset(source, ast, offset) : null, activeNodeScope);
     },
-    [noteMode, isEventFlow, isSequence, eventFlow, source, ast],
+    [noteMode, isEventFlow, isSequence, eventFlow, source, ast, activeNodeScope, setActiveNodeId],
   );
 
   // Preview → editor: clicking a rendered element selects its source range. The
@@ -2139,18 +2167,18 @@ export default function App() {
       // Selecting the range programmatically does not fire the editor's caret
       // handler, so the highlight is set here too — the caret really is on this
       // node now, and the canvas should say so.
-      setActiveNodeId(nodeId);
+      setActiveNodeId(nodeId, activeNodeScope);
     },
-    [isEventFlow, activeRepresentation, isSequence, eventFlow, ast, source, bindingEntities, activeBindingResourceId],
+    [isEventFlow, activeRepresentation, isSequence, eventFlow, ast, source, bindingEntities, activeBindingResourceId, activeNodeScope, setActiveNodeId],
   );
 
   const onSemanticMessageSelect = useCallback(
     (messageId: string, nodeId: string | null) => {
       if (!(index?.semanticMessages ?? []).some((message) => message.id === messageId)) return;
       setActiveSemanticMessageId(messageId);
-      if (nodeId) setActiveNodeId(nodeId);
+      if (nodeId) setActiveNodeId(nodeId, activeNodeScope);
     },
-    [index],
+    [index, activeNodeScope, setActiveNodeId],
   );
 
   const openTrace = useCallback((start: TraceQueryStart, direction: TraceDirection) => {

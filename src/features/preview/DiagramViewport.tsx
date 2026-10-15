@@ -285,14 +285,13 @@ export default function DiagramViewport({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return; // left button / touch / pen only
+    movedSincePointerDown.current = false;
     // A note bullet is a control, not a drag surface. Capturing the pointer here
     // would retarget the follow-up click at the pane, so the delegated toggle
     // would never see it — and a press on a bullet should not pan anyway.
     if (onNoteToggle && noteIndexFromTarget(event.target) !== null) return;
-    // Semantic badges are controls inside the draggable canvas. Pointer capture
-    // would retarget their click to the pane and lose the delegated activation.
-    if (semanticTarget(event.target)) return;
-    movedSincePointerDown.current = false;
+    // Clickable SVG nodes must keep their original click target for delegated selection.
+    if (semanticTarget(event.target) || nodeIdFromTarget(event.target) !== null) return;
     dragRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,

@@ -547,6 +547,19 @@ describe("App — authenticated browser", () => {
     });
   });
 
+  it("clears preview node selection when the resource context changes", async () => {
+    const content = "title Checkout\nparticipant Browser\nparticipant API\nBrowser -> API: Login";
+    await openServerProject(content, true);
+    const message = document.querySelector('[data-testid="preview-svg"] [data-node-id^="message@"]');
+    expect(message).not.toBeNull();
+    fireEvent.click(message!);
+    await waitFor(() => expect(document.querySelector('[data-testid="preview-svg"] .svg-node--active')).not.toBeNull());
+
+    await act(async () => fireEvent.click(within(screen.getByTestId("explorer-shared-section")).getByTestId("select-diagram-button")));
+    await waitFor(() => expect(screen.getByTestId("dsl-textarea")).toHaveValue(content));
+    expect(document.querySelector('[data-testid="preview-svg"] .svg-node--active')).toBeNull();
+  });
+
   it("keeps the project selected from the explorer instead of navigating back to the previous one", async () => {
     state.multipleProjects = true;
     await openServerProject("title Checkout", false);
