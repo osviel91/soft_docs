@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEventFlow } from "../../../src/language/eventflow/parser";
+import { analyzeEventFlow, parseEventFlow } from "../../../src/language/eventflow/parser";
 import {
   downstreamCausalNeighbors,
   effectId,
@@ -81,6 +81,69 @@ describe("projectEventFlowToCausalView", () => {
     expect(upstreamCausalNeighbors(view, messageId("TransactionCreated"))).toEqual([handler]);
     expect(view.messages.find((item) => item.name === "TransactionCreated")?.sourceNodeIds).toHaveLength(2);
     expect(view.handlers[0].sourceNodeIds).toHaveLength(1);
+  });
+
+  it("keeps every ordered source reference when duplicate causal relations share an edge", () => {
+    const analyzed = analyzeEventFlow([
+      "event Input",
+      "event Output",
+      "handler H",
+      "Input handled by H",
+      "Input handled by H",
+      "H causes Output",
+      "H causes Output",
+      "effect persist on H kind state: persist state",
+      "effect persist on H kind state: persist state",
+      "failure process-failed on handler H",
+      "failure process-failed on handler H",
+      "retry retry-process for process-failed {",
+      "  mechanism: handler",
+      "  target: same-execution",
+      "}",
+      "retry retry-process for process-failed {",
+      "  mechanism: handler",
+      "  target: same-execution",
+      "}",
+    ].join("\n"));
+    const view = projectEventFlowToCausalView(analyzed.flow);
+    const edge = (type: string) => view.edges.find((item) => item.type === type)!;
+
+    expect(analyzed.diagnostics.filter((item) => item.severity === "error").map((item) => item.code)).toEqual([
+      "eventflow.duplicate-causal-input",
+      "eventflow.duplicate-causal-output",
+      "eventflow.duplicate-effect",
+      "eventflow.duplicate-failure",
+      "eventflow.duplicate-retry",
+    ]);
+    expect(view.edges.filter((item) => item.type === "MESSAGE_HANDLED_BY_HANDLER")).toHaveLength(1);
+    expect(view.edges.filter((item) => item.type === "HANDLER_CAUSES_MESSAGE")).toHaveLength(1);
+    expect(edge("MESSAGE_HANDLED_BY_HANDLER").sourceNodeIds).toEqual([
+      "handler-input@3:0",
+      "handler-input@4:0",
+    ]);
+    expect(edge("HANDLER_CAUSES_MESSAGE").sourceNodeIds).toEqual([
+      "handler-output@5:0",
+      "handler-output@6:0",
+    ]);
+    expect(edge("HANDLER_HAS_EFFECT").sourceNodeIds).toEqual(["effect@7:0", "effect@8:0"]);
+    expect(edge("ENTITY_FAILED").sourceNodeIds).toEqual(["failure@9:0", "failure@10:0"]);
+    expect(edge("FAILURE_RETRIED").sourceNodeIds).toEqual(["retry@11:0", "retry@15:0"]);
+    expect(edge("RETRY_TARGETS_HANDLER").sourceNodeIds).toEqual(["retry@11:0", "retry@15:0"]);
+    expect(new Set(view.edges.map((item) => item.id)).size).toBe(view.edges.length);
+  });
+
+  it("does not merge causal relations with a different type or endpoint", () => {
+    const view = project([
+      "event A", "event B", "handler H", "handler Other",
+      "A handled by H", "B handled by H", "A handled by Other", "H causes A",
+    ].join("\n"));
+
+    expect(view.edges.map(({ type, from, to }) => [type, from, to])).toEqual([
+      ["MESSAGE_HANDLED_BY_HANDLER", "message:A", "handler:H"],
+      ["MESSAGE_HANDLED_BY_HANDLER", "message:B", "handler:H"],
+      ["MESSAGE_HANDLED_BY_HANDLER", "message:A", "handler:Other"],
+      ["HANDLER_CAUSES_MESSAGE", "handler:H", "message:A"],
+    ]);
   });
 
   it("keeps fan-in messages singular and traversable", () => {
