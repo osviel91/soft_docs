@@ -46,6 +46,44 @@ describe("Database SVG renderer", () => {
     expect(svg).not.toContain("review-change review-change--");
   });
 
+  it("ignores a selection id that is not a table in the current projection", async () => {
+    const source = [
+      'table customer - "Customer"',
+      'column customer customers_id "id" {uuid} not-null',
+      "primary-key customer_pk customer (id)",
+      'table invoice - "Invoice"',
+      'column invoice invoices_id "id" {uuid} not-null',
+      'column invoice invoice_customer_id "customer_id" {uuid} not-null',
+      "primary-key invoice_pk invoice (id)",
+      "foreign-key invoice_customer invoice (customer_id) -> customer (id)",
+    ].join("\n");
+    const projection = projectDatabase(parseDatabase(source).model!);
+    const svg = renderDatabaseSvg(projection, await layoutGeometry(projection.geometry), [], "concept:account");
+
+    expect(svg).not.toContain('class="database__table is-unrelated"');
+    expect(svg).not.toContain('class="database__column is-unrelated"');
+    expect(svg).not.toContain('class="database__fk is-unrelated"');
+  });
+
+  it("keeps a valid table selection and its FK-related table highlighted", async () => {
+    const source = [
+      'table customer - "Customer"',
+      'column customer customers_id "id" {uuid} not-null',
+      "primary-key customer_pk customer (id)",
+      'table invoice - "Invoice"',
+      'column invoice invoices_id "id" {uuid} not-null',
+      'column invoice invoice_customer_id "customer_id" {uuid} not-null',
+      "primary-key invoice_pk invoice (id)",
+      "foreign-key invoice_customer invoice (customer_id) -> customer (id)",
+    ].join("\n");
+    const projection = projectDatabase(parseDatabase(source).model!);
+    const svg = renderDatabaseSvg(projection, await layoutGeometry(projection.geometry), [], "customer");
+
+    expect(svg).toContain('class="database__table is-selected" data-node-id="customer"');
+    expect(svg).toContain('class="database__table" data-node-id="invoice"');
+    expect(svg).toContain('class="database__fk is-related"');
+  });
+
   it("keeps self, parallel, and ordered composite foreign keys individually understandable", async () => {
     const source = [
       'table employee - "Employee"',

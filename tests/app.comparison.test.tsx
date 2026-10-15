@@ -169,6 +169,61 @@ describe("App — dual viewer foundation", () => {
     expect(screen.queryByTestId("semantic-comparison-summary")).toBeNull();
   });
 
+  it("does not carry a Conceptual node selection into a different Database resource", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "concept", name: "domain.concept", projectId: "models", source: 'concept account "Account"\nconcept invoice "Invoice"\nrelation owns account -> invoice "owns"' },
+      { id: "database", name: "schema.dbschema", projectId: "models", source: 'table accounts - "Accounts"\ncolumn accounts accounts_id "id" {uuid} not-null\nprimary-key accounts_pk accounts (id)\ntable invoices - "Invoices"\ncolumn invoices invoices_id "id" {uuid} not-null\ncolumn invoices invoices_account_id "account_id" {uuid} not-null\nprimary-key invoices_pk invoices (id)\nforeign-key invoice_account invoices (account_id) -> accounts (id)' },
+    ];
+    await importResources({ id: "models", name: "Models", datasetIds: diagrams.map((diagram) => diagram.id), noteIds: [] }, diagrams);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load diagram domain.concept" }));
+    const concept = document.querySelector('[data-testid="conceptual-preview-svg"] [data-node-id="account"]');
+    expect(concept).not.toBeNull();
+    fireEvent.click(concept!);
+    await waitFor(() => expect(concept).toHaveClass("svg-node--active"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Load diagram schema.dbschema" }));
+    await waitFor(() => expect((screen.getByTestId("dsl-textarea") as HTMLTextAreaElement).value).toBe(diagrams[1]!.source));
+    await waitFor(() => expect(screen.getByTestId("database-preview-svg")).toBeInTheDocument());
+    expect(screen.getByTestId("database-preview-svg").querySelectorAll(".database__table.is-unrelated")).toHaveLength(0);
+  });
+
+  it("does not reuse a node id shared by different Conceptual and Database resources", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "concept", name: "domain.concept", projectId: "models", source: 'concept account "Account"' },
+      { id: "database", name: "schema.dbschema", projectId: "models", source: 'table account - "Stored Account"\ncolumn account account_id "id" {uuid} not-null' },
+    ];
+    await importResources({ id: "models", name: "Models", datasetIds: diagrams.map((diagram) => diagram.id), noteIds: [] }, diagrams);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load diagram domain.concept" }));
+    fireEvent.click(document.querySelector('[data-testid="conceptual-preview-svg"] [data-node-id="account"]')!);
+    await waitFor(() => expect(document.querySelector('[data-testid="conceptual-preview-svg"] .svg-node--active')).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Load diagram schema.dbschema" }));
+    await waitFor(() => expect(screen.getByTestId("database-preview-svg")).toBeInTheDocument());
+    expect(screen.getByTestId("database-preview-svg").querySelector('[data-node-id="account"]')).not.toHaveClass("is-selected");
+  });
+
+  it("clears a node selection when moving to a different project with colliding IDs", async () => {
+    render(<App />);
+    const conceptual: DiagramFile[] = [{ id: "concept", name: "domain.concept", projectId: "domain", source: 'concept account "Account"' }];
+    await importResources({ id: "domain", name: "Domain", datasetIds: ["concept"], noteIds: [] }, conceptual);
+    fireEvent.click(screen.getByRole("button", { name: "Load diagram domain.concept" }));
+    fireEvent.click(document.querySelector('[data-testid="conceptual-preview-svg"] [data-node-id="account"]')!);
+    await waitFor(() => expect(document.querySelector('[data-testid="conceptual-preview-svg"] .svg-node--active')).not.toBeNull());
+
+    const database: DiagramFile[] = [{ id: "database", name: "schema.dbschema", projectId: "storage", source: 'table account - "Account row"\ncolumn account account_id "id" {uuid} not-null' }];
+    await importResources({ id: "storage", name: "Storage", datasetIds: ["database"], noteIds: [] }, database);
+    await waitFor(() => expect(screen.getAllByTestId("explorer-project")).toHaveLength(2));
+    const storageProject = screen.getAllByTestId("explorer-project").find((row) => row.textContent?.includes("Storage"));
+    expect(storageProject).toBeDefined();
+    fireEvent.click(within(storageProject!).getByRole("button", { name: "Load diagram schema.dbschema" }));
+    await waitFor(() => expect(screen.getByTestId("database-preview-svg")).toBeInTheDocument());
+    expect(screen.getByTestId("database-preview-svg").querySelector('[data-node-id="account"]')).not.toHaveClass("is-selected");
+  });
+
   it("compares revisions of one Conceptual resource and highlights only present entities on each side", async () => {
     const snapshots = [
       revisionSnapshot(1, 'concept account "Account"\nconcept order "Order"\nrelation places account -> order "places"'),
