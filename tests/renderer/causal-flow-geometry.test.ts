@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk-api";
 import { analyzeEventFlow } from "../../src/language/eventflow/parser";
-import { projectEventFlowToCausalView, type CausalViewModel } from "../../src/domain/eventflow/causal-projection";
+import { projectEventFlowToCausalView, type CausalEdge, type CausalFailure, type CausalRetry, type CausalViewModel } from "../../src/domain/eventflow/causal-projection";
 import { CAUSAL_ELK_OPTIONS, CAUSAL_PORT_SIZE, causalFlowElements } from "../../src/renderer/causal/causal-flow-adapter";
 import { layout } from "./causal-flow-test-support";
 import { CAUSAL_GOLDEN_FIXTURES } from "../fixtures/causal-fixtures";
@@ -73,13 +73,25 @@ function samePoint(left: Point | undefined, right: Point): boolean {
   return !!left && Math.abs(left.x - right.x) <= 0.01 && Math.abs(left.y - right.y) <= 0.01;
 }
 
-function model(name: keyof typeof CAUSAL_GOLDEN_FIXTURES) {
-  return projectEventFlowToCausalView(analyzeEventFlow(CAUSAL_GOLDEN_FIXTURES[name].join("\n")).flow);
+function model(name: keyof typeof CAUSAL_GOLDEN_FIXTURES): CausalViewModel {
+  const view = projectEventFlowToCausalView(analyzeEventFlow(CAUSAL_GOLDEN_FIXTURES[name].join("\n")).flow);
+  if (name !== "BillerViabilityEventRaisedHandler layout") return view;
+  // Layout-only unknown failure target: the example establishes a retry exists,
+  // but does not provide evidence for the operation that failed.
+  const failure: CausalFailure = { id: "failure:layout-context", failureId: "layout-context", target: "undocumented", metadata: [], sourceNodeIds: [] };
+  const retry: CausalRetry = { id: "retry:layout-retry", retryId: "layout-retry", failureId: failure.failureId, metadata: [], sourceNodeIds: [] };
+  return {
+    ...view,
+    failures: [failure],
+    retries: [retry],
+    edges: [...view.edges, { id: "layout:failure-retried", type: "FAILURE_RETRIED" as const, from: failure.id, to: retry.id, sourceNodeIds: [] } satisfies CausalEdge],
+    components: [...view.components, { id: `component:${failure.id}`, nodeIds: [failure.id, retry.id], rootNodeIds: [failure.id] }],
+  };
 }
 
 describe("production causal ELK geometry", () => {
-  it.each(Object.entries(CAUSAL_GOLDEN_FIXTURES))("preserves topology and safe geometry for %s", async (name, lines) => {
-    const view = projectEventFlowToCausalView(analyzeEventFlow(lines.join("\n")).flow);
+  it.each(Object.entries(CAUSAL_GOLDEN_FIXTURES))("preserves topology and safe geometry for %s", async (name) => {
+    const view = model(name as keyof typeof CAUSAL_GOLDEN_FIXTURES);
     const result = await layout(view);
     const expectedCount = view.messages.length + view.handlers.length + view.effects.length + (view.failures?.length ?? 0) + (view.retries?.length ?? 0);
     expect(result.nodes).toHaveLength(expectedCount);
@@ -90,6 +102,12 @@ describe("production causal ELK geometry", () => {
     for (let left = 0; left < result.nodes.length; left += 1) for (let right = left + 1; right < result.nodes.length; right += 1) expect(overlaps(boxOf(result.nodes[left]!), boxOf(result.nodes[right]!))).toBe(false);
 
     const nodes = new Map(result.nodes.map((node) => [node.id, node]));
+    for (const node of result.nodes) for (const side of ["WEST", "EAST"] as const) {
+      const portTops = (node.data.ports ?? []).filter((port) => port.side === side).map((port) => port.top!).sort((left, right) => left - right);
+      for (let index = 1; index < portTops.length; index += 1) {
+        expect(portTops[index]! - portTops[index - 1]!).toBeGreaterThanOrEqual(16);
+      }
+    }
     for (const edge of result.edges) {
       const source = nodes.get(edge.source)!;
       const target = nodes.get(edge.target)!;
@@ -113,12 +131,19 @@ describe("production causal ELK geometry", () => {
     }
   });
 
-  it.each(["Branch and converge", "Disconnected causal components", "Cyclic failure retry"] as const)("does not increase edge crossings or vary layout for %s", async (name) => {
+  it.each([
+    "Branch and converge",
+    "Disconnected causal components",
+    "Cyclic failure retry",
+    "BillerViabilityEventRaisedHandler layout",
+    "RechargeReprogrammingSubEventHandler layout",
+  ] as const)("does not increase edge crossings or vary layout for %s", async (name) => {
     const view = model(name);
     const [first, second, baseline] = await Promise.all([layout(view), layout(view), baselineLayout(view)]);
     const countCurrent = crossings(first.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, routes: edge.data?.routes.map((route) => route.points) ?? [] })));
     const countBaseline = crossings(baseline.edges);
     expect(countCurrent).toBeLessThanOrEqual(countBaseline);
+    if (name.endsWith(" layout")) expect(countCurrent).toBe(0);
     expect(first.nodes.map((node) => [node.id, node.position.x, node.position.y])).toEqual(second.nodes.map((node) => [node.id, node.position.x, node.position.y]));
     expect(first.edges.map((edge) => edge.data?.routes)).toEqual(second.edges.map((edge) => edge.data?.routes));
   });

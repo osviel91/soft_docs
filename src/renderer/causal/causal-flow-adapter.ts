@@ -16,8 +16,12 @@ export interface CausalFlowNodeData extends Record<string, unknown> {
   causalId: CausalNodeId;
   kind: CausalFlowNodeKind;
   label: string;
+  labelLines?: string[];
+  labelFontSize?: number;
   sourceNodeIds: string[];
   owner?: string;
+  ownerLines?: string[];
+  ownerFontSize?: number;
   messageKind?: "event" | "command";
   provenance?: string;
   ports?: CausalFlowPort[];
@@ -55,8 +59,10 @@ export const CAUSAL_ELK_OPTIONS: Record<string, string> = {
   "elk.edgeRouting": "ORTHOGONAL",
   "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
   "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-  "elk.spacing.nodeNode": "36",
-  "elk.layered.spacing.nodeNodeBetweenLayers": "72",
+  "elk.spacing.edgeEdge": "18",
+  "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
+  "elk.spacing.nodeNode": "24",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "48",
 };
 
 export interface CausalElkRequest {
@@ -123,14 +129,20 @@ export function causalFlowElements(view: CausalViewModel): {
       const ports = nodePorts.get(data.causalId) ?? [];
       if (!ports.some((port) => port.side === "WEST")) ports.push({ id: `in:${data.causalId}`, side: "WEST" });
       if (!ports.some((port) => port.side === "EAST")) ports.push({ id: `out:${data.causalId}`, side: "EAST" });
-      const size = causalNodeSize(data);
+      const size = causalNodeSize({ ...data, ports });
       return {
         id: data.causalId,
         type: "causal",
         position: { x: 0, y: 0 },
         width: size.width,
         height: size.height,
-        data: { ...data, ports },
+        data: {
+          ...data,
+          ports,
+          labelLines: size.labelLines,
+          labelFontSize: size.labelFontSize,
+          ...(size.ownerLines ? { ownerLines: size.ownerLines, ownerFontSize: size.ownerFontSize } : {}),
+        },
       };
     }),
     edges: view.edges.map((edge) => {
@@ -238,26 +250,76 @@ export function causalReachability(view: CausalViewModel, start: CausalNodeId): 
   return { nodeIds, edgeIds };
 }
 
-export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" | "owner">): { width: number; height: number } {
-  const width = Math.min(data.kind === "message" ? 260 : 230, Math.max(data.kind === "handler" ? 150 : 140, data.label.length * 7.2 + 38));
-  const labelLines = causalTextLines(data.label, width);
-  const ownerLines = data.owner ? causalTextLines(`owned by ${data.owner.replace("handler:", "")}`, width, 5.8) : [];
-  return { width, height: Math.max(54, labelLines.length * 18 + ownerLines.length * 14 + 30) };
+const CAUSAL_NODE_MAX_WIDTH = 480;
+const CAUSAL_NODE_BASE_WIDTH_BY_KIND: Record<CausalFlowNodeKind, number> = {
+  message: 360,
+  handler: 320,
+  effect: 320,
+  failure: 280,
+  retry: 280,
+};
+const CAUSAL_PORT_MIN_SPACING = 16;
+const CAUSAL_MIN_LABEL_FONT_SIZE = 9;
+
+export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" | "owner" | "ports">): {
+  width: number;
+  height: number;
+  labelLines: string[];
+  labelFontSize: number;
+  ownerLines?: string[];
+  ownerFontSize?: number;
+} {
+  const minWidth = data.kind === "handler" ? 150 : 140;
+  const ownerText = data.owner ? `owned by ${data.owner.replace("handler:", "")}` : undefined;
+  const longestToken = Math.max(1, ...[data.label, ...(ownerText ? [ownerText] : [])].flatMap((text) => lexicalPieces(text).map((piece) => piece.text.length)));
+  const readableTokenWidth = longestToken * CAUSAL_MIN_LABEL_FONT_SIZE * 0.55 + 28;
+  const contentWidth = Math.min(CAUSAL_NODE_BASE_WIDTH_BY_KIND[data.kind], Math.max(minWidth, data.label.length * 5.4 + 38));
+  const width = Math.min(CAUSAL_NODE_MAX_WIDTH, Math.max(contentWidth, readableTokenWidth));
+  const labelFontSize = Math.min(13, (width - 28) / (longestToken * 0.55));
+  const labelLines = causalTextLines(data.label, width, labelFontSize * 0.55);
+  const ownerFontSize = labelFontSize * 0.77;
+  const ownerLines = ownerText ? causalTextLines(ownerText, width, ownerFontSize * 0.55) : undefined;
+  const lineHeight = labelFontSize * 1.25;
+  const ownerLineHeight = ownerFontSize * 1.3;
+  const contentHeight = Math.max(54, labelLines.length * lineHeight + (ownerLines ? 5 + ownerLines.length * ownerLineHeight : 0) + 40);
+  const maxPortsOnSide = Math.max(0, ...(data.ports ?? []).reduce((counts, port) => {
+    counts.set(port.side, (counts.get(port.side) ?? 0) + 1);
+    return counts;
+  }, new Map<CausalFlowPort["side"], number>()).values());
+  const portHeight = maxPortsOnSide > 1 ? (maxPortsOnSide + 1) * CAUSAL_PORT_MIN_SPACING : 0;
+  return {
+    width,
+    height: Math.max(contentHeight, portHeight),
+    labelLines,
+    labelFontSize,
+    ...(ownerLines ? { ownerLines, ownerFontSize } : {}),
+  };
 }
 
 export function causalTextLines(text: string, width: number, characterWidth = 7.2): string[] {
   const limit = Math.max(1, Math.floor((width - 28) / characterWidth));
   const lines: string[] = [];
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    if (word.length <= limit) {
-      const current = lines.at(-1);
-      if (current && current.length + word.length + 1 <= limit) lines[lines.length - 1] = `${current} ${word}`;
-      else lines.push(word);
-      continue;
+  let current = "";
+  for (const piece of lexicalPieces(text)) {
+    const separator = piece.spaceBefore ? " " : "";
+    if (current && current.length + separator.length + piece.text.length > limit) {
+      lines.push(current);
+      current = piece.text;
+    } else {
+      current += separator + piece.text;
     }
-    for (let index = 0; index < word.length; index += limit) lines.push(word.slice(index, index + limit));
   }
+  if (current) lines.push(current);
   return lines.length ? lines : [""];
+}
+
+function lexicalPieces(text: string): Array<{ text: string; spaceBefore: boolean }> {
+  const pieces: Array<{ text: string; spaceBefore: boolean }> = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const parts = word.split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[_.:/-])/u).filter(Boolean);
+    for (const [index, part] of parts.entries()) pieces.push({ text: part, spaceBefore: pieces.length > 0 && index === 0 });
+  }
+  return pieces;
 }
 
 function edgeRoutes(
