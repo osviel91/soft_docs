@@ -389,6 +389,23 @@ function proposalDiagnostics(
   });
 }
 
+function describeArchitecturalProposal(proposal: Awaited<ReturnType<ArchitecturalProposalService["get"]>>): string {
+  const promotion = proposal.promotion;
+  const lineage = proposal.lineage;
+  const consistency = proposal.consistency;
+  return [
+    `Proposal ${proposal.id}: ${proposal.title}`,
+    `recordedStatus: ${proposal.recordedStatus}; effectiveStatus: ${proposal.effectiveStatus}; lifecycle.state: ${proposal.lifecycle.state}`,
+    `Promotion: ${promotion ? `${promotion.status} (id: ${promotion.id}; createdAt: ${promotion.createdAt.toISOString()}${promotion.completedAt ? `; completedAt: ${promotion.completedAt.toISOString()}` : ""}; resultingSharedRevision: ${promotion.resultingSharedRevision})` : "not available"}`,
+    `supersedes: ${proposal.supersedes ? `${proposal.supersedes.title} (${proposal.supersedes.id})` : "none"}`,
+    `supersededBy: ${proposal.supersededBy ? `${proposal.supersededBy.title} (${proposal.supersededBy.id})` : "none"}`,
+    `Lineage: ${lineage.entries.map((entry) => `${entry.title} (${entry.id}; ${entry.status})`).join(" -> ") || "not available"}; complete: ${lineage.complete}`,
+    `Consistency: ${consistency.state}; diagnostics: ${consistency.diagnostics.length ? consistency.diagnostics.map(({ code, message }) => `${code}: ${message}`).join(" | ") : "none"}`,
+    `Lineage diagnostics: ${lineage.diagnostics.length ? lineage.diagnostics.map(({ code, message }) => `${code}: ${message}`).join(" | ") : "none"}`,
+    `${proposal.resources.length} submitted resources.`,
+  ].join("\n");
+}
+
 /**
  * Resolve an agent-supplied reference to a resource id.
  *
@@ -1032,7 +1049,7 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const proposal = await toolContext.architecturalProposals.get(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
         const capabilities = await toolContext.capabilities.proposal(toolContext.context, proposal.projectId, proposal.id);
-        return { text: `${proposal.title} (${proposal.effectiveStatus}; recorded status ${proposal.status}): ${proposal.resources.length} submitted resources.`, structured: { proposal, capabilities } };
+        return { text: describeArchitecturalProposal(proposal), structured: { proposal, capabilities } };
       },
     },
     {
