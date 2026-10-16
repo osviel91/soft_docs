@@ -137,7 +137,7 @@ export async function createMcpService(
   });
   const trajectory = createResourceTrajectoryService({ projects: runtime.projects, knowledgeContexts: runtime.knowledgeContexts, policy });
   const promotion = createPromotionService({ proposals: runtime.architecturalProposals, projects: runtime.projects, reviews: runtime.proposalReviews, batches: runtime.authoritativeBatches, promotions: runtime.promotions, storage: runtime.storageFor, policy, workspaceAdmin });
-  const capabilities = createCapabilityService({ policy, knowledgeContexts: runtime.knowledgeContexts, proposals: runtime.architecturalProposals, promotion, workspaceAdmin, workspaceSelfReview });
+  const capabilities = createCapabilityService({ policy, knowledgeContexts: runtime.knowledgeContexts, proposals: runtime.architecturalProposals, promotion, promotions: runtime.promotions, workspaceAdmin, workspaceSelfReview });
 
   const deps: McpHandlerDeps = {
     config,

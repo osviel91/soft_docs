@@ -1019,7 +1019,7 @@ export function createMcpTools(): McpTool[] {
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
         const proposals = await toolContext.architecturalProposals.list(toolContext.context, stringArg(args, "projectId"));
-        return { text: proposals.map((proposal) => `${proposal.title} (${proposal.status})`).join("\n") || "No architectural proposals.", structured: { proposals } };
+        return { text: proposals.map((proposal) => `${proposal.title} (${proposal.effectiveStatus}; recorded status ${proposal.status})`).join("\n") || "No architectural proposals.", structured: { proposals } };
       },
     },
     {
@@ -1032,7 +1032,7 @@ export function createMcpTools(): McpTool[] {
       async run(args, toolContext) {
         const proposal = await toolContext.architecturalProposals.get(toolContext.context, stringArg(args, "projectId"), stringArg(args, "proposalId"));
         const capabilities = await toolContext.capabilities.proposal(toolContext.context, proposal.projectId, proposal.id);
-        return { text: `${proposal.title}: ${proposal.resources.length} submitted resources.`, structured: { proposal, capabilities } };
+        return { text: `${proposal.title} (${proposal.effectiveStatus}; recorded status ${proposal.status}): ${proposal.resources.length} submitted resources.`, structured: { proposal, capabilities } };
       },
     },
     {

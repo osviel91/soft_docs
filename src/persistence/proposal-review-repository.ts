@@ -2,6 +2,7 @@ import type { ProposalReviewRepository } from "../application/ports/proposal-rev
 import type { ProposalReview } from "../domain/workspace/architectural-proposal";
 import type { SqlClient } from "./sql-client";
 import { createIdGenerator, type IdGenerator } from "../shared/ids/uuid";
+import { conflict, notFound } from "../application/errors";
 
 const date = (value: unknown) => value instanceof Date ? value : new Date(String(value));
 
@@ -20,13 +21,20 @@ export function createProposalReviewRepository(client: SqlClient, options: { new
   const newId = options.newId ?? createIdGenerator();
   return {
     async submit(input) {
-      const result = await client.query(
-        `INSERT INTO architectural_proposal_reviews (id, proposal_id, reviewer_user_id, decision, summary, proposal_base_revision, observed_shared_revision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *, (SELECT display_name FROM users WHERE id = reviewer_user_id) AS reviewer_display_name`,
-        [newId(), input.proposalId, input.reviewerUserId, input.decision, input.summary ?? null, input.proposalBaseRevision, input.observedSharedRevision],
-      );
-      return reviewOf(result.rows[0]);
+      return client.transaction(async (tx) => {
+        const proposal = await tx.query("SELECT project_id, status FROM architectural_proposals WHERE id = $1 FOR UPDATE", [input.proposalId]);
+        if (!proposal.rows[0]) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+        if (String(proposal.rows[0].status) !== "open") throw conflict("Only open proposals may be reviewed.", { state: String(proposal.rows[0].status) });
+        const promotion = await tx.query("SELECT status FROM promotions WHERE project_id = $1 AND proposal_id = $2 FOR UPDATE", [String(proposal.rows[0].project_id), input.proposalId]);
+        if (promotion.rows.length > 0) throw conflict("A proposal with promotion evidence cannot be reviewed.", { state: promotion.rows[0].status === "COMPLETED" ? "PROMOTED" : "PROMOTING", promotionStatus: promotion.rows[0].status });
+        const result = await tx.query(
+          `INSERT INTO architectural_proposal_reviews (id, proposal_id, reviewer_user_id, decision, summary, proposal_base_revision, observed_shared_revision)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *, (SELECT display_name FROM users WHERE id = reviewer_user_id) AS reviewer_display_name`,
+          [newId(), input.proposalId, input.reviewerUserId, input.decision, input.summary ?? null, input.proposalBaseRevision, input.observedSharedRevision],
+        );
+        return reviewOf(result.rows[0]);
+      });
     },
     async list(proposalId) {
       const result = await client.query(

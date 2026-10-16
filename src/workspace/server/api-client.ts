@@ -222,6 +222,12 @@ export interface ServerArchitecturalProposal {
   relationships: ResourceRelationship[];
   capabilities?: Record<string, ServerCapabilityDecision>;
   lifecycle?: { state: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED"; promotionStatus?: "COMMITTED_COMPLETION_PENDING" | "COMPLETED" };
+  /** Persisted proposal status remains unchanged; effectiveStatus is read-only derived state. */
+  recordedStatus?: "open" | "withdrawn" | "superseded";
+  effectiveStatus?: "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
+  actionable?: boolean;
+  lineage?: { entries: Array<{ id: string; title: string; status: "open" | "withdrawn" | "superseded"; supersedesProposalId?: string | null }>; complete: boolean; diagnostics: Array<{ code: string; message: string }> };
+  consistency?: { state: "CONSISTENT" | "INCONSISTENT"; diagnostics: Array<{ code: string; message: string }> };
   promotion?: { id: string; status: "COMMITTED_COMPLETION_PENDING" | "COMPLETED"; createdAt: string; completedAt?: string; resultingSharedRevision: string };
   supersedes?: { id: string; title: string };
   supersededBy?: { id: string; title: string };

@@ -20,6 +20,7 @@ import { createPromotionService } from "../../src/application/promotion-service"
 import { createSemanticBindingRepository } from "../../src/persistence/semantic-binding-repository";
 import { createProjectBootstrapService } from "../../src/application/project-bootstrap-service";
 import { createAuthorizationPolicy, createWorkspaceAdminGovernance, createWorkspaceSelfReviewPolicy } from "../../src/application/authorization";
+import { createMcpTools, type ToolContext } from "../../apps/mcp/mcp/tools";
 import { ALL_PERMISSIONS } from "../../src/domain/access/permissions";
 import type { ApplicationContext } from "../../src/application/context";
 import type { SqlClient } from "../../src/persistence/sql-client";
@@ -69,6 +70,7 @@ beforeAll(async () => {
     projects,
     knowledgeContexts,
     reviews: createProposalReviewRepository(client),
+    promotions: createPromotionRepository(client),
     policy,
     workspaceAdmin,
     workspaceSelfReview,
@@ -343,6 +345,8 @@ it("promotes UPDATE, RETIRE and CREATE with one recoverable lineage record", asy
   expect(preview.retires).toHaveLength(1);
   const promotion = await promotionService.execute(contextFor(owner), project.id, proposal.id, "promotion-test-key");
   expect(promotion.status).toBe("COMPLETED");
+  expect(await service.get(contextFor(owner), project.id, proposal.id)).toMatchObject({ status: "open", recordedStatus: "open", effectiveStatus: "PROMOTED", lifecycle: { state: "PROMOTED", promotionStatus: "COMPLETED" }, actionable: false });
+  expect((await service.list(contextFor(owner), project.id)).find((entry) => entry.id === proposal.id)).toMatchObject({ status: "open", effectiveStatus: "PROMOTED" });
   expect(promotion.entries.map((entry) => entry.operation).sort()).toEqual(["CREATE", "RETIRE", "UPDATE"]);
   expect((await catalog.readResource(contextFor(owner), project.id, sharedA.id)).resource.revision).toBe(sharedA.revision + 1);
   await expect(catalog.readResource(contextFor(owner), project.id, sharedB.id)).rejects.toMatchObject({ code: "not_found" });
@@ -522,4 +526,33 @@ it("withdraws an open proposal without deleting evidence or changing SHARED", as
   expect(preview.eligible).toBe(false);
   expect(preview.blockers.some((blocker) => blocker.code === "PROPOSAL_WITHDRAWN")).toBe(true);
   await expect(promotionService.execute(contextFor(owner), project.id, proposal.id)).rejects.toMatchObject({ code: "conflict" });
+});
+
+it("rejects API and MCP reviews while promotion is pending or completed", async () => {
+  const owner = await user("review-after-promotion-owner");
+  const reviewer = await user("review-after-promotion-reviewer");
+  const project = (await catalog.createProject(contextFor(owner), { name: "Review after promotion", workspaceId: owner })).project;
+  await catalog.setMember(contextFor(owner), project.id, reviewer, "EDITOR");
+  const work = await catalog.createPrivateWorkContext(contextFor(owner), project.id, { name: "review-after-promotion-work" });
+  const completedResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "completed.md", type: "markdown-document", content: "completed\n" });
+  const completed = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [completedResource.id], title: "Completed promotion" });
+  await service.review(contextFor(reviewer), { projectId: project.id, proposalId: completed.id, decision: "APPROVE" });
+  await promotionService.execute(contextFor(owner), project.id, completed.id, "review-after-promotion-completed");
+
+  const pendingResource = await catalog.createResource(contextFor(owner), project.id, { contextId: work.id, path: "pending.md", type: "markdown-document", content: "pending\n" });
+  const pending = await service.submit(contextFor(owner), { projectId: project.id, sourcePrivateContextId: work.id, resourceIds: [pendingResource.id], title: "Pending promotion" });
+  await client.query(`INSERT INTO promotions (id, project_id, proposal_id, actor, base_shared_revision, resulting_shared_revision, status)
+    VALUES ('70000000-0000-4000-8000-000000006201', $1, $2, '{}'::jsonb, $3, 'pending-result', 'COMMITTED_COMPLETION_PENDING')`, [project.id, pending.id, pending.baseSharedRevision]);
+  expect(await service.get(contextFor(owner), project.id, pending.id)).toMatchObject({ status: "open", effectiveStatus: "PROMOTING", lifecycle: { state: "PROMOTING" }, actionable: false });
+
+  await expect(service.review(contextFor(reviewer), { projectId: project.id, proposalId: completed.id, decision: "REQUEST_CHANGES" })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.review(contextFor(reviewer), { projectId: project.id, proposalId: pending.id, decision: "APPROVE" })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.revise(contextFor(owner), { projectId: project.id, proposalId: completed.id, sourcePrivateContextId: work.id, resourceIds: [completedResource.id], title: "Must not revise" })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.withdraw(contextFor(owner), { projectId: project.id, proposalId: completed.id })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.revise(contextFor(owner), { projectId: project.id, proposalId: pending.id, sourcePrivateContextId: work.id, resourceIds: [pendingResource.id], title: "Must not revise" })).rejects.toMatchObject({ code: "conflict" });
+  await expect(service.withdraw(contextFor(owner), { projectId: project.id, proposalId: pending.id })).rejects.toMatchObject({ code: "conflict" });
+
+  const tool = createMcpTools().find((entry) => entry.name === "review_architectural_proposal")!;
+  const context = { context: contextFor(reviewer), architecturalProposals: service } as unknown as ToolContext;
+  await expect(tool.run({ projectId: project.id, proposalId: completed.id, decision: "APPROVE" }, context)).rejects.toMatchObject({ code: "conflict" });
 });
