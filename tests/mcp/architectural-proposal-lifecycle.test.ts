@@ -32,7 +32,7 @@ const proposal: PublicArchitecturalProposalSummary & { lifecycle?: { state: "PRO
 };
 
 describe("MCP architectural proposal lifecycle wording", () => {
-  it("states the effective lifecycle without changing the recorded status field", async () => {
+  it("lists an explicit proposalId and preserves the persisted status", async () => {
     const architecturalProposals = { list: async () => [proposal] } as unknown as ArchitecturalProposalService;
     const context = { architecturalProposals } as unknown as ToolContext;
     const tool = createMcpTools().find((entry) => entry.name === "list_architectural_proposals")!;
@@ -40,7 +40,57 @@ describe("MCP architectural proposal lifecycle wording", () => {
     const structured = (result.structured?.proposals as Array<Record<string, unknown>>)[0]!;
 
     expect(structured.status).toBe("open");
+    expect(structured.id).toBe(proposal.id);
     expect((structured.lifecycle as { state: string }).state).toBe("PROMOTED");
-    expect(result.text).toContain("Promoted proposal (PROMOTED; recorded status open)");
+    expect(result.text).toContain(`Promoted proposal — proposalId: ${proposal.id} — effectiveStatus: PROMOTED — recordedStatus: open`);
+    expect(tool.requiredPermissions).toEqual(["project:read"]);
+  });
+
+  it("navigates from list text to exact details for each lifecycle state", async () => {
+    const statuses = [
+      { title: "Open", status: "open", effectiveStatus: "OPEN", lifecycle: { state: "OPEN" } },
+      { title: "Promoted", status: "open", effectiveStatus: "PROMOTED", lifecycle: { state: "PROMOTED", promotionStatus: "COMPLETED" }, promotion: { id: "40000000-0000-4000-8000-000000000001", status: "COMPLETED", createdAt: new Date(0), completedAt: new Date(1), resultingSharedRevision: "shared-2" } },
+      { title: "Superseded", status: "superseded", effectiveStatus: "SUPERSEDED", lifecycle: { state: "SUPERSEDED" } },
+      { title: "Withdrawn", status: "withdrawn", effectiveStatus: "WITHDRAWN", lifecycle: { state: "WITHDRAWN" } },
+    ];
+    const proposals = statuses.map((state, index) => ({
+      ...proposal,
+      ...state,
+      id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      resources: [],
+      lineage: { entries: [{ id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, title: state.title, status: state.status, supersedesProposalId: null }], complete: true, diagnostics: [] },
+      consistency: { state: "CONSISTENT", diagnostics: [] },
+      ...(state.promotion ? { promotion: state.promotion } : {}),
+    }));
+    const architecturalProposals = {
+      list: async () => proposals,
+      get: async (_context: unknown, _projectId: string, proposalId: string) => proposals.find((item) => item.id === proposalId),
+    } as unknown as ArchitecturalProposalService;
+    const context = { architecturalProposals, capabilities: { proposal: async () => ({}) } } as unknown as ToolContext;
+    const tools = createMcpTools();
+    const listTool = tools.find((entry) => entry.name === "list_architectural_proposals")!;
+    const getTool = tools.find((entry) => entry.name === "get_architectural_proposal")!;
+    const listed = await listTool.run({ projectId: proposal.projectId }, context);
+
+    for (const line of listed.text!.split("\n")) {
+      const id = line.match(/proposalId: ([0-9a-f-]{36})/)?.[1];
+      expect(id).toBeTruthy();
+      const detail = await getTool.run({ projectId: proposal.projectId, proposalId: id }, context);
+      const result = detail.structured?.proposal as Record<string, any>;
+      const expected = proposals.find((item) => item.id === id)!;
+      expect(result.id).toBe(id);
+      expect(result.title).toBe(expected.title);
+      expect(result.status).toBe(expected.status);
+      expect(result.effectiveStatus).toBe(expected.effectiveStatus);
+      expect(result.lifecycle.state).toBe(expected.lifecycle.state);
+      expect(result.lineage).toEqual(expected.lineage);
+      expect(result.consistency).toEqual(expected.consistency);
+      if (expected.promotion) expect(result.promotion).toEqual(expected.promotion);
+    }
+    expect(getTool.requiredPermissions).toEqual(["project:read"]);
+
+    // Structured-content clients retain the same IDs as text-only clients.
+    const structured = listed.structured?.proposals as Array<Record<string, unknown>>;
+    expect(structured.map((item) => item.id)).toEqual(proposals.map((item) => item.id));
   });
 });
