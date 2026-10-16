@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { analyzeEventFlow } from "../../src/language/eventflow/parser";
 import { projectEventFlowToCausalView } from "../../src/domain/eventflow/causal-projection";
-import { causalElkGraph, causalFlowElements, causalReachability, positionedCausalFlow } from "../../src/renderer/causal/causal-flow-adapter";
+import { causalElkGraph, causalFlowElements, causalNodeSize, causalReachability, causalTextLines, positionedCausalFlow } from "../../src/renderer/causal/causal-flow-adapter";
 import { layout } from "./causal-flow-test-support";
 
 describe("causal React Flow adapter", () => {
@@ -36,6 +36,34 @@ describe("causal React Flow adapter", () => {
     expect(graph.nodes.find((node) => node.id === "effect:save")?.data.owner).toBe("handler:H");
     expect(graph.nodes.find((node) => node.id === "message:A")?.data.sourceNodeIds.length).toBeGreaterThan(0);
     expect(graph.edges[0]!.data!.sourceNodeIds.length).toBeGreaterThan(0);
+  });
+
+  it("wraps PascalCase labels at lexical boundaries and sizes them from rendered lines", () => {
+    const label = "BillerViabilityEventRaisedHandler";
+    const lines = causalTextLines(label, 160);
+    const acronymLabel = "HTTPServerOutputEvent";
+    const acronymLines = causalTextLines(acronymLabel, 160);
+    const size = causalNodeSize({ label, kind: "handler" });
+    const longAtomicToken = "A".repeat(72);
+    const longTokenSize = causalNodeSize({ label: longAtomicToken, kind: "message" });
+
+    expect(lines).toEqual(["BillerViability", "EventRaisedHandler"]);
+    expect(acronymLines).toEqual(["HTTPServerOutput", "Event"]);
+    expect(lines.join("")).toBe(label);
+    expect(acronymLines.join("")).toBe(acronymLabel);
+    expect(size.labelLines.join("")).toBe(label);
+    expect(size.height).toBeGreaterThanOrEqual(size.labelLines.length * size.labelFontSize * 1.25 + 40);
+    expect(longTokenSize.width).toBeLessThanOrEqual(480);
+    expect(longTokenSize.labelLines.join("")).toBe(longAtomicToken);
+    expect(longTokenSize.labelFontSize).toBeGreaterThanOrEqual(9);
+    expect(longTokenSize.labelFontSize).toBeLessThan(13);
+  });
+
+  it("sizes a handler with enough height for all of its same-side ports", () => {
+    const ports = Array.from({ length: 5 }, (_, index) => ({ id: `out:${index}`, side: "EAST" as const }));
+    const size = causalNodeSize({ label: "Handler", kind: "handler", ports });
+
+    expect(size.height).toBeGreaterThanOrEqual((ports.length + 1) * 16);
   });
 
   it("passes all source references through on one projected edge", () => {

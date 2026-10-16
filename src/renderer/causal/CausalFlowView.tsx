@@ -87,7 +87,13 @@ function CausalNode({ data }: NodeProps<CausalFlowNode>) {
   const size = causalNodeSize(data);
   return <div className={`causal-node causal-node--${data.kind}`} style={{ width: size.width, height: size.height }}>
     {(data.ports ?? []).map((port) => <Handle key={port.id} id={port.id} type={port.side === "WEST" ? "target" : "source"} position={port.side === "WEST" ? Position.Left : Position.Right} style={{ ...(port.top === undefined ? {} : { top: port.top }), width: CAUSAL_PORT_SIZE, height: CAUSAL_PORT_SIZE, border: 0, background: "transparent", ...(port.side === "WEST" ? { left: -CAUSAL_PORT_SIZE } : { right: -CAUSAL_PORT_SIZE }) }} />)}
-    <span className="causal-node__kind">{data.kind}{data.messageKind ? ` · ${data.messageKind}` : ""}</span><strong>{data.label}</strong>{data.owner && <small>owned by {data.owner.replace("handler:", "")}</small>}
+    <span className="causal-node__kind">{data.kind}{data.messageKind ? ` · ${data.messageKind}` : ""}</span>
+    <strong className="causal-node__label" style={{ fontSize: size.labelFontSize, lineHeight: 1.25 }} aria-label={data.label} title={data.label}>
+      {(data.labelLines ?? [data.label]).map((line, index) => <span key={index} aria-hidden="true">{line}</span>)}
+    </strong>
+    {data.owner && <small style={{ fontSize: size.ownerFontSize, lineHeight: 1.3 }} aria-label={`owned by ${data.owner.replace("handler:", "")}`} title={`owned by ${data.owner.replace("handler:", "")}`}>
+      {(data.ownerLines ?? [`owned by ${data.owner.replace("handler:", "")}`]).map((line, index) => <span key={index} aria-hidden="true">{line}</span>)}
+    </small>}
   </div>;
 }
 

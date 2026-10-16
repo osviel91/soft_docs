@@ -25,7 +25,16 @@ export function renderCausalFlowSvg(graph: CausalFlowGraph, view: CausalViewMode
     const y = node.position.y + shiftY;
     parts.push(`<rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="10" fill="${fill}" stroke="${accent}" stroke-width="1.5"/>`);
     parts.push(`<text x="${x + 12}" y="${y + 18}" fill="#475569" font-size="9" font-weight="700" letter-spacing="1">${esc(node.data.kind.toUpperCase())}</text>`);
-    parts.push(`<text x="${x + 12}" y="${y + 38}" fill="#0f172a" font-size="13">${causalTextLines(node.data.label, node.width ?? 140).map((line, index) => `<tspan x="${x + 12}" dy="${index === 0 ? 0 : 18}">${esc(line)}</tspan>`).join("")}</text>`);
+    const labelLines = node.data.labelLines ?? causalTextLines(node.data.label, node.width ?? 140);
+    const fontSize = node.data.labelFontSize ?? 13;
+    parts.push(`<text x="${x + 12}" y="${y + 38}" fill="#0f172a" font-size="${fontSize}"><title>${esc(node.data.label)}</title>${labelLines.map((line, index) => `<tspan x="${x + 12}" dy="${index === 0 ? 0 : fontSize * 1.25}">${esc(line)}</tspan>`).join("")}</text>`);
+    if (node.data.owner) {
+      const owner = `owned by ${node.data.owner.replace("handler:", "")}`;
+      const ownerLines = node.data.ownerLines ?? causalTextLines(owner, node.width ?? 140, (node.data.ownerFontSize ?? 10) * 0.55);
+      const ownerFontSize = node.data.ownerFontSize ?? 10;
+      const ownerY = y + 38 + labelLines.length * fontSize * 1.25 + 5 + ownerFontSize * 0.8;
+      parts.push(`<text x="${x + 12}" y="${ownerY}" fill="#334155" font-size="${ownerFontSize}"><title>${esc(owner)}</title>${ownerLines.map((line, index) => `<tspan x="${x + 12}" dy="${index === 0 ? 0 : ownerFontSize * 1.3}">${esc(line)}</tspan>`).join("")}</text>`);
+    }
   }
   parts.push("</svg>");
   return { svg: parts.join(""), width, height };
