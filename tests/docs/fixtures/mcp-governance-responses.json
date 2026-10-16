@@ -1,0 +1,58 @@
+[
+  {
+    "case": "proposal-open",
+    "textOnly": true,
+    "content": "Proposal 019-open: status=open; effectiveStatus=OPEN; lifecycle.state=OPEN.",
+    "expected": "Report separately:"
+  },
+  {
+    "case": "promoted-recorded-open",
+    "textOnly": false,
+    "status": "open",
+    "effectiveStatus": "PROMOTED",
+    "lifecycle": { "state": "PROMOTED" },
+    "promotionEvidence": {
+      "status": "COMPLETED",
+      "proposalId": "019-promoted"
+    },
+    "expected": "Verify durable promotion evidence"
+  },
+  {
+    "case": "superseded-with-successor",
+    "textOnly": true,
+    "content": "status=superseded; supersededBy=019-successor",
+    "successorId": "019-successor",
+    "expected": "follow the explicit successor/lineage ID"
+  },
+  {
+    "case": "promotion-pending",
+    "textOnly": false,
+    "promotionEvidence": {
+      "status": "COMMITTED_COMPLETION_PENDING"
+    },
+    "expected": "it is not `COMPLETED`"
+  },
+  {
+    "case": "inconsistent-diagnostics",
+    "textOnly": true,
+    "content": "lifecycle.state=PROMOTED; diagnostics=[promotion evidence missing]",
+    "expected": "report unresolved conflicts explicitly"
+  },
+  {
+    "case": "text-only-error",
+    "textOnly": true,
+    "content": "Error: Permission denied",
+    "isError": true,
+    "expected": "A tool failure is not a successful empty result"
+  },
+  {
+    "case": "shared-not-production",
+    "textOnly": false,
+    "sharedResource": {
+      "path": "architecture.md",
+      "revision": 3
+    },
+    "productionEvidence": null,
+    "expected": "SHARED is authoritative project knowledge, not proof that runtime matches it"
+  }
+]

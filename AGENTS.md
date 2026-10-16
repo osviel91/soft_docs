@@ -1,5 +1,10 @@
 # Agent Guide
 
+## Software Docs MCP Governance
+
+- Activate [`softdocs-mcp-governance`](skills/softdocs-mcp-governance/SKILL.md) whenever using Software Docs Manager MCP or reasoning about its architecture, MY WORK, proposals, reviews, promotion, or production state. Follow the single normative protocol in `docs/skills/mcp-governance.md`; `docs/documentation-model.md` remains authoritative for representation semantics.
+- If the skill or protocol cannot be located, do not perform MCP writes or infer governance rules; use only safe runtime discovery and report the blocker.
+
 ## Product
 
 - Software Docs Manager maintains and exposes architectural knowledge for human understanding and oversight of system evolution. It is not primarily a diagramming application; diagrams are projections of the knowledge model.
