@@ -83,6 +83,7 @@ import { createDiscoverSemanticCandidatesUseCase } from "../../../src/applicatio
 import type { EntityKind } from "../../../src/domain/workspace/semantic-binding";
 import { entityAnchorKey, resolveEntityAnchor } from "../../../src/domain/workspace/semantic-binding";
 import type { createCandidateAssessmentUseCases } from "../../../src/application/candidate-assessments";
+import { readGovernanceProtocol } from "./reference";
 
 /** A tool's result before the dispatcher wraps it in an MCP result. */
 export interface ToolOutcome {
@@ -600,6 +601,21 @@ const MAX_INDEXED_DOCUMENTS = 500;
 export function createMcpTools(): McpTool[] {
   return [
     // ---- Level 0: bootstrap -------------------------------------------------
+
+    {
+      name: "read_governance_protocol",
+      title: "Read the MCP governance protocol",
+      description:
+        "Read the canonical Software Docs MCP governance protocol as plain text. Takes no project or context id, reads no project data, and is read-only. Use when the client does not expose resources/list or resources/read. initialize/tools/list announcements do not mean the protocol was read. If the deployed file is unavailable, the tool returns a generic internal error without a filesystem path.",
+      inputSchema: {},
+      annotations: { ...READ_ONLY, title: "Read the governance protocol" },
+      // The endpoint requires an authenticated PAT. This tool reads only static
+      // normative text, so it needs no project or resource permission.
+      requiredPermissions: [],
+      async run() {
+        return { text: await readGovernanceProtocol() };
+      },
+    },
 
     {
       name: "list_workspaces",

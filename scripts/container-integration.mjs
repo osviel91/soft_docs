@@ -19,6 +19,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -197,6 +198,28 @@ async function main() {
         requestInit: { headers: { Authorization: `Bearer ${token}` } },
       }),
     );
+    const protocolResult = await client.callTool({
+      name: "read_governance_protocol",
+      arguments: {},
+    });
+    const protocolText = protocolResult.content.find(
+      (block) => block.type === "text",
+    );
+    const canonicalProtocol = await readFile(
+      "docs/skills/mcp-governance.md",
+      "utf8",
+    );
+    if (
+      protocolResult.isError ||
+      protocolText?.type !== "text" ||
+      protocolText.text !== canonicalProtocol
+    ) {
+      throw new Error(
+        "the running MCP container did not return the canonical governance protocol",
+      );
+    }
+    process.stdout.write("✓ the running MCP image reads the canonical protocol\n");
+
     const privateWork = await callTool(client, "create_private_work_context", {
       projectId,
       name: "Container integration work",
@@ -319,6 +342,28 @@ async function main() {
       throw new Error("the MCP image contains nginx");
     }
     process.stdout.write("✓ the MCP image is MCP-only\n");
+
+    const deployedProtocol = run(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "node",
+        "software-docs-mcp:phase6",
+        "-e",
+        "process.stdout.write(require('node:fs').readFileSync('/app/docs/skills/mcp-governance.md', 'utf8'))",
+      ],
+      { capture: true },
+    );
+    if (deployedProtocol !== canonicalProtocol) {
+      throw new Error(
+        "the MCP runtime image does not contain the canonical governance protocol",
+      );
+    }
+    process.stdout.write(
+      "✓ the MCP image contains the canonical governance protocol\n",
+    );
 
     process.stdout.write("\nCONTAINER INTEGRATION PASSED\n");
   } finally {

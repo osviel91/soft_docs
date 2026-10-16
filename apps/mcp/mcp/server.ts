@@ -50,6 +50,7 @@ import {
   ARTIFACT_GUIDANCE_URI,
   EVENT_FLOW_DSL_URI,
   GOVERNANCE_GUIDE_URI,
+  GOVERNANCE_PROTOCOL_URI,
   SEMANTIC_BINDING_URI,
   SEQUENCE_DSL_URI,
   registerMcpReferences,
@@ -75,7 +76,9 @@ export const MCP_SERVER_VERSION =
  */
 export const MCP_INSTRUCTIONS = `This server exposes Software Docs Manager projects to an external agent. Every request is authenticated with a personal access token as \`Authorization: Bearer sdm_pat_…\`; there are no anonymous tools.
 
-A project contains Markdown (\`.md\`), Sequence (\`.seq\`), Event Flow (\`.eventseq\`), Conceptual Diagram (\`.concept\`), and Database Diagram (\`.dbschema\`) resources. Read ${ARTIFACT_GUIDANCE_URI} for their purposes, valid authoring examples, inference boundaries, and truthful current capability matrix. Read ${GOVERNANCE_GUIDE_URI} for the reusable governance contract.
+A project contains Markdown (\`.md\`), Sequence (\`.seq\`), Event Flow (\`.eventseq\`), Conceptual Diagram (\`.concept\`), and Database Diagram (\`.dbschema\`) resources. Read ${ARTIFACT_GUIDANCE_URI} for their purposes, valid authoring examples, inference boundaries, and truthful current capability matrix.
+
+The remote governance protocol is at ${GOVERNANCE_PROTOCOL_URI} (legacy alias: ${GOVERNANCE_GUIDE_URI}); call \`read_governance_protocol\` if your client does not expose MCP resources. Read it before reasoning about or modifying project knowledge. These are discovery pointers, not evidence that the protocol has been read. This governed remote surface differs from local stdio, which has no SHARED/MY WORK proposal lifecycle.
 
 Work in this order:
 1. list_workspaces — choose the workspace first when more than one is accessible; pass its workspaceId to list_projects or create_project. Then use list_projects to discover project ids.

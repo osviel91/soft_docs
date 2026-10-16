@@ -13,7 +13,13 @@ import { readFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MCP_INSTRUCTIONS } from "../../apps/mcp/mcp/server";
-import { ARTIFACT_GUIDANCE_URI, GOVERNANCE_GUIDE_URI, SEMANTIC_BINDING_URI } from "../../apps/mcp/mcp/reference";
+import {
+  ARTIFACT_GUIDANCE_URI,
+  GOVERNANCE_GUIDE_URI,
+  GOVERNANCE_PROTOCOL_URI,
+  readGovernanceProtocol,
+  SEMANTIC_BINDING_URI,
+} from "../../apps/mcp/mcp/reference";
 import { createMcpTools } from "../../apps/mcp/mcp/tools";
 import { analyzeResource } from "../../src/domain/project/resource-analysis";
 import { parseDatabase } from "../../src/language/database/analyze";
@@ -211,6 +217,132 @@ describe("the remote MCP service over Streamable HTTP", () => {
     await client.close();
   });
 
+  it(
+    "discovers the project-independent protocol and reads the canonical source explicitly",
+    async () => {
+      const readerId = await harness.aUser("Protocol reader without projects");
+      const readerToken = await harness.aToken(readerId, ["project:read"], []);
+      const client = await connect(readerToken.token);
+
+      expect(client.getInstructions()).toContain(GOVERNANCE_PROTOCOL_URI);
+      expect(client.getInstructions()).toContain(
+        "not evidence that the protocol has been read",
+      );
+
+      const listed = await client.listResources();
+      const protocol = listed.resources.find(
+        (entry) => entry.uri === GOVERNANCE_PROTOCOL_URI,
+      );
+      expect(protocol).toMatchObject({
+        uri: GOVERNANCE_PROTOCOL_URI,
+        mimeType: "text/markdown",
+      });
+      expect(protocol?.description).toContain("canonical, read-only");
+      expect(protocol?.description).not.toContain("projectId");
+
+      const read = await client.readResource({ uri: GOVERNANCE_PROTOCOL_URI });
+      const content = (read.contents[0] as { text: string }).text;
+      const source = await readFile(
+        new URL("../../docs/skills/mcp-governance.md", import.meta.url),
+        "utf8",
+      );
+      expect(content).toBe(source);
+      expect(content).toContain("Technical permission, workflow eligibility");
+      expect(client.getInstructions()).not.toContain(
+        "Technical permission, workflow eligibility",
+      );
+
+      const legacy = await client.readResource({ uri: GOVERNANCE_GUIDE_URI });
+      expect((legacy.contents[0] as { text: string }).text).toBe(content);
+      await client.close();
+    },
+  );
+
+  it(
+    "offers the same protocol to text-only clients without a project id or structuredContent",
+    async () => {
+      const readerId = await harness.aUser("Text-only protocol reader");
+      const readerToken = await harness.aToken(readerId, ["project:read"], []);
+      const client = await connect(readerToken.token);
+      const { tools } = await client.listTools();
+      const tool = tools.find(
+        (entry) => entry.name === "read_governance_protocol",
+      );
+
+      expect(tool).toBeDefined();
+      expect(tool?.annotations?.readOnlyHint).toBe(true);
+      expect(
+        Object.keys(
+          (tool?.inputSchema as { properties?: object }).properties ?? {},
+        ),
+      ).toEqual([]);
+
+      const result = (await client.callTool({
+        name: "read_governance_protocol",
+        arguments: {},
+      })) as {
+        content: Array<{ type: string; text?: string }>;
+        isError?: boolean;
+        structuredContent?: unknown;
+      };
+      const text = result.content.find((block) => block.type === "text");
+      expect(result.isError).toBeFalsy();
+      expect(text?.type === "text" ? text.text : undefined).toBe(
+        await readFile(
+          new URL("../../docs/skills/mcp-governance.md", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(result.structuredContent).toBeUndefined();
+      await client.close();
+    },
+  );
+
+  it("resolves the canonical protocol from its module location rather than process cwd", async () => {
+    const previous = process.cwd();
+    process.chdir("/");
+    try {
+      expect(await readGovernanceProtocol()).toBe(
+        await readFile(
+          new URL("../../docs/skills/mcp-governance.md", import.meta.url),
+          "utf8",
+        ),
+      );
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  it("keeps existing resource read and update contracts unchanged", () => {
+    const tools = createMcpTools();
+    const protocol = tools.find(
+      (entry) => entry.name === "read_governance_protocol",
+    );
+    const read = tools.find((entry) => entry.name === "read_resource");
+    const update = tools.find((entry) => entry.name === "update_resource");
+
+    expect(Object.keys(protocol?.inputSchema ?? {})).toEqual([]);
+    expect(protocol?.requiredPermissions).toEqual([]);
+    expect(protocol?.annotations.readOnlyHint).toBe(true);
+    expect(Object.keys(read?.inputSchema ?? {})).toEqual([
+      "projectId",
+      "contextId",
+      "resource",
+    ]);
+    expect(read?.requiredPermissions).toEqual(["resource:read"]);
+    expect(read?.annotations.readOnlyHint).toBe(true);
+    expect(Object.keys(update?.inputSchema ?? {})).toEqual([
+      "projectId",
+      "contextId",
+      "resource",
+      "content",
+      "expectedRevision",
+      "idempotencyKey",
+    ]);
+    expect(update?.requiredPermissions).toEqual(["resource:update"]);
+    expect(update?.annotations.readOnlyHint).toBe(false);
+  });
+
   it("lets an external agent discover artifact purpose, examples, editing rules, and capabilities", async () => {
     const client = await connect(token);
     expect(client.getInstructions()).toContain(ARTIFACT_GUIDANCE_URI);
@@ -236,7 +368,7 @@ describe("the remote MCP service over Streamable HTTP", () => {
     const client = await connect(token);
     let error: unknown;
     try {
-      await client.readResource({ uri: "seqdocs://reference/unknown" });
+      await client.readResource({ uri: "softdocs://governance/unknown" });
     } catch (caught) {
       error = caught;
     }
