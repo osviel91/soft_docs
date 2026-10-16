@@ -1013,19 +1013,19 @@ export function createMcpTools(): McpTool[] {
     {
       name: "list_architectural_proposals",
       title: "List architectural proposals",
-      description: "List submitted, team-visible Architectural Proposals without exposing private work contexts.",
+      description: "List submitted, team-visible Architectural Proposals without exposing private work contexts. Each line includes proposalId, which can be passed directly to get_architectural_proposal. status is persisted; effectiveStatus and lifecycle.state are derived. A PROMOTED proposal may validly retain status open; this is not by itself an inconsistency. Verify promotion through its evidence in the proposal detail.",
        inputSchema: { projectId: projectId(), contextId: z.string().uuid().optional() },
       annotations: { ...READ_ONLY, title: "List architectural proposals" },
       requiredPermissions: ["project:read"],
       async run(args, toolContext) {
         const proposals = await toolContext.architecturalProposals.list(toolContext.context, stringArg(args, "projectId"));
-        return { text: proposals.map((proposal) => `${proposal.title} (${proposal.effectiveStatus}; recorded status ${proposal.status})`).join("\n") || "No architectural proposals.", structured: { proposals } };
+        return { text: proposals.map((proposal) => `${proposal.title} — proposalId: ${proposal.id} — effectiveStatus: ${proposal.effectiveStatus} — recordedStatus: ${proposal.status}`).join("\n") || "No architectural proposals.", structured: { proposals } };
       },
     },
     {
       name: "get_architectural_proposal",
       title: "Get architectural proposal",
-      description: "Inspect submitted proposal knowledge, base status, semantic dependencies and relationships.",
+      description: "Inspect a submitted proposal by proposalId, including its stable ID, persisted status (status), derived effectiveStatus and lifecycle.state, promotion evidence, supersession lineage, and consistency diagnostics. A promoted proposal may validly retain persisted status open; this alone is not an inconsistency. Verify promotion using its evidence. Pass proposalId directly from list_architectural_proposals.",
       inputSchema: { projectId: projectId(), proposalId: z.string().uuid() },
       annotations: { ...READ_ONLY, title: "Get architectural proposal" },
       requiredPermissions: ["project:read"],
