@@ -4,6 +4,12 @@ This is the normative, agent-independent protocol for using Software Docs Manage
 
 For artifact meaning, choose representations and interpret documentation, `docs/documentation-model.md` is authoritative. This protocol does not redefine it. Discover the connected server's live tool/resource catalog and instructions before relying on operation names or availability.
 
+## Bootstrap discovery from remote MCP
+
+The authenticated remote governed MCP publishes this file at `softdocs://governance/protocol`. Discover it in `resources/list`, then explicitly read it with `resources/read` before applying this protocol. If the client does not expose resources, call the read-only `read_governance_protocol` tool; it takes no project or context ID and returns this same file as plain text. Initialize instructions and resource/tool descriptions are discovery pointers only: they do not prove that the protocol was read. The older `seqdocs://reference/mcp-governance` URI remains an alias to the same source. This remote-only reference does not add the remote governance lifecycle to the local stdio MCP.
+
+The static protocol read contains no project or MY WORK data. An unknown resource URI returns the MCP server's resource-not-found protocol error. If the protocol file is unavailable in a deployment, `read_governance_protocol` fails with a generic server error and does not expose a filesystem path; do not proceed with writes as if the protocol had been loaded.
+
 ## 1. Identify the MCP surface and target
 
 First establish which MCP server and workspace the client actually connected to:

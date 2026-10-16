@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DSL_CONSTRUCTS,
   EVENT_FLOW_CONSTRUCTS,
@@ -14,14 +14,34 @@ export { ARTIFACT_GUIDANCE_URI };
 export const SEQUENCE_DSL_URI = "seqdocs://reference/sequence-dsl";
 export const EVENT_FLOW_DSL_URI = "seqdocs://reference/event-flow-dsl";
 export const SEMANTIC_BINDING_URI = "seqdocs://reference/semantic-binding";
+export const GOVERNANCE_PROTOCOL_URI = "softdocs://governance/protocol";
 // Governance is remote-only: stdio serves the separate local-first contract.
 export const GOVERNANCE_GUIDE_URI = "seqdocs://reference/mcp-governance";
-const GOVERNANCE_GUIDE_PATH = join(
-  process.cwd(),
-  "docs",
-  "skills",
-  "mcp-governance.md",
-);
+const GOVERNANCE_PROTOCOL_PATHS = [
+  new URL("../../../docs/skills/mcp-governance.md", import.meta.url),
+  // The service bundle lives in dist-mcp-service/ beside the deployed docs/.
+  new URL("../docs/skills/mcp-governance.md", import.meta.url),
+];
+
+/** Read the single normative protocol, independent of process working directory. */
+export async function readGovernanceProtocol(): Promise<string> {
+  for (const url of GOVERNANCE_PROTOCOL_PATHS) {
+    try {
+      return await readFile(fileURLToPath(url), "utf8");
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw new Error("The canonical governance protocol could not be read.");
+    }
+  }
+  throw new Error("The canonical governance protocol is unavailable in this deployment.");
+}
 
 function eventFlowDslText(): string {
   return [
@@ -146,6 +166,11 @@ export function registerMcpReferences(server: {
     }>,
   ) => unknown;
 }): void {
+  const governanceResource = (uri: URL) =>
+    readGovernanceProtocol().then((text) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text }],
+    }));
+
   server.registerResource(
     "artifact-authoring-guidance",
     ARTIFACT_GUIDANCE_URI,
@@ -160,22 +185,27 @@ export function registerMcpReferences(server: {
     }),
   );
   server.registerResource(
+    "governance-protocol",
+    GOVERNANCE_PROTOCOL_URI,
+    {
+      title: "Software Docs MCP governance protocol",
+      description:
+        "The complete, canonical, read-only governance protocol. Read this resource explicitly before acting on Software Docs project knowledge.",
+      mimeType: "text/markdown",
+    },
+    governanceResource,
+  );
+  // Preserve the previously published URI as an alias to the same source.
+  server.registerResource(
     "mcp-governance",
     GOVERNANCE_GUIDE_URI,
     {
-      title: "MCP knowledge governance",
-      description: "The canonical agent workflow for SHARED, MY WORK, PROPOSAL, REVIEW, and PROMOTION.",
+      title: "MCP knowledge governance (legacy URI)",
+      description:
+        "Compatibility alias for the canonical protocol at softdocs://governance/protocol.",
       mimeType: "text/markdown",
     },
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "text/markdown",
-          text: await readFile(GOVERNANCE_GUIDE_PATH, "utf8"),
-        },
-      ],
-    }),
+    governanceResource,
   );
   server.registerResource(
     "sequence-dsl",
