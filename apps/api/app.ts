@@ -173,6 +173,7 @@ export async function createApp(
     knowledgeContexts: runtime.knowledgeContexts,
     proposals: runtime.architecturalProposals,
     promotion,
+    promotions: runtime.promotions,
     workspaceAdmin,
     workspaceSelfReview,
   });

@@ -51,7 +51,7 @@ it("preserves legacy category A/B behavior and rejects unsupported semantic edit
   const ownerContext = contextFor(ownerId);
   const reviewerContext = contextFor(reviewerId);
   const reviewRepository = createProposalReviewRepository(client);
-  const proposalService = createArchitecturalProposalService({ proposals, projects, knowledgeContexts, reviews: reviewRepository });
+  const proposalService = createArchitecturalProposalService({ proposals, projects, knowledgeContexts, reviews: reviewRepository, promotions: createPromotionRepository(client) });
   const promotionService = createPromotionService({ proposals, projects, reviews: reviewRepository, batches: createAuthoritativeBatchRepository(client), promotions: createPromotionRepository(client), storage: (projectId) => storage(projectId), policy: createAuthorizationPolicy(projects) });
 
   const createLegacyFixture = async (name: string, semantic: boolean) => {

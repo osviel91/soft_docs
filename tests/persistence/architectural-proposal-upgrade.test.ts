@@ -59,7 +59,7 @@ it("creates, reviews, promotes, and restarts after a 0022-to-current upgrade", a
     storage,
     architecturalProposals,
   });
-  const proposalService = createArchitecturalProposalService({ proposals: architecturalProposals, projects, knowledgeContexts, reviews, storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }) });
+  const proposalService = createArchitecturalProposalService({ proposals: architecturalProposals, projects, knowledgeContexts, reviews, promotions: createPromotionRepository(client), storage: (projectId) => createFsProjectStorage({ root: path.join(volume, projectId) }) });
   const promotionService = createPromotionService({
     proposals: architecturalProposals,
     projects,

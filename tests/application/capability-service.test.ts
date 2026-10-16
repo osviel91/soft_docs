@@ -28,7 +28,7 @@ function policy(role: "OWNER" | "EDITOR" | "VIEWER" | null = "OWNER"): Authoriza
   };
 }
 
-function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE", workspaceAdmin?: WorkspaceAdminGovernance, workspaceSelfReview?: WorkspaceSelfReviewPolicy) {
+function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "owner", lifecycle: "active" | "archived" = "active", promotionEligible = true, blockerCode: "STALE_BASE" | "REVIEW_REQUIRED" = "STALE_BASE", workspaceAdmin?: WorkspaceAdminGovernance, workspaceSelfReview?: WorkspaceSelfReviewPolicy, promotionStatus?: "COMMITTED_COMPLETION_PENDING" | "COMPLETED") {
   return createCapabilityService({
     policy: policy(role),
     knowledgeContexts: {
@@ -37,7 +37,8 @@ function service(role: "OWNER" | "EDITOR" | "VIEWER" | null, privateOwner = "own
       createPrivate: async () => { throw new Error("not used"); }, updatePrivate: async () => { throw new Error("not used"); }, deletePrivate: async () => {},
       listPrivateMessages: async () => [], createPrivateMessage: async () => { throw new Error("not used"); }, updatePrivateMessages: async () => [],
     },
-    proposals: { get: async () => ({ id: "proposal", projectId: "p1", authorUserId: "author", sourcePrivateContextId: "work", title: "Proposal", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, baseManifestRevision: 1, createdAt: new Date(0), submittedAt: new Date(0), resources: [], semanticMessages: [], relationships: [], semanticBindings: [] }), list: async () => [], submit: async () => { throw new Error("not used"); }, hasForContext: async () => false, currentSharedRevision: async () => ({ revision: "r1", resources: {} }) },
+     proposals: { get: async () => ({ id: "proposal", projectId: "p1", authorUserId: "author", sourcePrivateContextId: "work", title: "Proposal", status: "open", baseSharedRevision: "r1", baseSharedResourceRevisions: {}, baseManifestRevision: 1, createdAt: new Date(0), submittedAt: new Date(0), resources: [], semanticMessages: [], relationships: [], semanticBindings: [] }), list: async () => [], submit: async () => { throw new Error("not used"); }, hasForContext: async () => false, currentSharedRevision: async () => ({ revision: "r1", resources: {} }) },
+    promotions: { getForProposal: async () => promotionStatus ? { status: promotionStatus } : null } as never,
     promotion: { preview: async () => ({ proposalId: "proposal", projectId: "p1", reviewStatus: blockerCode === "REVIEW_REQUIRED" ? "none" : "approved", eligible: promotionEligible, blockers: promotionEligible ? [] : [{ code: blockerCode, message: blockerCode === "REVIEW_REQUIRED" ? "review required" : "stale" }], baseSharedRevision: "r1", currentSharedRevision: "r1", staleBase: false, creates: [], updates: [], retires: [], semanticIdentityAdditions: [], semanticIdentityReuses: [], semanticChanges: [], relationships: [], semanticBindings: [] }), execute: async () => { throw new Error("not used"); }, recover: async () => ({ examined: 0, completed: 0, pending: 0 }) },
     workspaceAdmin,
     workspaceSelfReview,
@@ -62,6 +63,18 @@ describe("capability service", () => {
 
     const owner = await service("OWNER", "owner", "active", false).proposal(context("owner"), "p1", "proposal");
     expect(owner["proposal.promote"]).toMatchObject({ allowed: false, reason: "proposal_not_eligible", state: "STALE_BASE" });
+  });
+
+  it("disables review and owner lifecycle actions when promotion evidence exists", async () => {
+    const pending = await service("OWNER", "author", "active", true, "STALE_BASE", undefined, undefined, "COMMITTED_COMPLETION_PENDING").proposal(context("author"), "p1", "proposal");
+    expect(pending["proposal.review"]).toMatchObject({ allowed: false, reason: "completion_pending", state: "PROMOTING" });
+    expect(pending["proposal.revise"]).toMatchObject({ allowed: false, reason: "completion_pending" });
+    expect(pending["proposal.withdraw"]).toMatchObject({ allowed: false, reason: "completion_pending" });
+
+    const completed = await service("OWNER", "author", "active", true, "STALE_BASE", undefined, undefined, "COMPLETED").proposal(context("author"), "p1", "proposal");
+    expect(completed["proposal.review"]).toMatchObject({ allowed: false, reason: "proposal_not_eligible", state: "PROMOTED" });
+    expect(completed["proposal.revise"].allowed).toBe(false);
+    expect(completed["proposal.withdraw"].allowed).toBe(false);
   });
 
   it("allows workspace admins with project visibility to review and promote without elevating their project role", async () => {

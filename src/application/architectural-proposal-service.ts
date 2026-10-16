@@ -16,28 +16,40 @@ import { buildProjectIndex, type ProjectDiagnostic, type ProjectIndex } from "..
 import { validateProject } from "../domain/project/validate";
 import { traceArchitectureQuery, type ArchitectureTrace, type TraceDirection } from "../domain/project/architecture-trace";
 import type { Promotion } from "../domain/workspace/promotion";
+import { buildProposalLineage, deriveProposalLifecycle, evaluateProposalConsistency, type ProposalConsistency, type ProposalLifecycleRecord, type ProposalLifecycleState, type ProposalLineage } from "../domain/workspace/proposal-lifecycle";
 import { architecturalProposalDiff, type ArchitecturalProposalDiff } from "./proposal-diff";
 import type { SemanticBindingRepository } from "./ports/semantic-binding-repository";
 import { entityAnchorKey, validateSemanticBinding } from "../domain/workspace/semantic-binding";
-
-export type ProposalLifecycleState = "OPEN" | "CHANGES_REQUESTED" | "APPROVED" | "PROMOTING" | "PROMOTED" | "WITHDRAWN" | "SUPERSEDED";
-
-function lifecycle(status: ArchitecturalProposal["status"], reviewStatus: ProposalReviewSummary["status"], promotion: Promotion | null): ProposalLifecycleState {
-  if (status === "withdrawn") return "WITHDRAWN";
-  if (status === "superseded") return "SUPERSEDED";
-  if (promotion?.status === "COMPLETED") return "PROMOTED";
-  if (promotion?.status === "COMMITTED_COMPLETION_PENDING") return "PROMOTING";
-  if (reviewStatus === "changes-requested") return "CHANGES_REQUESTED";
-  if (reviewStatus === "approved") return "APPROVED";
-  return "OPEN";
-}
 
 export type PublicArchitecturalProposal = Omit<ArchitecturalProposal, "sourcePrivateContextId" | "semanticMessages" | "relationships" | "semanticBindings"> & {
   semanticMessages: Array<Omit<ProposalSemanticMessageSnapshot, "sourceContextId">>;
   relationships: Array<Omit<ProposalRelationshipSnapshot, "sourceContextId" | "contextId">>;
   semanticBindings: Array<Omit<ProposalSemanticBindingSnapshot, "sourceContextId">>;
 };
-export type PublicArchitecturalProposalSummary = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId">;
+export interface ProposalPromotionSummary {
+  id: string;
+  status: Promotion["status"];
+  createdAt: Date;
+  completedAt?: Date;
+  resultingSharedRevision: string;
+}
+export interface ProposalReadState {
+  /** Compatibility/raw status: never substitute effectiveStatus here. */
+  recordedStatus: ArchitecturalProposal["status"];
+  effectiveStatus: ProposalLifecycleState;
+  /** Lifecycle eligibility only; authorization still comes from capabilities and use-case checks. */
+  actionable: boolean;
+  /** Compatibility view retained for existing UI/API consumers. */
+  lifecycle: { state: ProposalLifecycleState; promotionStatus?: Promotion["status"] };
+  promotion?: ProposalPromotionSummary;
+  supersedes?: { id: string; title: string };
+  supersededBy?: { id: string; title: string };
+  lineage: ProposalLineage;
+  consistency: ProposalConsistency;
+}
+export type PublicArchitecturalProposalSummary = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId"> & ProposalReadState;
+
+type PublicArchitecturalProposalSummaryBase = Omit<ArchitecturalProposalSummary, "sourcePrivateContextId">;
 
 function publicProposal(proposal: ArchitecturalProposal): PublicArchitecturalProposal {
   const { id, projectId, authorUserId, title, description, status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, resources, semanticMessages, relationships } = proposal;
@@ -54,14 +66,61 @@ function publicProposal(proposal: ArchitecturalProposal): PublicArchitecturalPro
   };
 }
 
-function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitecturalProposalSummary {
+function publicSummary(summary: ArchitecturalProposalSummary): PublicArchitecturalProposalSummaryBase {
   const { id, projectId, authorUserId, title, description, status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision } = summary;
   return { id, projectId, authorUserId, title, ...(description === undefined ? {} : { description }), status, supersedesProposalId, withdrawnAt, withdrawnBy, withdrawalReason, supersededAt, baseSharedRevision, baseSharedResourceRevisions, baseManifestRevision, createdAt, submittedAt, staleBase, currentSharedRevision };
 }
 
+function publicPromotion(promotion: Promotion): ProposalPromotionSummary {
+  return {
+    id: promotion.id,
+    status: promotion.status,
+    createdAt: promotion.createdAt,
+    ...(promotion.completedAt ? { completedAt: promotion.completedAt } : {}),
+    resultingSharedRevision: promotion.resultingSharedRevision,
+  };
+}
+
+function reviewTotals(reviews: ProposalReview[]): { reviewStatus: ProposalReviewSummary["status"]; approvals: number; changesRequested: number } {
+  const latest = new Map<string, ProposalReview>();
+  for (const review of reviews) latest.set(review.reviewerUserId, review);
+  const effective = [...latest.values()];
+  const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
+  const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
+  return {
+    reviewStatus: effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested",
+    approvals,
+    changesRequested,
+  };
+}
+
+function proposalReadState(
+  proposal: ProposalLifecycleRecord,
+  reviewStatus: ProposalReviewSummary["status"],
+  promotion: Promotion | null,
+  lineage: ProposalLineage,
+): ProposalReadState {
+  const effectiveStatus = deriveProposalLifecycle(proposal.status, reviewStatus, promotion?.status);
+  const consistency = evaluateProposalConsistency(proposal.status, promotion, lineage);
+  const successor = lineage.entries.findIndex((entry) => entry.id === proposal.id) + 1;
+  const supersedes = proposal.supersedesProposalId ? lineage.entries.find((entry) => entry.id === proposal.supersedesProposalId) : undefined;
+  const supersededBy = successor > 0 ? lineage.entries[successor] : undefined;
+  return {
+    recordedStatus: proposal.status,
+    effectiveStatus,
+    actionable: proposal.status === "open" && !promotion && !supersededBy,
+    lifecycle: { state: effectiveStatus, ...(promotion ? { promotionStatus: promotion.status } : {}) },
+    ...(promotion ? { promotion: publicPromotion(promotion) } : {}),
+    ...(supersedes ? { supersedes: { id: supersedes.id, title: supersedes.title } } : {}),
+    ...(supersededBy ? { supersededBy: { id: supersededBy.id, title: supersededBy.title } } : {}),
+    lineage,
+    consistency,
+  };
+}
+
 export interface ArchitecturalProposalService {
   list(context: ApplicationContext, projectId: string): Promise<PublicArchitecturalProposalSummary[]>;
-  get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & { staleBase: boolean; currentSharedRevision: string; lifecycle: { state: ProposalLifecycleState; promotionStatus?: Promotion["status"] }; promotion?: Pick<Promotion, "id" | "status" | "createdAt" | "completedAt" | "resultingSharedRevision">; supersedes?: { id: string; title: string }; supersededBy?: { id: string; title: string }; revisionContextId?: string }>;
+  get(context: ApplicationContext, projectId: string, proposalId: string): Promise<PublicArchitecturalProposal & ProposalReadState & { staleBase: boolean; currentSharedRevision: string; revisionContextId?: string }>;
   diff(context: ApplicationContext, projectId: string, proposalId: string): Promise<ArchitecturalProposalDiff>;
   submit(context: ApplicationContext, input: { projectId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; semanticBindings?: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
   revise(context: ApplicationContext, input: { projectId: string; proposalId: string; sourcePrivateContextId: string; resourceIds: string[]; retireResourceIds?: string[]; resourceOperations?: Array<{ resourceId: string; operation: "CREATE" | "UPDATE"; baseResourceId?: string; path?: string; baseRevision?: number }>; semanticMessages?: Array<{ id: string; name: string; kind: "event" | "command"; operation?: "ADD" | "UPDATE" | "RETIRE"; baseName?: string; baseKind?: "event" | "command" }>; relationshipOperations?: Array<{ sourceId: string; targetId: string; kind: "complementary-view"; sourceRole?: "execution" | "causal" | "other"; targetRole?: "execution" | "causal" | "other"; operation?: "ADD" | "UPDATE" | "REMOVE"; baseFingerprint?: string }>; semanticBindings?: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[]; title: string; description?: string }): Promise<PublicArchitecturalProposal>;
@@ -78,11 +137,11 @@ export function createArchitecturalProposalService(options: {
   knowledgeContexts: KnowledgeContextRepository;
   audit?: AuditRepository;
   reviews?: import("./ports/proposal-review-repository").ProposalReviewRepository;
+  promotions: import("./ports/promotion-repository").PromotionRepository;
   policy?: AuthorizationPolicy<ServerProject>;
   workspaceAdmin?: WorkspaceAdminGovernance;
   workspaceSelfReview?: WorkspaceSelfReviewPolicy;
   storage?: (projectId: string) => ProjectStorage;
-  promotions?: import("./ports/promotion-repository").PromotionRepository;
   semanticBindings?: SemanticBindingRepository;
 }): ArchitecturalProposalService {
   const policy = options.policy ?? createAuthorizationPolicy<ServerProject>(options.projects);
@@ -181,41 +240,34 @@ export function createArchitecturalProposalService(options: {
       const proposals = await options.proposals.list(projectId);
       return Promise.all(proposals.map(async (proposal) => {
         const summary = publicSummary(proposal);
-        const entries = options.reviews ? await options.reviews.list(proposal.id) : [];
-        const latest = new Map<string, ProposalReview>();
-        for (const entry of entries) latest.set(entry.reviewerUserId, entry);
-        const effective = [...latest.values()];
-        const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
-        const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
-        const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
-        const promotion = options.promotions ? await options.promotions.getForProposal(projectId, proposal.id) : null;
-        return { ...summary, reviewStatus, approvals, changesRequested, lifecycle: { state: lifecycle(proposal.status, reviewStatus, promotion), ...(promotion ? { promotionStatus: promotion.status } : {}) } };
+        const [reviews, promotion] = await Promise.all([
+          options.reviews?.list(proposal.id) ?? Promise.resolve([]),
+          options.promotions.getForProposal(projectId, proposal.id),
+        ]);
+        const totals = reviewTotals(reviews);
+        const state = proposalReadState(proposal, totals.reviewStatus, promotion, buildProposalLineage(proposal, proposals));
+        return { ...summary, ...totals, ...state };
       }));
     },
     async get(context, projectId, proposalId) {
       await requireRead(context, projectId);
       const proposal = await options.proposals.get(projectId, proposalId);
       if (!proposal) throw notFound(`No architectural proposal with id ${proposalId}.`);
-      const current = await options.proposals.currentSharedRevision(projectId);
-      const reviews = options.reviews ? await options.reviews.list(proposalId) : [];
-      const latest = new Map<string, ProposalReview>();
-      for (const entry of reviews) latest.set(entry.reviewerUserId, entry);
-      const effective = [...latest.values()];
-      const approvals = effective.filter((entry) => entry.decision === "APPROVE").length;
-      const changesRequested = effective.filter((entry) => entry.decision === "REQUEST_CHANGES").length;
-      const reviewStatus = effective.length === 0 ? "none" : approvals > 0 && changesRequested > 0 ? "mixed" : approvals > 0 ? "approved" : "changes-requested";
-      const promotion = options.promotions ? await options.promotions.getForProposal(projectId, proposalId) : null;
-      const predecessor = proposal.supersedesProposalId ? await options.proposals.get(projectId, proposal.supersedesProposalId) : null;
-      const successor = options.proposals.findSuccessor ? await options.proposals.findSuccessor(projectId, proposalId) : null;
+      const [current, reviews, promotion, proposalSummaries] = await Promise.all([
+        options.proposals.currentSharedRevision(projectId),
+        options.reviews?.list(proposalId) ?? Promise.resolve([]),
+        options.promotions.getForProposal(projectId, proposalId),
+        options.proposals.list(projectId),
+      ]);
+      const totals = reviewTotals(reviews);
+      const state = proposalReadState(proposal, totals.reviewStatus, promotion, buildProposalLineage(proposal, proposalSummaries));
       const result = publicProposal(proposal);
       return {
         ...result,
         staleBase: proposal.baseSharedRevision !== current.revision,
         currentSharedRevision: current.revision,
-        lifecycle: { state: lifecycle(proposal.status, reviewStatus, promotion), ...(promotion ? { promotionStatus: promotion.status } : {}) },
-        ...(promotion ? { promotion: { id: promotion.id, status: promotion.status, createdAt: promotion.createdAt, ...(promotion.completedAt ? { completedAt: promotion.completedAt } : {}), resultingSharedRevision: promotion.resultingSharedRevision } } : {}),
-        ...(predecessor ? { supersedes: { id: predecessor.id, title: predecessor.title } } : {}),
-        ...(successor ? { supersededBy: { id: successor.id, title: successor.title } } : {}),
+        ...totals,
+        ...state,
         ...(proposal.authorUserId === context.principal.subjectUserId ? { revisionContextId: proposal.sourcePrivateContextId } : {}),
       };
     },
@@ -296,10 +348,12 @@ export function createArchitecturalProposalService(options: {
      async revise(context, input) {
        await requireSubmit(context, input.projectId);
        const prior = await options.proposals.get(input.projectId, input.proposalId);
-       if (!prior) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
-       if (prior.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may revise it.");
-       if (prior.status !== "open") throw conflict("Only open proposals may be revised.", { state: prior.status });
-       const prepared = await prepare(context, input);
+        if (!prior) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+        if (prior.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may revise it.");
+        if (prior.status !== "open") throw conflict("Only open proposals may be revised.", { state: prior.status });
+        const promotion = await options.promotions.getForProposal(input.projectId, prior.id);
+        if (promotion) throw conflict("A proposal with promotion evidence cannot be revised.", { state: promotion.status === "COMPLETED" ? "PROMOTED" : "PROMOTING", promotionStatus: promotion.status });
+        const prepared = await prepare(context, input);
        try {
          if (!options.proposals.revise) throw invalid("Proposal revision is not configured.");
          const proposal = await options.proposals.revise({ ...prepared, proposalId: input.proposalId, supersedesProposalId: input.proposalId });
@@ -310,9 +364,12 @@ export function createArchitecturalProposalService(options: {
      async withdraw(context, input) {
        await requireSubmit(context, input.projectId);
        const proposal = await options.proposals.get(input.projectId, input.proposalId);
-       if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
-       if (proposal.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may withdraw it.");
-       try {
+        if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+        if (proposal.authorUserId !== context.principal.subjectUserId) throw invalid("Only the proposal author may withdraw it.");
+        if (proposal.status !== "open") throw conflict("Only open proposals may be withdrawn.", { state: proposal.status });
+        const promotion = await options.promotions.getForProposal(input.projectId, proposal.id);
+        if (promotion) throw conflict("A proposal with promotion evidence cannot be withdrawn.", { state: promotion.status === "COMPLETED" ? "PROMOTED" : "PROMOTING", promotionStatus: promotion.status });
+        try {
          if (!options.proposals.withdraw) throw invalid("Proposal withdrawal is not configured.");
          const withdrawn = await options.proposals.withdraw(input.proposalId, context.principal.subjectUserId, input.reason);
          await options.audit?.record({ action: "proposal.withdrawn", subjectUserId: context.principal.subjectUserId, actorType: actorTypeOf(context.principal), actorId: actorIdOf(context.principal), credentialId: credentialIdOf(context.principal), authType: context.principal.authType, projectId: input.projectId, resourceId: null, requestId: context.requestId, detail: { proposalId: input.proposalId, reason: input.reason ?? null } });
@@ -353,10 +410,12 @@ export function createArchitecturalProposalService(options: {
         : false;
       if (!access.allowed && !workspaceAdmin) await policy.requirePermission(context, input.projectId, "resource:update");
       if (!options.reviews) throw invalid("Proposal reviews are not configured.");
-       const proposal = await options.proposals.get(input.projectId, input.proposalId);
-       if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
-       if (proposal.status !== "open") throw conflict("Only open proposals may be reviewed.", { state: proposal.status });
-       if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, input.projectId))) throw invalid("Proposal authors cannot approve their own proposal.");
+        const proposal = await options.proposals.get(input.projectId, input.proposalId);
+        if (!proposal) throw notFound(`No architectural proposal with id ${input.proposalId}.`);
+        if (proposal.status !== "open") throw conflict("Only open proposals may be reviewed.", { state: proposal.status });
+        const promotion = await options.promotions.getForProposal(input.projectId, proposal.id);
+        if (promotion) throw conflict("A proposal with promotion evidence cannot be reviewed.", { state: promotion.status === "COMPLETED" ? "PROMOTED" : "PROMOTING", promotionStatus: promotion.status });
+        if (input.decision === "APPROVE" && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, input.projectId))) throw invalid("Proposal authors cannot approve their own proposal.");
       const summary = input.summary?.trim();
       if (summary !== undefined && summary.length > 4000) throw invalid("Review summary must be 4000 characters or fewer.");
       const current = await options.proposals.currentSharedRevision(input.projectId);

@@ -18,4 +18,8 @@ describe("proposal lifecycle derivation", () => {
     expect(proposalLifecycle({ status: "withdrawn" }, { status: "approved" })).toBe("WITHDRAWN");
     expect(proposalLifecycle({ status: "superseded" }, { status: "approved" })).toBe("SUPERSEDED");
   });
+
+  it("treats mixed reviewer decisions as changes requested, matching the Inbox", () => {
+    expect(proposalLifecycle({ status: "open" }, { status: "mixed" })).toBe("CHANGES_REQUESTED");
+  });
 });

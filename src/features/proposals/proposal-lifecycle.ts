@@ -9,7 +9,7 @@ export function proposalLifecycle(
   if (proposal.lifecycle?.state) return proposal.lifecycle.state;
   if (proposal.status === "withdrawn") return "WITHDRAWN";
   if (proposal.status === "superseded") return "SUPERSEDED";
-  if (reviews?.status === "changes-requested") return "CHANGES_REQUESTED";
+  if (reviews?.status === "changes-requested" || reviews?.status === "mixed") return "CHANGES_REQUESTED";
   if (reviews?.status === "approved") return "APPROVED";
   return "OPEN";
 }

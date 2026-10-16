@@ -5,6 +5,7 @@ import type { ServerProject } from "../domain/project/server-project";
 import type { KnowledgeContextRepository } from "./ports/knowledge-context-repository";
 import type { ArchitecturalProposalRepository } from "./ports/architectural-proposal-repository";
 import type { PromotionService } from "./promotion-service";
+import type { PromotionRepository } from "./ports/promotion-repository";
 
 export type Capability =
   | "shared.read"
@@ -56,6 +57,7 @@ export function createCapabilityService(options: {
   knowledgeContexts: KnowledgeContextRepository;
   proposals: ArchitecturalProposalRepository;
   promotion: PromotionService;
+  promotions: PromotionRepository;
   workspaceAdmin?: WorkspaceAdminGovernance;
   workspaceSelfReview?: WorkspaceSelfReviewPolicy;
 }): CapabilityService {
@@ -117,18 +119,20 @@ export function createCapabilityService(options: {
           "proposal.promote": { capability: "proposal.promote", allowed: false, reason: "proposal_not_eligible", requiredPermission: "promotion:execute" },
         };
       }
-       let review = await governancePermission(context, projectId, "proposal.review", "resource:update");
-       if (review.allowed && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, projectId))) {
+      const promotionEvidence = await options.promotions.getForProposal(projectId, proposalId);
+      const promotionState = promotionEvidence?.status === "COMPLETED" ? "PROMOTED" : promotionEvidence ? "PROMOTING" : undefined;
+      let review = await governancePermission(context, projectId, "proposal.review", "resource:update");
+      if (review.allowed && proposal.authorUserId === context.principal.subjectUserId && !(await options.workspaceSelfReview?.(context, projectId))) {
         review.allowed = false;
         review.reason = "self_review";
       }
-      if (proposal.status !== "open") review = { ...review, allowed: false, reason: "proposal_not_eligible" };
+      if (proposal.status !== "open" || promotionEvidence) review = { ...review, allowed: false, reason: promotionEvidence?.status === "COMMITTED_COMPLETION_PENDING" ? "completion_pending" : "proposal_not_eligible", ...(promotionState ? { state: promotionState } : {}) };
       const author = proposal.authorUserId === context.principal.subjectUserId;
       const revisePermission = await permission(context, projectId, "proposal.revise", "resource:update");
       const withdrawPermission = await permission(context, projectId, "proposal.withdraw", "resource:update");
       const privateContext = author ? await options.knowledgeContexts.findPrivate(projectId, proposal.sourcePrivateContextId, context.principal.subjectUserId) : null;
-      const revise = { ...revisePermission, capability: "proposal.revise" as const, allowed: revisePermission.allowed && author && proposal.status === "open" && privateContext?.lifecycle === "active", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}), ...(author && !privateContext ? { reason: "not_owner" as const } : {}), ...(author && privateContext?.lifecycle === "archived" ? { reason: "archived_context" as const } : {}) };
-      const withdraw = { ...withdrawPermission, capability: "proposal.withdraw" as const, allowed: withdrawPermission.allowed && author && proposal.status === "open", ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}) };
+      const revise = { ...revisePermission, capability: "proposal.revise" as const, allowed: revisePermission.allowed && author && proposal.status === "open" && !promotionEvidence && privateContext?.lifecycle === "active", ...(promotionEvidence ? { reason: promotionEvidence.status === "COMMITTED_COMPLETION_PENDING" ? "completion_pending" as const : "proposal_not_eligible" as const, ...(promotionState ? { state: promotionState } : {}) } : {}), ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}), ...(author && !privateContext ? { reason: "not_owner" as const } : {}), ...(author && privateContext?.lifecycle === "archived" ? { reason: "archived_context" as const } : {}) };
+      const withdraw = { ...withdrawPermission, capability: "proposal.withdraw" as const, allowed: withdrawPermission.allowed && author && proposal.status === "open" && !promotionEvidence, ...(promotionEvidence ? { reason: promotionEvidence.status === "COMMITTED_COMPLETION_PENDING" ? "completion_pending" as const : "proposal_not_eligible" as const, ...(promotionState ? { state: promotionState } : {}) } : {}), ...(author && proposal.status !== "open" ? { reason: "proposal_not_eligible" as const } : {}), ...(!author ? { reason: "not_owner" as const } : {}) };
        const preview = await permission(context, projectId, "proposal.previewPromotion", "project:read");
         const promotePermission = await governancePermission(context, projectId, "proposal.promote", "promotion:execute");
         if (!promotePermission.allowed) return { "proposal.review": review, "proposal.revise": revise, "proposal.withdraw": withdraw, "proposal.previewPromotion": preview, "proposal.promote": { ...promotePermission, ...(promotePermission.reason === "forbidden" ? { requiredRole: "OWNER" as const } : {}) } };
