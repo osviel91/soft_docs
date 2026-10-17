@@ -59,6 +59,36 @@ describe("causal React Flow adapter", () => {
     expect(longTokenSize.labelFontSize).toBeLessThan(13);
   });
 
+  it("wraps very long atomic tokens without dropping below the minimum font size", () => {
+    const label = "A".repeat(300);
+    const size = causalNodeSize({ label, kind: "message" });
+    const maxLineLength = Math.floor((size.width - 28) / (size.labelFontSize * 0.55));
+
+    expect(size.width).toBeLessThanOrEqual(480);
+    expect(size.labelFontSize).toBeGreaterThanOrEqual(9);
+    expect(size.labelLines.join("")).toBe(label);
+    expect(size.labelLines.every((line) => Array.from(line).length <= maxLineLength)).toBe(true);
+  });
+
+  it("keeps complete grapheme clusters together", () => {
+    const cases = [
+      ["a".repeat(18), "e\u0301", "z".repeat(20)],
+      ["b".repeat(16), "👍🏽", "y".repeat(20)],
+      ["c".repeat(13), "👩🏽‍💻", "x".repeat(20)],
+      ["d".repeat(18), "😀", "w".repeat(20)],
+    ] as const;
+    for (const [prefix, cluster, suffix] of cases) {
+      const label = `${prefix}${cluster}${suffix}`;
+      const lines = causalTextLines(label, 48, 1);
+      expect(lines).toEqual([`${prefix}${cluster}`, suffix]);
+      expect(lines.join("")).toBe(label);
+      expect(lines.every((line) => line.length <= 20)).toBe(true);
+    }
+
+    const oversizedGrapheme = `e${"\u0301".repeat(100)}`;
+    expect(causalTextLines(oversizedGrapheme, 48, 1)).toEqual([oversizedGrapheme]);
+  });
+
   it("sizes a handler with enough height for all of its same-side ports", () => {
     const ports = Array.from({ length: 5 }, (_, index) => ({ id: `out:${index}`, side: "EAST" as const }));
     const size = causalNodeSize({ label: "Handler", kind: "handler", ports });

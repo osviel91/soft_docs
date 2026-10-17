@@ -1,5 +1,6 @@
 import type { ElkEdge, ElkEdgeSection, ElkNode, ElkPort } from "elkjs/lib/elk-api";
 import type { Edge, Node } from "@xyflow/react";
+import { splitGraphemes } from "unicode-segmenter/grapheme";
 import type {
   CausalEdge,
   CausalNodeId,
@@ -275,9 +276,9 @@ export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" |
   const readableTokenWidth = longestToken * CAUSAL_MIN_LABEL_FONT_SIZE * 0.55 + 28;
   const contentWidth = Math.min(CAUSAL_NODE_BASE_WIDTH_BY_KIND[data.kind], Math.max(minWidth, data.label.length * 5.4 + 38));
   const width = Math.min(CAUSAL_NODE_MAX_WIDTH, Math.max(contentWidth, readableTokenWidth));
-  const labelFontSize = Math.min(13, (width - 28) / (longestToken * 0.55));
+  const labelFontSize = Math.max(CAUSAL_MIN_LABEL_FONT_SIZE, Math.min(13, (width - 28) / (longestToken * 0.55)));
   const labelLines = causalTextLines(data.label, width, labelFontSize * 0.55);
-  const ownerFontSize = labelFontSize * 0.77;
+  const ownerFontSize = Math.max(CAUSAL_MIN_LABEL_FONT_SIZE, labelFontSize * 0.77);
   const ownerLines = ownerText ? causalTextLines(ownerText, width, ownerFontSize * 0.55) : undefined;
   const lineHeight = labelFontSize * 1.25;
   const ownerLineHeight = ownerFontSize * 1.3;
@@ -301,12 +302,33 @@ export function causalTextLines(text: string, width: number, characterWidth = 7.
   const lines: string[] = [];
   let current = "";
   for (const piece of lexicalPieces(text)) {
-    const separator = piece.spaceBefore ? " " : "";
-    if (current && current.length + separator.length + piece.text.length > limit) {
-      lines.push(current);
-      current = piece.text;
-    } else {
-      current += separator + piece.text;
+    const characters = [...splitGraphemes(piece.text)];
+    // Keep even an over-width single grapheme intact rather than splitting it.
+    const chunks: string[] = [];
+    let chunk = "";
+    for (const grapheme of characters) {
+      if (chunk && chunk.length + grapheme.length > limit) {
+        chunks.push(chunk);
+        chunk = "";
+      }
+      chunk += grapheme;
+      if (grapheme.length > limit) {
+        chunks.push(chunk);
+        chunk = "";
+      }
+    }
+    if (chunk) chunks.push(chunk);
+    for (const [index, chunk] of chunks.entries()) {
+      const separator = piece.spaceBefore && index === 0 && current ? " " : "";
+      if (current && current.length + separator.length + chunk.length > limit) {
+        lines.push(current);
+        current = "";
+      }
+      current += (piece.spaceBefore && index === 0 && current ? " " : "") + chunk;
+      if (index < chunks.length - 1) {
+        lines.push(current);
+        current = "";
+      }
     }
   }
   if (current) lines.push(current);
