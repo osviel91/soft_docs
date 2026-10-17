@@ -53,6 +53,19 @@ service C
     expect(topology.connections).toEqual([]);
   });
 
+  it("does not infer process identity from multiple events published by one service", () => {
+    const topology = project(`event Created
+event Updated
+service Orders
+Orders publishes Created
+Orders publishes Updated`);
+    expect(topology.services).toHaveLength(1);
+    expect(topology.services[0].name).toBe("Orders");
+    expect(topology.services[0]).not.toHaveProperty("processId");
+    expect(topology.services[0]).not.toHaveProperty("instanceId");
+    expect(topology.connections).toEqual([]);
+  });
+
   it("keeps event annotations in relationship details, not graph geometry", () => {
     const topology = project(`event Created {
   description: Emitted after persistence.

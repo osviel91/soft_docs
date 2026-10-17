@@ -17,7 +17,7 @@ The projections remain artifact-specific. `src/layout/geometry-input.ts` contain
 | Subsystem | Decision | Evidence / reason |
 |---|---|---|
 | Sequence layout | NOT REUSED | `src/layout/sequence-layout.ts` lays out Sequence AST constructs (lifelines, messages, activations, fragments, notes). It is deterministic and headless, but its geometry contract is not a graph/table contract. |
-| Event Flow layout | NOT REUSED | `src/layout/eventflow-layout.ts` depends on Event Flow rows, producers, channels, causal order and fanout. |
+| Event Flow layout | NOT REUSED | `src/layout/eventflow-layout.ts` depends on Event Flow rows, producers, channels, topology-derived presentation order and fanout. |
 | Topology layout | ADAPTED (principle only) | `src/layout/topology-layout.ts` provides evidence for deterministic layered placement; its topology semantics, fixed dimensions and cycle residual handling cannot preserve arbitrary cycles/loops/parallel edges or database ports. |
 | Causal layout | NOT REUSED | The existing ELK adapter and worker are coupled to CausalViewModel, React Flow and browser worker lifecycle. |
 | Viewport/camera | NOT REUSED here | `src/features/preview/viewport.ts` has reusable pure transform math, but it acts after layout and does not belong in headless geometry. The React `DiagramViewport` also measures DOM/SVG. |

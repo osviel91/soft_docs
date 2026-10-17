@@ -101,7 +101,7 @@ export enum EventFlowDiagnosticCode {
   UnknownBroker = "eventflow.unknown-broker",
   /** An event is declared but nothing publishes it. */
   EventWithoutProducer = "eventflow.event-without-producer",
-  /** An event is published but nothing consumes it. */
+  /** An event is published but no consumer is declared in this document. */
   EventWithoutConsumer = "eventflow.event-without-consumer",
   /** A channel is declared but no edge uses it. */
   ChannelWithoutConsumer = "eventflow.channel-without-consumer",
@@ -1035,7 +1035,7 @@ export function validateEventFlow(flow: EventFlow): EventFlowDiagnostic[] {
     } else if (!consumed.has(event.name)) {
       diagnostics.push({
         severity: "warning",
-        message: `Event "${event.name}" is published but nothing consumes it`,
+        message: `Event "${event.name}" is published but no consumer is declared in this document`,
         code: EventFlowDiagnosticCode.EventWithoutConsumer,
         range: event.range,
       });

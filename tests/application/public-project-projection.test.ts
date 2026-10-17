@@ -136,4 +136,12 @@ describe("bounded public project projection", () => {
     }
     expect(result.catalog.relationships).toEqual([]);
   });
+
+  it("does not derive Event Flow causality from ordered Sequence interactions", () => {
+    const result = buildPublicProjectProjection(projectId, [
+      source(sequenceId, "ordered.seq", "sequence-diagram", "participant A\nparticipant B\nA -> B: First\nB -> A: Second"),
+    ], null, []);
+    expect(result.catalog.semanticOccurrences).toEqual([]);
+    expect(result.catalog.eventFlowCausality).toEqual([]);
+  });
 });

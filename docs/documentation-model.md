@@ -568,8 +568,10 @@ optional explicit `kind: event|command` metadata value preserved by Causal.
 
 Legacy projections still show services consuming and publishing events, while
 the domain model now also carries explicit named handlers, effects, and
-handler-specific resulting-event edges. No existing projection infers those
-causal facts or changes its legacy appearance.
+handler-specific resulting-event edges. Flow uses topology-derived ordering for
+presentation only; topology does not create Causal edges or assert
+process/instance identity. No existing projection infers those causal facts or
+changes its legacy appearance.
 
 The canonical authoring form is line-oriented and reference-based:
 
@@ -682,15 +684,16 @@ an optional explicit causal aggregate. It has `event`, `broker`,
 `topic`/`queue`/`stream`, `producer`/`consumer`/`service`, publication,
 subscription, event metadata, named handlers, handler inputs and outputs, and
 handler-owned effects. Publications and subscriptions remain topology edges;
-causal ordering and cycles are derived in the Flow projection, while the Causal
-projection and investigation view use only explicit handler facts.
+topology-derived presentation ordering and its cycle indication are derived in
+the Flow projection, while the Causal projection and investigation view use only
+explicit handler facts. Flow ordering does not assert causality or process identity.
 
 | Canonical need                                                           | Current status                           | Assessment                                                                                                                |
 | ------------------------------------------------------------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Events, producers, consumers, channels, brokers                          | Supported                                | Native AST, validation, index, outline, projections, and renderer                                                         |
 | Event descriptions and schema/domain/version metadata                    | Supported                                | Open `key: value` metadata on event declarations; conventional keys include `domain`, `version`, and `schema`             |
 | Publication/subscription relationships and fan-out                       | Supported                                | Native edges; validation reports unknown names and missing producers/consumers                                            |
-| Derived causal ordering and cycle indication                             | Supported                                | Flow projection derives order and marks residual cycles                                                                   |
+| Topology-derived presentation ordering and cycle indication              | Supported                                | Flow projection orders rows from service publication/subscription topology and marks residual cycles; this is not causal evidence |
 | Source traceability                                                      | Supported                                | Source ranges and stable node IDs cover declarations and edges; metadata entries belong to their event node               |
 | Broker/channel topology                                                  | Supported                                | Channel kind and optional broker are represented and projected                                                            |
 | Provenance: external versus internal                                     | Supported                                | Optional normalized event field; unknown is explicit and no naming inference is performed                                 |

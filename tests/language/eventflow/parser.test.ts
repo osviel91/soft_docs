@@ -611,6 +611,24 @@ describe("event-flow causal syntax", () => {
     expect(flow.causal).toBeUndefined();
   });
 
+  it("scopes a missing-consumer warning to declarations in this document", () => {
+    const { diagnostics } = analyzeEventFlow("event A\nproducer P\nP publishes A");
+    expect(diagnostics.find((item) => item.code === EventFlowDiagnosticCode.EventWithoutConsumer)).toMatchObject({
+      severity: "warning",
+      message: 'Event "A" is published but no consumer is declared in this document',
+    });
+  });
+
+  it("accepts partial causality without requiring every published event to be handled", () => {
+    const { flow, diagnostics } = analyzeEventFlow([
+      "event A", "event B", "producer P", "P publishes A", "P publishes B",
+      "handler H", "A handled by H",
+    ].join("\n"));
+    expect(flow.causal?.inputs).toHaveLength(1);
+    expect(diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    expect(diagnostics.find((item) => item.code === EventFlowDiagnosticCode.EventWithoutConsumer)?.severity).toBe("warning");
+  });
+
   it("parses the same causal source deterministically", () => {
     const source = [
       "event A {",
