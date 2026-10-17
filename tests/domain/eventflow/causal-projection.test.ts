@@ -12,6 +12,7 @@ import {
   projectEventFlowToCausalView,
   upstreamCausalNeighbors,
 } from "../../../src/domain/eventflow/causal-projection";
+import { projectEventFlowToTopology } from "../../../src/domain/eventflow/topology-projection";
 
 function project(source: string) {
   return projectEventFlowToCausalView(parseEventFlow(source).flow);
@@ -59,6 +60,17 @@ describe("projectEventFlowToCausalView", () => {
     ].join("\n"));
     expect(view.messages).toHaveLength(0);
     expect(view.edges).toEqual([]);
+  });
+
+  it("does not turn explicit causes into publication or subscription topology", () => {
+    const flow = parseEventFlow([
+      "event A", "event B", "handler H", "H causes B",
+    ].join("\n")).flow;
+    const causal = projectEventFlowToCausalView(flow);
+    const topology = projectEventFlowToTopology(flow);
+    expect(causal.edges.map(({ type }) => type)).toEqual(["HANDLER_CAUSES_MESSAGE"]);
+    expect(causal.messages.every((message) => message.topology.publications.length === 0 && message.topology.subscriptions.length === 0)).toBe(true);
+    expect(topology.connections).toEqual([]);
   });
 
   it("projects a chain, effect ownership, and source traceability", () => {

@@ -23,20 +23,21 @@
  * - The canvas widens to fit the widest producer, channel chip, event box and
  *   consumer in their own aligned columns, plus the margins.
  *
- * Causal ordering rule (the reason this module exists):
+ * Topology-derived presentation ordering:
  * 1. A row exists for every event name the document declares, publishes or
  *    subscribes to, in first-appearance order.
- * 2. There is an edge `A → B` whenever one service consumes `A` and publishes
- *    `B`; the edge set is de-duplicated.
- * 3. Rows are emitted by a *stable* topological sort of those edges: at every
+ * 2. For presentation order only, relate `A` before `B` whenever one service
+ *    consumes `A` and publishes `B`; this does not assert causal edges. The
+ *    ordering relation is de-duplicated.
+ * 3. Rows are emitted by a *stable* topological sort of that ordering relation: at every
  *    step, of the events with no unplaced predecessor, the one that appears
  *    earliest in the document is placed first. The same document therefore
- *    always lays out identically, and a document with no causal information
- *    keeps its written order.
+ *    always lays out identically, and a document with no topology-derived
+ *    ordering relation keeps its written order.
  * 4. When a cycle leaves events with no ready predecessor, the remaining events
  *    are appended in first-appearance order and {@link EventFlowLayout.cyclic}
  *    is set (the affected rows carry {@link EventRowLayout.cyclic}), so the
- *    renderer can say so instead of pretending the order is causal.
+ *    renderer can indicate the cycle without asserting event causality.
  */
 import {
   type FlowChannelRef,
@@ -91,13 +92,13 @@ export const EVENT_MIN_CONSUMER_WIDTH = 84;
 
 /**
  * Width of the left-hand column reserved for a row's cycle tag, but only when
- * the causal ordering had to break a cycle. Reserving it in the layout (rather
- * than drawing the tag over the drawing) guarantees the tag never covers the
- * producer cell.
+ * topology-derived presentation ordering had to break a cycle. Reserving it in
+ * the layout (rather than drawing the tag over the drawing) guarantees the tag
+ * never covers the producer cell.
  */
 export const EVENT_CYCLE_TAG_WIDTH = 44;
 
-/** Height of the cycle tag drawn on a row that could not be ordered causally. */
+/** Height of the cycle tag drawn on a row in a presentation-order cycle. */
 export const EVENT_CYCLE_TAG_HEIGHT = 16;
 
 /** Width of the fan-out arrowhead triangle, in pixels. */
@@ -133,7 +134,7 @@ export interface EventBoxGeometry {
 export type EventChannelRef = FlowChannelRef;
 
 /**
- * One side of an event's causal relationship: the service that published it, or
+ * One side of an event's topology relationship: the service that published it, or
  * one service that consumes it.
  */
 export type EventEndpointLayout = FlowEndpoint;
@@ -167,10 +168,10 @@ export interface EventRowLayout {
   /** Whether the row shows a declared-but-unproduced event (drawn dashed). */
   declaredOnly: boolean;
   /**
-   * Whether the causal ordering had to break a cycle to place this row. Set on
-   * every event left over after the topological sort, which includes the events
-   * in the cycle and the events that depend on them; the renderer marks these
-   * rows instead of implying an order that does not exist. Optional so
+   * Whether topology-derived presentation ordering had to break a cycle to
+   * place this row. Set on every event left over after the topological sort,
+   * which includes the events in the cycle and the events that depend on them;
+   * the renderer marks these rows without asserting causal order. Optional so
    * hand-built layouts (mostly in tests) remain valid.
    */
   cyclic?: boolean;
@@ -195,9 +196,9 @@ export interface EventFlowLayout {
   height: number;
   /** The flow title text, or undefined when the document has none. */
   title?: string;
-  /** One row per event, in causal order. */
+  /** One row per event, in topology-derived presentation order. */
   rows: EventRowLayout[];
-  /** True when the causal ordering had to break a cycle (see the module doc). */
+  /** True when presentation ordering had to break a cycle (see the module doc). */
   cyclic: boolean;
 }
 

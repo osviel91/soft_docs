@@ -49,17 +49,18 @@ export interface FlowRow {
 /** Semantic facts selected for the existing row-based Flow visualization. */
 export interface FlowViewModel {
   title?: string;
-  /** One row per event, in stable causal order. */
+  /** One row per event, in stable topology-derived presentation order. */
   rows: FlowRow[];
-  /** True when causal ordering had to break a cycle. */
+  /** True when topology-derived ordering had to break a cycle. */
   cyclic: boolean;
 }
 
 /**
  * Project an Event Flow into the existing Flow view.
  *
- * Causal ordering is kept here because it decides the order of semantic event
- * rows. Layout only turns that ordered presentation into geometry.
+ * Topology-derived ordering is kept here because it decides the presentation
+ * order of semantic event rows. It does not add causal facts. Layout only turns
+ * that ordered presentation into geometry.
  */
 export function projectEventFlowToFlowView(flow: EventFlow): FlowViewModel {
   const declaredChannels = new Map(

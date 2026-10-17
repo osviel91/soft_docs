@@ -224,8 +224,8 @@ C consumes Orphan
   });
 });
 
-describe("layoutEventFlow — causal order", () => {
-  it("orders a three-step chain by causality, not declaration order", () => {
+describe("layoutEventFlow — topology-derived presentation order", () => {
+  it("orders a three-step chain from service topology, not declaration order", () => {
     const layout = layoutEventFlow(flowFrom(THREE_STEP_CHAIN));
     // Declared Third, Second, First; consumed-first order must win.
     expect(layout.rows.map((row) => row.event)).toEqual([

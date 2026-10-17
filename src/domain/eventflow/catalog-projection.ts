@@ -46,7 +46,7 @@ export interface CatalogViewModel {
   retries?: Array<{ id: string; failureId: string; mechanism?: string; target?: string; exhaustion?: string; nodeId: AstNodeId }>;
 }
 
-/** Keep catalog ordering declarative; unlike Flow, this never sorts causally. */
+/** Unlike Flow, which uses topology-derived presentation ordering, Catalog preserves its own ordering without inferring causality. */
 export function projectEventFlowToCatalog(flow: EventFlow): CatalogViewModel {
   const declarations = new Map<string, (typeof flow.statements)[number]>();
   const declaredChannels = new Map(

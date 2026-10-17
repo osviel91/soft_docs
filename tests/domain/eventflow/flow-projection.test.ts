@@ -7,7 +7,7 @@ function project(source: string) {
 }
 
 describe("projectEventFlowToFlowView", () => {
-  it("projects relationships, metadata, channels, and causal order without geometry", () => {
+  it("projects relationships, metadata, channels, and topology-derived order without geometry", () => {
     const source = `event Second
 event First {
   schema: orders.v1
@@ -40,7 +40,7 @@ BillingService publishes Second
     expect(view.rows.every((row) => !("eventBox" in row))).toBe(true);
   });
 
-  it("carries annotations without affecting causal ordering", () => {
+  it("carries annotations without affecting presentation ordering", () => {
     const view = project(`event First {
   description: The first event.
   custom: retained
