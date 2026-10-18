@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { analyzeEventFlow } from "../../src/language/eventflow/parser";
-import { projectEventFlowToCausalView } from "../../src/domain/eventflow/causal-projection";
+import { projectEventFlowToCausalView, type CausalNodeId } from "../../src/domain/eventflow/causal-projection";
 import CausalFlowView from "../../src/renderer/causal/CausalFlowView";
 import type { CausalLayoutWorker } from "../../src/renderer/causal/causal-elk-layout";
 import type { CausalElkRequest, CausalElkResponse } from "../../src/renderer/causal/causal-flow-adapter";
@@ -21,7 +21,9 @@ vi.mock("@xyflow/react", () => ({
     edges: Array<{ id: string; className?: string; ariaLabel?: string }>;
     onNodeClick: (event: unknown, node: { id: string; data: { sourceNodeIds: string[] } }) => void;
     onEdgeClick: (event: unknown, edge: { id: string }) => void;
+    onPaneClick: () => void;
   }) => <div>
+    <button type="button" data-testid="causal-pane" onClick={props.onPaneClick}>Blank canvas</button>
     {props.nodes.map((node) => <button key={node.id} type="button" data-id={node.id} className={node.className} onClick={(event) => props.onNodeClick(event, node)}>{node.id}</button>)}
     {props.edges.map((edge) => <button key={edge.id} type="button" data-id={edge.id} aria-label={edge.ariaLabel} className={`react-flow__edge ${edge.className ?? ""}`} onClick={(event) => props.onEdgeClick(event, edge)}>{edge.id}</button>)}
   </div>,
@@ -104,5 +106,17 @@ describe("causal graph interaction", () => {
     expect(container.querySelector(`[data-id="${view.edges[0]!.id}"]`)).not.toHaveClass("is-dimmed");
     expect(container.querySelector('[data-id="effect:persist-first"]')).not.toHaveClass("is-dimmed");
     expect(container.querySelector(`[data-id="${view.edges.at(-1)!.id}"]`)).not.toHaveClass("is-dimmed");
+  });
+
+  it("clears the controlled node selection when the causal canvas is clicked", async () => {
+    function ControlledCausalView() {
+      const [selectedNodeId, setSelectedNodeId] = useState<CausalNodeId | null>("message:First");
+      return <CausalFlowView view={disconnectedView()} selectedNodeId={selectedNodeId} workerFactory={elkWorkerFactory()} onNodeSelect={setSelectedNodeId} />;
+    }
+    const { container } = render(<ControlledCausalView />);
+    await screen.findByRole("button", { name: "message:First" });
+    expect(container.querySelector('[data-id="message:Second"]')).toHaveClass("is-dimmed");
+    fireEvent.click(screen.getByTestId("causal-pane"));
+    await waitFor(() => expect(container.querySelector('[data-id="message:Second"]')).not.toHaveClass("is-dimmed"));
   });
 });

@@ -1,8 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ConceptualPreview from "../../../src/features/preview/ConceptualPreview";
+import { CONCEPTUAL_SVG_STYLE } from "../../../src/renderer/svg/conceptual-svg-style";
 
 describe("ConceptualPreview", () => {
+  it("uses a high-contrast accent fill and surface-colored text for the active concept", () => {
+    expect(CONCEPTUAL_SVG_STYLE).toContain(".conceptual__concept.svg-node--active rect { fill: var(--accent");
+    expect(CONCEPTUAL_SVG_STYLE).toContain(".conceptual__concept.svg-node--active .conceptual__name");
+    expect(CONCEPTUAL_SVG_STYLE).toContain("fill: var(--bg, #fff)");
+  });
+
   it("renders accessible concepts and routes selection to the semantic ID", async () => {
     const select = vi.fn();
     const source = 'concept customer "Customer & Co" description "Buyer\\naccount"\nconcept order "Order"\nconcept archive "Archive"\nrelation places customer -> order "places"\nrelation related customer -- order "related to"';

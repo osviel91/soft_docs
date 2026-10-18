@@ -261,6 +261,7 @@ const CAUSAL_NODE_BASE_WIDTH_BY_KIND: Record<CausalFlowNodeKind, number> = {
 };
 const CAUSAL_PORT_MIN_SPACING = 16;
 const CAUSAL_MIN_LABEL_FONT_SIZE = 9;
+const CAUSAL_GLYPH_WIDTH_RATIO = 0.95;
 
 export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" | "owner" | "ports">): {
   width: number;
@@ -273,13 +274,13 @@ export function causalNodeSize(data: Pick<CausalFlowNodeData, "label" | "kind" |
   const minWidth = data.kind === "handler" ? 150 : 140;
   const ownerText = data.owner ? `owned by ${data.owner.replace("handler:", "")}` : undefined;
   const longestToken = Math.max(1, ...[data.label, ...(ownerText ? [ownerText] : [])].flatMap((text) => lexicalPieces(text).map((piece) => piece.text.length)));
-  const readableTokenWidth = longestToken * CAUSAL_MIN_LABEL_FONT_SIZE * 0.55 + 28;
+  const readableTokenWidth = longestToken * CAUSAL_MIN_LABEL_FONT_SIZE * CAUSAL_GLYPH_WIDTH_RATIO + 28;
   const contentWidth = Math.min(CAUSAL_NODE_BASE_WIDTH_BY_KIND[data.kind], Math.max(minWidth, data.label.length * 5.4 + 38));
   const width = Math.min(CAUSAL_NODE_MAX_WIDTH, Math.max(contentWidth, readableTokenWidth));
-  const labelFontSize = Math.max(CAUSAL_MIN_LABEL_FONT_SIZE, Math.min(13, (width - 28) / (longestToken * 0.55)));
-  const labelLines = causalTextLines(data.label, width, labelFontSize * 0.55);
+  const labelFontSize = Math.max(CAUSAL_MIN_LABEL_FONT_SIZE, Math.min(13, (width - 28) / (longestToken * CAUSAL_GLYPH_WIDTH_RATIO)));
+  const labelLines = causalTextLines(data.label, width, labelFontSize * CAUSAL_GLYPH_WIDTH_RATIO);
   const ownerFontSize = Math.max(CAUSAL_MIN_LABEL_FONT_SIZE, labelFontSize * 0.77);
-  const ownerLines = ownerText ? causalTextLines(ownerText, width, ownerFontSize * 0.55) : undefined;
+  const ownerLines = ownerText ? causalTextLines(ownerText, width, ownerFontSize * CAUSAL_GLYPH_WIDTH_RATIO) : undefined;
   const lineHeight = labelFontSize * 1.25;
   const ownerLineHeight = ownerFontSize * 1.3;
   const contentHeight = Math.max(54, labelLines.length * lineHeight + (ownerLines ? 5 + ownerLines.length * ownerLineHeight : 0) + 40);

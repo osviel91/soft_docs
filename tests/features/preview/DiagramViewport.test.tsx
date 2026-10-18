@@ -38,6 +38,20 @@ describe("DiagramViewport", () => {
     expect(screen.getByTestId("viewport-content").innerHTML).toContain("<svg");
   });
 
+  it("clears node selection when the blank diagram canvas is clicked", () => {
+    const onNodeSelect = vi.fn();
+    render(<DiagramViewport svg={SVG} size={SIZE} activeNodeId="concept:account" onNodeSelect={onNodeSelect} />);
+    fireEvent.click(screen.getByTestId("viewport-content"));
+    expect(onNodeSelect).toHaveBeenCalledWith(null);
+  });
+
+  it("clears node selection when pointer capture retargets the blank-canvas click to the pane", () => {
+    const onNodeSelect = vi.fn();
+    render(<DiagramViewport svg={SVG} size={SIZE} activeNodeId="concept:account" onNodeSelect={onNodeSelect} />);
+    fireEvent.click(screen.getByTestId("viewport-pane"));
+    expect(onNodeSelect).toHaveBeenCalledWith(null);
+  });
+
   it("activates bound semantic badges without starting a pan", () => {
     const onSemanticMessageSelect = vi.fn();
     const svg =

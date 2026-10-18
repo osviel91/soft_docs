@@ -33,7 +33,7 @@ export interface EventFlowPreviewProps {
   /** The event-flow DSL source. */
   source: string;
   /** Called with a node id when the user clicks the element it represents. */
-  onNodeSelect?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string | null) => void;
   onSemanticMessageSelect?: (messageId: string, nodeId: string | null) => void;
   onSemanticOccurrenceSelect?: (name: string, nodeId: string | null) => void;
   /** The node to highlight, following the editor's caret. */
@@ -397,7 +397,12 @@ export default function EventFlowPreview({
       ?? causal.effects.find((item) => item.id === selectedCausalId)
       ?? (causal.failures ?? []).find((item) => item.id === selectedCausalId)
       ?? (causal.retries ?? []).find((item) => item.id === selectedCausalId);
-    const selectCausal = (id: string) => {
+    const selectCausal = (id: string | null) => {
+      if (id === null) {
+        setSelectedCausalId(null);
+        onNodeSelect?.(null);
+        return;
+      }
       const causalId = id as CausalNodeId;
       setSelectedCausalId(causalId);
       const item = causal.messages.find((entry) => entry.id === causalId)

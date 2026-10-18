@@ -37,7 +37,7 @@ export interface PreviewProps {
   /** True when the source changed since the last render while paused. */
   isStale?: boolean;
   /** Called with a node id when the user clicks the element it represents. */
-  onNodeSelect?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string | null) => void;
   onSemanticMessageSelect?: (messageId: string, nodeId: string | null) => void;
   onSemanticOccurrenceSelect?: (name: string, nodeId: string | null) => void;
   /** The node to highlight, following the editor's caret. */

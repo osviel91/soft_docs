@@ -9,7 +9,7 @@ import DiagramViewport, { type DiagramViewportTransform } from "./DiagramViewpor
 import DiagramGuidance from "./DiagramGuidance";
 
 export default function DatabasePreview({ source, onNodeSelect, activeNodeId = null, reviewChanges = [], linkedTransform = null, onTransformChange, reviewMode = false, comparisonMode = false }: {
-  source: string; onNodeSelect?: (tableId: string) => void; activeNodeId?: string | null; reviewChanges?: SemanticChange[];
+  source: string; onNodeSelect?: (tableId: string | null) => void; activeNodeId?: string | null; reviewChanges?: SemanticChange[];
   linkedTransform?: DiagramViewportTransform | null; onTransformChange?: (transform: DiagramViewportTransform) => void; reviewMode?: boolean; comparisonMode?: boolean;
 }) {
   const parsed = useMemo(() => parseDatabase(source), [source]);
