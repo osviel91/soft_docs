@@ -159,6 +159,7 @@ export default function Preview({
             onNodeSelect={onNodeSelect}
             onSemanticMessageSelect={onSemanticMessageSelect}
             onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
+            participantAssist
             activeNodeId={activeNodeId}
             activeSemanticMessageId={activeSemanticMessageId}
             maximized={maximized}
