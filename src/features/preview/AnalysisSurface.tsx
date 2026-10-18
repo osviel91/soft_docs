@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import type { AnalysisPreferenceTab } from "../../workspace/ui-preferences";
 
 interface Props {
   message: ReactNode;
@@ -6,31 +7,76 @@ interface Props {
   trace: ReactNode;
 }
 
-type AnalysisTab = "message" | "relationships" | "trace";
+type AnalysisTab = AnalysisPreferenceTab | "trace";
 const MIN_HEIGHT = 110;
 const MIN_PREVIEW_HEIGHT = 200;
 
-export default function AnalysisSurface({ message, relationships, trace }: Props) {
+export default function AnalysisSurface({ message, relationships, trace, minimized: preferredMinimized, height: preferredHeight, preferredTab, onLayoutPreferenceChange }: Props & {
+  minimized?: boolean;
+  height?: number;
+  preferredTab?: AnalysisPreferenceTab;
+  onLayoutPreferenceChange?: (patch: Partial<{ minimized: boolean; height: number; tab: AnalysisPreferenceTab }>) => void;
+}) {
   const surfaceRef = useRef<HTMLElement | null>(null);
-  const [activeTab, setActiveTab] = useState<AnalysisTab>("message");
-  const [minimized, setMinimized] = useState(false);
-  const [height, setHeight] = useState(250);
+  const [localMinimized, setLocalMinimized] = useState(true);
+  const [localHeight, setLocalHeight] = useState(250);
+  const [localTab, setLocalTab] = useState<AnalysisPreferenceTab>("message");
+  const [temporaryTab, setTemporaryTab] = useState<AnalysisTab | null>(null);
+  const [traceOpenOverride, setTraceOpenOverride] = useState<boolean | null>(null);
+  const [parentHeight, setParentHeight] = useState(0);
   const [resizing, setResizing] = useState(false);
   const hasMessage = message !== null;
   const hasRelationships = relationships !== null;
   const hasTrace = trace !== null;
+  const minimizedPreference = preferredMinimized ?? localMinimized;
+  const desiredHeight = preferredHeight ?? localHeight;
+  const tabPreference = preferredTab ?? localTab;
+  const minimized = traceOpenOverride ?? minimizedPreference;
+  const height = Math.min(desiredHeight, parentHeight > 0 ? Math.max(MIN_HEIGHT, parentHeight - MIN_PREVIEW_HEIGHT) : desiredHeight);
 
   useEffect(() => {
-    if (hasTrace) setActiveTab("trace");
-    else setActiveTab((current) => current === "trace" ? hasMessage ? "message" : "relationships" : current);
-  }, [hasMessage, hasTrace]);
+    setTemporaryTab(hasTrace ? "trace" : null);
+    setTraceOpenOverride(hasTrace ? false : null);
+  }, [hasTrace]);
+
+  useLayoutEffect(() => {
+    const parent = surfaceRef.current?.parentElement;
+    if (!parent) return;
+    const measure = () => setParentHeight(parent.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, []);
+
+  const changeMinimized = (next: boolean) => {
+    if (hasTrace) setTraceOpenOverride(next);
+    if (next === minimizedPreference) return;
+    if (preferredMinimized === undefined) setLocalMinimized(next);
+    onLayoutPreferenceChange?.({ minimized: next });
+  };
+  const changeHeight = (next: number) => {
+    if (preferredHeight === undefined) setLocalHeight(next);
+    onLayoutPreferenceChange?.({ height: next });
+  };
+  const changeTab = (next: AnalysisTab) => {
+    setTemporaryTab(next);
+    changeMinimized(false);
+    if (next === "trace") return;
+    if (preferredTab === undefined) setLocalTab(next);
+    onLayoutPreferenceChange?.({ tab: next });
+  };
 
   const resize = (clientY: number) => {
     const parent = surfaceRef.current?.parentElement;
     if (!parent) return;
     const bounds = parent.getBoundingClientRect();
     const maximum = Math.max(MIN_HEIGHT, bounds.height - MIN_PREVIEW_HEIGHT);
-    setHeight(Math.min(maximum, Math.max(MIN_HEIGHT, bounds.bottom - clientY)));
+    changeHeight(Math.min(maximum, Math.max(MIN_HEIGHT, bounds.bottom - clientY)));
   };
   const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -41,7 +87,7 @@ export default function AnalysisSurface({ message, relationships, trace }: Props
     event.preventDefault();
     const parent = surfaceRef.current?.parentElement;
     const maximum = parent ? Math.max(MIN_HEIGHT, parent.getBoundingClientRect().height - MIN_PREVIEW_HEIGHT) : height;
-    setHeight((current) => Math.min(maximum, Math.max(MIN_HEIGHT, current + (event.key === "ArrowUp" ? 32 : -32))));
+    changeHeight(Math.min(maximum, Math.max(MIN_HEIGHT, desiredHeight + (event.key === "ArrowUp" ? 32 : -32))));
   };
 
   const tabs: Array<{ id: AnalysisTab; label: string }> = [
@@ -49,7 +95,8 @@ export default function AnalysisSurface({ message, relationships, trace }: Props
     ...(hasRelationships ? [{ id: "relationships" as const, label: "Relationships" }] : []),
     ...(hasTrace ? [{ id: "trace" as const, label: "Trace" }] : []),
   ];
-  const selectedTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0]?.id ?? "message";
+  const requestedTab = temporaryTab ?? tabPreference;
+  const selectedTab = tabs.some((tab) => tab.id === requestedTab) ? requestedTab : tabs[0]?.id ?? "message";
 
   return (
     <section
@@ -80,14 +127,14 @@ export default function AnalysisSurface({ message, relationships, trace }: Props
             role="tab"
             aria-selected={selectedTab === tab.id}
             aria-controls={`analysis-panel-${tab.id}`}
-            onClick={() => { setActiveTab(tab.id); setMinimized(false); }}
+          onClick={() => changeTab(tab.id)}
           >{tab.label}</button>)}
         </div>
         <button
           type="button"
           className="button button--ghost button--small"
           aria-label={minimized ? "Restore analysis panels" : "Minimize analysis panels"}
-          onClick={() => setMinimized((current) => !current)}
+          onClick={() => changeMinimized(!minimized)}
         >{minimized ? "Restore" : "Minimize"}</button>
       </div>
       <div className="analysis-surface__content" hidden={minimized}>

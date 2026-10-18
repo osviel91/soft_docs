@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import TraceSurface from "../../../src/features/preview/TraceSurface";
 import { createProjectIndexer } from "../../../src/domain/project/indexer";
+import type { TracePanelMode } from "../../../src/workspace/ui-preferences";
 
 function index() {
   return createProjectIndexer().update("p", [{
@@ -33,5 +35,31 @@ describe("TraceSurface", () => {
     fireEvent.keyDown(splitter, { key: "ArrowUp" });
     fireEvent.click(screen.getByRole("button", { name: "Restore Architectural Trace" }));
     expect(screen.getByTestId("trace-surface")).toHaveClass("trace-surface--normal");
+  });
+
+  it("restores a saved standalone mode and reports explicit resize changes", () => {
+    const onLayoutPreferenceChange = vi.fn();
+    function ControlledTrace() {
+      const [preferences, setPreferences] = useState<{ height: number; mode: TracePanelMode }>({ height: 360, mode: "minimized" });
+      return <TraceSurface
+        index={index()}
+        start={{ messageId: "raised" }}
+        direction="both"
+        provenance="Viewer A"
+        onOpenResource={vi.fn()}
+        preferredHeight={preferences.height}
+        preferredMode={preferences.mode}
+        onLayoutPreferenceChange={(patch) => {
+          onLayoutPreferenceChange(patch);
+          setPreferences((current) => ({ ...current, ...(patch.height === undefined ? {} : { height: patch.height }), ...(patch.mode === undefined ? {} : { mode: patch.mode }) }));
+        }}
+      />;
+    }
+    render(<ControlledTrace />);
+
+    expect(screen.getByTestId("trace-surface")).toHaveClass("trace-surface--minimized");
+    fireEvent.click(screen.getByRole("button", { name: "Restore Architectural Trace" }));
+    expect(onLayoutPreferenceChange).toHaveBeenCalledWith({ mode: "normal" });
+    expect(screen.getByTestId("trace-surface")).toHaveStyle({ flexBasis: "360px" });
   });
 });
