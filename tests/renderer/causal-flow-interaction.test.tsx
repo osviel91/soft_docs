@@ -8,28 +8,41 @@ import CausalFlowView from "../../src/renderer/causal/CausalFlowView";
 import type { CausalLayoutWorker } from "../../src/renderer/causal/causal-elk-layout";
 import type { CausalElkRequest, CausalElkResponse } from "../../src/renderer/causal/causal-flow-adapter";
 
+const { flowApi } = vi.hoisted(() => ({
+  flowApi: {
+    fitView: vi.fn(),
+    screenToFlowPosition: vi.fn(({ x, y }: { x: number; y: number }) => ({ x: x - 10, y: y - 20 })),
+    setCenter: vi.fn(),
+  },
+}));
+
 vi.mock("@xyflow/react", () => ({
   BaseEdge: () => null,
   Background: () => null,
-  Controls: () => null,
+  ControlButton: ({ children, ...props }: { children: ReactNode; className?: string; onClick?: () => void; "aria-label"?: string; title?: string }) => <button type="button" {...props}>{children}</button>,
+  Controls: ({ children, ...props }: { children?: ReactNode; "aria-label"?: string; showFitView?: boolean }) => <div role="group" data-show-fit-view={props.showFitView} aria-label={props["aria-label"]}>{children}</div>,
   Handle: () => null,
   MiniMap: () => null,
   Position: { Left: "left", Right: "right" },
   ReactFlowProvider: ({ children }: { children: ReactNode }) => children,
+  useReactFlow: () => flowApi,
   ReactFlow: (props: {
     nodes: Array<{ id: string; className?: string; data: { sourceNodeIds: string[] } }>;
     edges: Array<{ id: string; className?: string; ariaLabel?: string }>;
     onNodeClick: (event: unknown, node: { id: string; data: { sourceNodeIds: string[] } }) => void;
     onEdgeClick: (event: unknown, edge: { id: string }) => void;
     onPaneClick: () => void;
-  }) => <div>
+    fitViewOptions: { padding: number; minZoom: number; maxZoom: number };
+    children?: ReactNode;
+  }) => <div className="react-flow" data-testid="react-flow-root" data-fit-padding={props.fitViewOptions.padding} data-fit-min-zoom={props.fitViewOptions.minZoom} data-fit-max-zoom={props.fitViewOptions.maxZoom}>
     <button type="button" data-testid="causal-pane" onClick={props.onPaneClick}>Blank canvas</button>
     {props.nodes.map((node) => <button key={node.id} type="button" data-id={node.id} className={node.className} onClick={(event) => props.onNodeClick(event, node)}>{node.id}</button>)}
     {props.edges.map((edge) => <button key={edge.id} type="button" data-id={edge.id} aria-label={edge.ariaLabel} className={`react-flow__edge ${edge.className ?? ""}`} onClick={(event) => props.onEdgeClick(event, edge)}>{edge.id}</button>)}
+    {props.children}
   </div>,
 }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function elkWorkerFactory() {
   return () => {
@@ -53,6 +66,27 @@ function disconnectedView() {
 }
 
 describe("causal graph interaction", () => {
+  it("keeps initial fit readable and exposes distinct overview and reading actions", async () => {
+    render(<CausalFlowView view={disconnectedView()} workerFactory={elkWorkerFactory()} />);
+    await screen.findByRole("button", { name: "message:First" });
+
+    const flowRoot = screen.getByTestId("react-flow-root");
+    expect(flowRoot).toHaveAttribute("data-fit-padding", "0.18");
+    expect(flowRoot).toHaveAttribute("data-fit-min-zoom", "0.8");
+    expect(flowRoot).toHaveAttribute("data-fit-max-zoom", "1");
+    expect(screen.getByRole("group", { name: "Causal graph navigation" })).toHaveAttribute("data-show-fit-view", "false");
+
+    vi.spyOn(flowRoot, "getBoundingClientRect").mockReturnValue({ left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620 } as DOMRect);
+    flowApi.screenToFlowPosition.mockReturnValueOnce({ x: 321, y: 654 });
+    fireEvent.click(screen.getByRole("button", { name: "Show full graph overview" }));
+    expect(flowApi.fitView).toHaveBeenCalledWith({ padding: 0.18, minZoom: 0.1, maxZoom: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore reading scale" }));
+    expect(flowApi.screenToFlowPosition).toHaveBeenCalledWith({ x: 410, y: 320 });
+    expect(flowApi.screenToFlowPosition).toHaveBeenCalledTimes(1);
+    expect(flowApi.setCenter).toHaveBeenCalledWith(321, 654, { zoom: 1, duration: 180 });
+  });
+
   it("selects a relation, shows its type and source line, and reveals the source", async () => {
     const view = disconnectedView();
     const onSourceSelect = vi.fn();

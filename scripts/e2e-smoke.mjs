@@ -2296,6 +2296,189 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     }
   });
 
+  await scenario("Causal navigation keeps large graphs readable and stable", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const projectName = "Causal Navigation E2E";
+    const programmedRecharge = [
+      'title "Programmed Recharge"',
+      "event RechargeRequested", "event BalanceLoaded", "event RechargeAuthorized", "event PaymentCaptured", "event RechargeCompleted", "event NotificationQueued", "event LedgerUpdated",
+      "handler LoadBalance", "handler AuthorizeRecharge", "handler CapturePayment", "handler CompleteRecharge", "handler NotifyCustomer",
+      "RechargeRequested handled by LoadBalance", "LoadBalance causes BalanceLoaded", "BalanceLoaded handled by AuthorizeRecharge", "AuthorizeRecharge causes RechargeAuthorized", "RechargeAuthorized handled by CapturePayment", "CapturePayment causes PaymentCaptured", "PaymentCaptured handled by CompleteRecharge", "CompleteRecharge causes RechargeCompleted", "RechargeCompleted handled by NotifyCustomer", "NotifyCustomer causes NotificationQueued", "CompleteRecharge causes LedgerUpdated", "LedgerUpdated handled by NotifyCustomer",
+      "effect persist-recharge on CompleteRecharge: persist recharge", "effect audit-recharge on CompleteRecharge: append audit record", "failure capture-failed on handler CapturePayment", "retry capture-again for capture-failed {", "  mechanism: handler", "  target: same-execution", "}",
+    ].join("\n");
+    const smallCausal = [
+      'title "Small Causal Fixture"', "event Input", "event Output", "handler Persist", "Input handled by Persist", "Persist causes Output", "effect save on Persist: save state",
+    ].join("\n");
+    const fanOutSource = [
+      'title "Fan-out Causal Fixture"', "event UpOneTransactionRaisedEvent", "event SaveUpOneTransactionCommand", "event AddAccountCommand", "event AddCorporateAccountCommand",
+      "handler TransactionsHandler", "handler AccountsHandler", "UpOneTransactionRaisedEvent handled by TransactionsHandler", "UpOneTransactionRaisedEvent handled by AccountsHandler",
+      "TransactionsHandler causes SaveUpOneTransactionCommand", "AccountsHandler causes AddAccountCommand", "AccountsHandler causes AddCorporateAccountCommand",
+      "effect save-transaction on TransactionsHandler: save transaction", "effect update-account on AccountsHandler: update account",
+    ].join("\n");
+    let projectId = null;
+    const capture = async (name) => {
+      if (process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, `gate95c-${name}.png`) });
+    };
+    const measure = () => page.evaluate(() => {
+      const flow = document.querySelector(".causal-flow .react-flow");
+      const viewport = flow?.querySelector(".react-flow__viewport");
+      if (!flow || !viewport) return null;
+      const bounds = flow.getBoundingClientRect();
+      const matrix = new DOMMatrix(getComputedStyle(viewport).transform);
+      const nodes = [...flow.querySelectorAll(".react-flow__node")];
+      const nodeRects = nodes.map((node) => node.getBoundingClientRect());
+      const labels = nodes[0]?.querySelector(".causal-node__label");
+      const fontSize = labels ? Number.parseFloat(getComputedStyle(labels).fontSize) : 0;
+      return {
+        width: bounds.width,
+        height: bounds.height,
+        zoom: matrix.a,
+        x: matrix.e,
+        y: matrix.f,
+        fontSize,
+        apparentFontSize: fontSize * matrix.a,
+        nodes: nodes.length,
+        graph: nodeRects.length ? {
+          left: Math.min(...nodeRects.map((rect) => rect.left)) - bounds.left,
+          right: Math.max(...nodeRects.map((rect) => rect.right)) - bounds.left,
+          top: Math.min(...nodeRects.map((rect) => rect.top)) - bounds.top,
+          bottom: Math.max(...nodeRects.map((rect) => rect.bottom)) - bounds.top,
+        } : null,
+      };
+    });
+    const withinViewport = (metrics) => metrics?.graph && metrics.graph.left >= -1 && metrics.graph.top >= -1 && metrics.graph.right <= metrics.width + 1 && metrics.graph.bottom <= metrics.height + 1;
+    const center = (metrics) => ({ x: (metrics.width / 2 - metrics.x) / metrics.zoom, y: (metrics.height / 2 - metrics.y) / metrics.zoom });
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaceId = (await apiRequest(page, "/api/workspaces")).json.workspaces[0].id;
+      const created = await apiRequest(page, "/api/projects/bootstrap", { method: "POST", body: JSON.stringify({
+        workspaceId,
+        name: projectName,
+        resources: [
+          { path: "programmed.eventseq", type: "event-flow", content: programmedRecharge },
+          { path: "small.eventseq", type: "event-flow", content: smallCausal },
+          { path: "fanout.eventseq", type: "event-flow", content: fanOutSource },
+        ],
+      }) });
+      if (created.status !== 201) throw new Error(`Causal navigation project bootstrap failed: ${created.status} ${created.text}`);
+      projectId = created.json.project.id;
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await openServerProject(page, projectName);
+      await page.getByRole("button", { name: "Load diagram Programmed Recharge" }).click();
+      await page.getByTestId("event-flow-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("event-flow-preview").getByRole("button", { name: "Flow", exact: true }).click();
+      await page.getByRole("button", { name: "Maximize diagram preview" }).click();
+      await page.getByTestId("event-flow-preview").getByRole("button", { name: "Causal", exact: true }).click();
+      await page.locator(".causal-flow .react-flow__node").first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => {
+        const transform = getComputedStyle(document.querySelector(".causal-flow .react-flow__viewport")).transform;
+        return transform !== "none" && new DOMMatrix(transform).a >= 0.8;
+      });
+
+      let initial = await measure();
+      check("Programmed Recharge starts at a legible scale without fitting the full wide graph", initial.zoom >= 0.8 && initial.apparentFontSize >= 10 && initial.graph.right - initial.graph.left > initial.width, `viewport=${initial.width}x${initial.height}; zoom=${initial.zoom}; label=${initial.apparentFontSize.toFixed(2)}px; graphWidth=${(initial.graph.right - initial.graph.left).toFixed(1)}px`);
+      await capture("programmed-initial");
+
+      const flowBounds = await page.locator(".causal-flow .react-flow").boundingBox();
+      if (!flowBounds) throw new Error("Causal preview viewport has no browser bounds");
+      await page.mouse.move(flowBounds.x + 100, flowBounds.y + 180);
+      await page.mouse.down();
+      await page.mouse.move(flowBounds.x + 150, flowBounds.y + 200);
+      await page.mouse.up();
+      const readingFocus = await measure();
+      const readingFocusCenter = center(readingFocus);
+      check("causal viewport can pan to a region of interest", readingFocus.x !== initial.x || readingFocus.y !== initial.y, `transform ${initial.x}/${initial.y} -> ${readingFocus.x}/${readingFocus.y}`);
+      await capture("programmed-region-of-interest");
+
+      const overviewButton = page.getByRole("button", { name: "Show full graph overview" });
+      await overviewButton.focus();
+      check("overview action has keyboard focus", await overviewButton.evaluate((button) => document.activeElement === button));
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => {
+        const transform = getComputedStyle(document.querySelector(".causal-flow .react-flow__viewport")).transform;
+        return transform !== "none" && new DOMMatrix(transform).a < 0.8;
+      });
+      const overview = await measure();
+      check("overview fits the complete causal graph", withinViewport(overview), `zoom=${overview.zoom}; bounds=${JSON.stringify(overview.graph)}`);
+      await capture("programmed-overview");
+
+      const readingButton = page.getByRole("button", { name: "Restore reading scale" });
+      await readingButton.focus();
+      await page.keyboard.press("Space");
+      await page.waitForFunction(() => {
+        const transform = getComputedStyle(document.querySelector(".causal-flow .react-flow__viewport")).transform;
+        return transform !== "none" && Math.abs(new DOMMatrix(transform).a - 1) < 0.01;
+      });
+      await page.waitForTimeout(250);
+      const reading = await measure();
+      const readingCenter = center(reading);
+      check("reading view restores 1:1 labels while preserving the prior region of interest", reading.zoom >= 0.99 && Math.hypot(readingCenter.x - readingFocusCenter.x, readingCenter.y - readingFocusCenter.y) < 2, `zoom=${reading.zoom}; center drift=${Math.hypot(readingCenter.x - readingFocusCenter.x, readingCenter.y - readingFocusCenter.y).toFixed(3)} flow px`);
+      await capture("programmed-reading");
+
+      const visibleNode = await page.locator(".causal-flow .react-flow__node").evaluateAll((nodes) => {
+        const flowElement = document.querySelector(".causal-flow .react-flow");
+        if (!flowElement) return null;
+        const flow = flowElement.getBoundingClientRect();
+        const rect = nodes.map((node) => node.getBoundingClientRect()).find((item) => item.left >= flow.left && item.right <= flow.right && item.top >= flow.top && item.bottom <= flow.bottom);
+        return rect ? { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 } : null;
+      });
+      if (!visibleNode) throw new Error("No causal node is fully visible at reading scale");
+      await page.mouse.click(visibleNode.x, visibleNode.y);
+      await page.waitForFunction(() => [...document.querySelectorAll(".causal-flow .react-flow__node")].some((node) => node.classList.contains("selected")));
+      const selected = await measure();
+      check("selecting a causal node does not move the viewport", selected.zoom === reading.zoom && selected.x === reading.x && selected.y === reading.y, `before=${reading.zoom}/${reading.x}/${reading.y}; after=${selected.zoom}/${selected.x}/${selected.y}`);
+      await capture("programmed-selected");
+
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector(".app__workspace")?.classList.contains("app__workspace--preview-maximized"));
+      let afterEscape = await measure();
+      check("Escape restores workspace panels without resetting the causal viewport", afterEscape.zoom === selected.zoom && afterEscape.x === selected.x && afterEscape.y === selected.y);
+      await page.locator(".causal-flow .react-flow__pane").click({ position: { x: 400, y: Math.max(20, afterEscape.height - 20) } });
+      await page.waitForFunction(() => ![...document.querySelectorAll(".causal-flow .react-flow__node")].some((node) => node.classList.contains("selected")));
+      const deselected = await measure();
+      check("deselection does not move the causal viewport", deselected.zoom === afterEscape.zoom && deselected.x === afterEscape.x && deselected.y === afterEscape.y);
+      await capture("programmed-deselected");
+
+      const showEditor = page.getByRole("button", { name: "Show editor" });
+      if (await showEditor.count()) await showEditor.click();
+      const splitter = page.getByRole("separator", { name: "Resize editor" });
+      await splitter.focus();
+      await page.keyboard.press("ArrowRight");
+      const resized = await measure();
+      check("resizing the editor panel leaves the causal viewport transform unchanged", resized.zoom === deselected.zoom && resized.x === deselected.x && resized.y === deselected.y, `viewport width ${deselected.width} -> ${resized.width}`);
+      await capture("programmed-resized");
+
+      const secondPage = await context.newPage();
+      await secondPage.goto("about:blank");
+      await page.bringToFront();
+      const refocused = await measure();
+      check("temporarily changing application focus leaves the causal viewport unchanged", refocused.zoom === resized.zoom && refocused.x === resized.x && refocused.y === resized.y);
+      await secondPage.close();
+
+      await page.getByRole("button", { name: "Load diagram Small Causal Fixture" }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".causal-flow .react-flow__node").length === 4);
+      const small = await measure();
+      check("a small causal graph uses a readable full-graph initial fit", small.zoom >= 0.8 && small.zoom <= 1 && withinViewport(small), `viewport=${small.width}x${small.height}; zoom=${small.zoom}; label=${small.apparentFontSize.toFixed(2)}px; graph=${(small.graph.right - small.graph.left).toFixed(1)}x${(small.graph.bottom - small.graph.top).toFixed(1)}px`);
+      await capture("small-initial");
+
+      await page.getByRole("button", { name: "Zoom in" }).click();
+      const zoomedSmall = await measure();
+      await page.getByRole("button", { name: "Load diagram Fan-out Causal Fixture" }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".causal-flow .react-flow__node").length === 8);
+      const fanOutMetrics = await measure();
+      check("changing graph identity reinitializes fit instead of retaining the prior zoom", fanOutMetrics.zoom >= 0.8 && fanOutMetrics.zoom <= 1 && withinViewport(fanOutMetrics) && fanOutMetrics.zoom !== zoomedSmall.zoom, `viewport=${fanOutMetrics.width}x${fanOutMetrics.height}; prior=${zoomedSmall.zoom}; new=${fanOutMetrics.zoom}; label=${fanOutMetrics.apparentFontSize.toFixed(2)}px; graph=${(fanOutMetrics.graph.right - fanOutMetrics.graph.left).toFixed(1)}x${(fanOutMetrics.graph.bottom - fanOutMetrics.graph.top).toFixed(1)}px`);
+      await capture("fanout-initial");
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await context.close();
+    }
+  });
+
   await scenario("Project shares provide a governed anonymous read-only reader", async () => {
     const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1100 }, permissions: ["clipboard-read", "clipboard-write"] });
     const anonymousContext = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
