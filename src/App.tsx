@@ -648,6 +648,8 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
     null,
   );
+  const [pendingTabCloseId, setPendingTabCloseId] = useState<string | null>(null);
+  const [closedLastDocumentTab, setClosedLastDocumentTab] = useState(false);
   const [pendingProposalWithdrawal, setPendingProposalWithdrawal] = useState<PendingProposalWithdrawal | null>(null);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [prompt, setPrompt] = useState<PromptTarget | null>(null);
@@ -753,6 +755,16 @@ export default function App() {
     setProposalInspector({ proposalId: item.proposalId, diff: null, selectedPath: null, mode: "unified" });
     setBrowserLocation({ projectId: item.project.id, contextId: null, resourceId: null, proposalId: item.proposalId, returnTo });
   }, [setBrowserLocation]);
+
+  const returnFromInbox = useCallback((): void => {
+    setPage("workspace");
+    setArchitecturalProposalId(null);
+    setArchitecturalProposalContextId(null);
+    setRevisionProposalId(null);
+    setView("code");
+    if (server.active) setBrowserLocation({ projectId: server.active.project.id, contextId: server.active.contextId, resourceId: null, proposalId: null }, true);
+    else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
+  }, [server.active, setBrowserLocation]);
 
   const startProposalRevision = useCallback((contextId: string, proposalId: string, resourceId: string | null, resources: Array<{ resourceId: string; path: string; type: ServerResourceType; content: string }>, title: string, description: string): void => {
     setRevisionReturnContext({ proposalId, contextId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode });
@@ -937,6 +949,7 @@ export default function App() {
     refresh: refreshWorkspace,
     loadDiagram,
     loadNote,
+    clearDocumentSelection,
     createProject,
     applyDiagramEdit,
     applyNoteEdit,
@@ -1182,6 +1195,7 @@ export default function App() {
     closeTab,
     updateActiveSource,
   } = tabsHook;
+  const noDocumentsOpen = closedLastDocumentTab && activeTab === null && selectedDiagram === null && selectedNote === null && source === "";
 
   useEffect(() => {
     if (!revisionProposalId || !server.active?.contextId || !revisionResources.length || isLoading) return;
@@ -1851,14 +1865,19 @@ export default function App() {
    * means the workspace selection follows the strip instead of pointing at the
    * document that just went away.
    */
-  const closeTabAndFollow = useCallback(
+  const finishCloseTabAndFollow = useCallback(
     (documentId: string) => {
       const wasActive = activeTabId === documentId;
       const nextActive = getActiveTab(
         closeTabInSet({ tabs, activeTabId }, documentId),
       );
       closeTab(documentId);
-      if (!wasActive || !nextActive) return;
+      if (!wasActive) return;
+      if (!nextActive) {
+        setClosedLastDocumentTab(true);
+        clearDocumentSelection();
+        return;
+      }
       if (nextActive.kind === "note") {
         const note = allNotes.find(
           (entry) => entry.id === nextActive.documentId,
@@ -1871,8 +1890,30 @@ export default function App() {
         if (diagram) loadDiagram(diagram);
       }
     },
-    [tabs, activeTabId, closeTab, allNotes, allDiagrams, loadNote, loadDiagram],
+    [tabs, activeTabId, closeTab, allNotes, allDiagrams, loadNote, loadDiagram, clearDocumentSelection],
   );
+
+  const closeTabAndFollow = useCallback(
+    (documentId: string) => {
+      const target = tabs.find((tab) => tab.id === documentId);
+      if (target && isDirty(target)) {
+        setPendingTabCloseId(documentId);
+        return;
+      }
+      finishCloseTabAndFollow(documentId);
+    },
+    [tabs, finishCloseTabAndFollow],
+  );
+
+  const confirmPendingTabClose = useCallback(() => {
+    const documentId = pendingTabCloseId;
+    setPendingTabCloseId(null);
+    if (documentId) finishCloseTabAndFollow(documentId);
+  }, [pendingTabCloseId, finishCloseTabAndFollow]);
+
+  const cancelPendingTabClose = useCallback(() => {
+    setPendingTabCloseId(null);
+  }, []);
 
   const closeActiveDocument = useCallback(() => {
     if (activeTabId) closeTabAndFollow(activeTabId);
@@ -3567,10 +3608,10 @@ export default function App() {
 
         <div className="app__toolbar-actions">
           {auth.status === "authenticated" ? (
-            <button type="button" className="button button--small" data-testid="open-architecture-inbox" aria-current={page === "inbox" ? "page" : undefined} onClick={() => { navigationProjectRequested.current = null; navigationProjectResolved.current = null; setPage("inbox"); setArchitecturalProposalId(null); setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null, inbox: true }); }}>
-              Inbox
-            </button>
+            page === "inbox" ? <button type="button" className="button button--small" data-testid="inbox-back-to-workspace" onClick={returnFromInbox}>Back to workspace</button>
+              : <button type="button" className="button button--small" data-testid="open-architecture-inbox" onClick={() => { navigationProjectRequested.current = null; navigationProjectResolved.current = null; setPage("inbox"); setArchitecturalProposalId(null); setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null, inbox: true }); }}>Inbox</button>
           ) : null}
+          {page !== "docs" ? <button type="button" className="button button--small" data-testid="open-docs" title="Open the documentation page" onClick={openDocs}><span aria-hidden="true">▤</span> Docs</button> : null}
           {auth.status === "authenticated" ? (
             <div className="app__account" data-testid="toolbar-account">
               <span>
@@ -3588,21 +3629,19 @@ export default function App() {
               </button>
             </div>
           ) : null}
-          {page !== "workspace" && (
-            <button
-              type="button"
-              className="button app__command-button"
-              data-testid="command-palette-button"
-              aria-label="Open command palette"
-              title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
-              onClick={open}
-            >
-              Commands…
-              <kbd className="app__command-shortcut" data-testid="palette-hint">
-                {bindingLabel(COMMAND_PALETTE_BINDING)}
-              </kbd>
-            </button>
-          )}
+          <button
+            type="button"
+            className="button app__command-button"
+            data-testid="command-palette-button"
+            aria-label="Open command palette"
+            title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
+            onClick={open}
+          >
+            Commands…
+            <kbd className="app__command-shortcut" data-testid="palette-hint">
+              {bindingLabel(COMMAND_PALETTE_BINDING)}
+            </kbd>
+          </button>
           {page === "workspace" ? (
             <button
               type="button"
@@ -3619,15 +3658,7 @@ export default function App() {
       </header>
 
       {page === "inbox" ? (
-        <ArchitectureInbox client={apiClient} onOpen={openInboxProposal} onBack={() => {
-          setPage("workspace");
-          setArchitecturalProposalId(null);
-          setArchitecturalProposalContextId(null);
-          setRevisionProposalId(null);
-          setView("code");
-          if (server.active) setBrowserLocation({ projectId: server.active.project.id, contextId: server.active.contextId, resourceId: null, proposalId: null }, true);
-          else setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
-        }} />
+        <ArchitectureInbox client={apiClient} onOpen={openInboxProposal} />
       ) : page === "docs" ? (
         <DocsPage onBack={() => setPage("workspace")} />
       ) : page === "settings" ? (
@@ -3657,6 +3688,7 @@ export default function App() {
           onRenameWorkspace={renameServerWorkspace}
           onDeleteWorkspace={deleteServerWorkspace}
           onSetWorkspaceAuthorSelfReview={setWorkspaceAuthorSelfReview}
+          onResetPanelLayout={resetPanelLayout}
           onBack={() => setPage("workspace")}
         />
       ) : (
@@ -3868,6 +3900,15 @@ export default function App() {
                     setProposalReviewOpen(true);
                   }}
                 />
+              ) : noDocumentsOpen ? (
+                <>
+                  <TabBar tabs={tabs} activeTabId={activeTabId} onActivateTab={activateTabAndDocument} onCloseTab={closeTabAndFollow} />
+                  <section className="workspace-empty-state" data-testid="workspace-empty-state" aria-labelledby="workspace-empty-title">
+                    <h2 id="workspace-empty-title">No document selected</h2>
+                    <p>Choose a document in the Explorer or browse the project to open one.</p>
+                    <button type="button" className="button" onClick={() => setQuickOpenOpen(true)}>Open a document</button>
+                  </section>
+                </>
               ) : view === "outline" ? (
                 <OutlinePanel
                   nodes={outlineNodes}
@@ -4142,6 +4183,10 @@ export default function App() {
                       mode={proposalInspector.mode}
                       onModeChange={handleProposalModeChange}
                     /> : <section className="proposal-inspector" aria-label="Change Inspector"><p className="governance-eyebrow">CHANGE INSPECTOR</p><p>Select a proposal change to inspect its canonical comparison.</p></section>
+                  ) : noDocumentsOpen ? (
+                    <section className="workspace-empty-preview" data-testid="empty-document-preview" aria-label="Document preview empty">
+                      <p>No document is open. Choose one from the Explorer or use Open a document.</p>
+                    </section>
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
                       primary={selectedComparisonResource}
@@ -4350,38 +4395,6 @@ export default function App() {
               </span>
             )}
             <span className="app__status-spacer" />
-            <button
-              type="button"
-              className="button app__statusbar-button"
-              data-testid="open-docs"
-              title="Open the documentation page"
-              onClick={openDocs}
-            >
-              <span aria-hidden="true">▤</span> Docs
-            </button>
-            <button
-              type="button"
-              className="button app__statusbar-button"
-              data-testid="command-palette-button"
-              aria-label="Open command palette"
-              title={`Open command palette (${bindingLabel(COMMAND_PALETTE_BINDING)})`}
-              onClick={open}
-            >
-              Commands…
-              <kbd className="app__command-shortcut" data-testid="palette-hint">
-                {bindingLabel(COMMAND_PALETTE_BINDING)}
-              </kbd>
-            </button>
-            <button
-              type="button"
-              className="button app__statusbar-button"
-              data-testid="reset-panel-layout"
-              aria-label="Restore default panel layout"
-              title="Restore default panel layout"
-              onClick={resetPanelLayout}
-            >
-              Reset layout
-            </button>
             <span className="app__status-item app__status-item--muted">
               {noteMode ? "Note" : autoUpdate ? "Live" : "Paused"}
             </span>
@@ -4517,6 +4530,16 @@ export default function App() {
           onCancel={() => setPendingDelete(null)}
         />
       )}
+
+      {pendingTabCloseId ? (
+        <ConfirmDialog
+          title="Unsaved changes"
+          message="Closing this document will discard changes that have not been saved."
+          confirmLabel="Discard and close"
+          onConfirm={confirmPendingTabClose}
+          onCancel={cancelPendingTabClose}
+        />
+      ) : null}
 
       {pendingProposalWithdrawal && <ConfirmDialog
         idPrefix="proposal-withdrawal-dialog"

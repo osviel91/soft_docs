@@ -17,7 +17,7 @@ function displayName(item: ServerProposalInbox["items"][number]): string {
   return item.author.displayName || item.author.userId;
 }
 
-export default function ArchitectureInbox({ client, onOpen, onBack }: { client: ServerApiClient; onOpen: (item: ServerProposalInbox["items"][number], returnTo: string) => void; onBack: () => void }) {
+export default function ArchitectureInbox({ client, onOpen }: { client: ServerApiClient; onOpen: (item: ServerProposalInbox["items"][number], returnTo: string) => void }) {
   const initialQuery = new URLSearchParams(window.location.search);
   const [workspaces, setWorkspaces] = useState<ServerWorkspace[]>([]);
   const [projects, setProjects] = useState<ServerProject[]>([]);
@@ -109,7 +109,6 @@ export default function ArchitectureInbox({ client, onOpen, onBack }: { client: 
   const returnTo = `${window.location.pathname}?${returnParams}`;
 
   return <main className="architecture-inbox" data-testid="architecture-inbox">
-    <button type="button" className="button button--small" onClick={onBack}>Back to workspace</button>
     <PageHeader eyebrow="Cross-project governance" title="Architecture Inbox" description="Track governance state and activity for proposals across the workspaces you can access." />
     {unavailableNotice ? <p className="architecture-inbox__error" role="alert">This proposal is unavailable or you no longer have access. You are back in the Inbox. <button type="button" className="button button--small" onClick={() => { setUnavailableNotice(false); const params = new URLSearchParams(window.location.search); params.delete("unavailable"); window.history.replaceState({}, "", `${window.location.pathname}?${params}`); }}>Dismiss</button></p> : null}
     <section className="architecture-inbox__summary" aria-label="Proposal attention summary">

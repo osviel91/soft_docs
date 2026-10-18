@@ -52,7 +52,7 @@ describe("ArchitectureInbox", () => {
       listProposalInbox,
     } as unknown as ServerApiClient;
     const onOpen = vi.fn();
-    render(<ArchitectureInbox client={client} onOpen={onOpen} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={onOpen} />);
 
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenCalledWith({
       attentionCategory: ["PENDING_REVIEW", "CHANGES_REQUESTED", "APPROVED_PENDING_PROMOTION", "PROMOTION_COMPLETION_PENDING"],
@@ -84,7 +84,7 @@ describe("ArchitectureInbox", () => {
         .mockResolvedValueOnce(inboxWith("Old filter result", 7))
         .mockReturnValueOnce(next.promise),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /Old filter result/ })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Governance situation"), { target: { value: "CHANGES_REQUESTED" } });
@@ -107,7 +107,7 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn().mockResolvedValue([]),
       listProposalInbox: vi.fn().mockResolvedValueOnce(inboxWith("Page one", 2)).mockReturnValueOnce(nextPage.promise),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /Page one/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -138,7 +138,7 @@ describe("ArchitectureInbox", () => {
         .mockReturnValueOnce(queryB.promise)
         .mockReturnValueOnce(lastA.promise),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenCalledTimes(1));
 
     fireEvent.change(screen.getByLabelText("Governance situation"), { target: { value: "CHANGES_REQUESTED" } });
@@ -162,7 +162,7 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn().mockResolvedValue([]),
       listProposalInbox: vi.fn().mockResolvedValueOnce(inboxWith("Previous result", 8)).mockReturnValueOnce(current.promise),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /Previous result/ })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Proposal title"), { target: { value: "new search" } });
     fireEvent.submit(screen.getByLabelText("Proposal title").closest("form")!);
@@ -189,7 +189,7 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn().mockResolvedValue([{ id: "project-1", workspaceId: "workspace-1", name: "Checkout" }]),
       listProposalInbox: vi.fn().mockReturnValueOnce(oldQuery.promise).mockReturnValueOnce(currentQuery.promise),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getByLabelText("Workspace"), { target: { value: "workspace-1" } });
     await waitFor(() => expect(client.listProposalInbox).toHaveBeenCalledTimes(2));
@@ -209,14 +209,14 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn().mockResolvedValue([]),
       listProposalInbox: vi.fn().mockResolvedValue(changed),
     } as unknown as ServerApiClient;
-    const view = render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    const view = render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByText(/Your latest decision: Changes requested/)).toBeInTheDocument();
     expect(screen.getByText(/Changes requested ·/)).toBeInTheDocument();
 
     view.unmount();
     const withoutReview = { ...inbox, items: [{ ...inbox.items[0]!, myReview: null }] };
     const noReviewClient = { ...client, listProposalInbox: vi.fn().mockResolvedValue(withoutReview) } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={noReviewClient} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={noReviewClient} onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /Governed publication/ })).toBeInTheDocument();
     expect(screen.queryByText(/Your latest decision/)).toBeNull();
   });
@@ -228,18 +228,18 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn().mockResolvedValue([]),
       listProposalInbox: vi.fn().mockResolvedValue(empty),
     } as unknown as ServerApiClient;
-    const view = render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    const view = render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByText("No proposals are available in your accessible workspaces.")).toBeInTheDocument();
 
     view.unmount();
     window.history.replaceState({}, "", "/?q=not-found");
-    const filtered = render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    const filtered = render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
     expect(await screen.findByText("No proposals match these filters.")).toBeInTheDocument();
 
     filtered.unmount();
     window.history.replaceState({}, "", "/");
     const failedClient = { ...client, listProposalInbox: vi.fn().mockRejectedValue(new Error("request failed")) } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={failedClient} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={failedClient} onOpen={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("request failed");
   });
 
@@ -249,7 +249,7 @@ describe("ArchitectureInbox", () => {
       listProjects: vi.fn(),
       listProposalInbox: vi.fn().mockResolvedValue({ items: [], nextCursor: null, counts: inbox.counts }),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load accessible workspaces and projects.");
     expect(screen.queryByText("No proposals are available in your accessible workspaces.")).toBeNull();
@@ -267,7 +267,7 @@ describe("ArchitectureInbox", () => {
         : Promise.resolve([{ id: "project-1", workspaceId, name: "Checkout" }])),
       listProposalInbox: vi.fn().mockResolvedValue({ items: [], nextCursor: null, counts: inbox.counts }),
     } as unknown as ServerApiClient;
-    render(<ArchitectureInbox client={client} onOpen={vi.fn()} onBack={vi.fn()} />);
+    render(<ArchitectureInbox client={client} onOpen={vi.fn()} />);
 
     const workspaceFilter = screen.getByLabelText("Workspace");
     expect(await screen.findByRole("option", { name: "Accessible" })).toBeInTheDocument();

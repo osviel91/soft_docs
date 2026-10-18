@@ -57,6 +57,52 @@ describe("App — mixed document tabs", () => {
     );
   });
 
+  it("clears the active document when the last tab closes but keeps its project", async () => {
+    render(<App />);
+    await createProject("Docs");
+    await addDiagram();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("tab-close"));
+    });
+
+    await screen.findByTestId("tab-bar-empty");
+    expect(screen.getByTestId("workspace-empty-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("dsl-textarea")).toBeNull();
+    expect(screen.queryByTestId("markdown-textarea")).toBeNull();
+    expect(screen.queryByTestId("preview-svg")).toBeNull();
+    expect(screen.getByTestId("project-name")).toHaveTextContent("Docs");
+  });
+
+  it("keeps a dirty document open when its close confirmation is cancelled", async () => {
+    render(<App />);
+    await createProject("Docs");
+    await addDiagram();
+    fireEvent.change(screen.getByTestId("dsl-textarea"), {
+      target: { value: "participant Unsaved\nUnsaved -> Unsaved: pending" },
+    });
+    fireEvent.click(screen.getByTestId("tab-close"));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("Unsaved changes");
+    fireEvent.click(screen.getByTestId("confirm-dialog-cancel"));
+
+    expect(screen.getByTestId("tab")).toBeInTheDocument();
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved\nUnsaved -> Unsaved: pending");
+    expect(screen.getByTestId("project-name")).toHaveTextContent("Docs");
+  });
+
+  it("opens a new document from the empty state", async () => {
+    render(<App />);
+    await createProject("Docs");
+    await addDiagram();
+    await act(async () => { fireEvent.click(screen.getByTestId("tab-close")); });
+    await screen.findByTestId("workspace-empty-state");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a document" }));
+    expect(await screen.findByTestId("quick-open")).toBeInTheDocument();
+    expect(screen.getByTestId("quick-open")).toHaveTextContent("Diagrams");
+  });
+
   it("keeps a diagram and a markdown document open side by side", async () => {
     render(<App />);
     await createProject("Docs");

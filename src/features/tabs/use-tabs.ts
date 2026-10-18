@@ -86,7 +86,7 @@ export interface TabsHook {
    * which to show as a conflict and which as a retryable error.
    */
   saveError: { document: TabDocument; error: Error } | null;
-  /** Try the active tab's failed write again, keeping its buffer. */
+  /** Retry the active or most recently failed document without losing its buffer. */
   retrySave(): void;
   /**
    * Record the active tab's buffer as persisted after a write that happened
@@ -212,16 +212,16 @@ export function useTabs(
     (documentId: string) => {
       const next = closeTabInSet(tabSet, documentId);
       setTabSet(next);
-      // Keep the editor showing a real document. Closing an inactive tab leaves
-      // the buffer alone; closing the active one follows the neighbour the strip
-      // activates. With no tabs left the buffer stays as-is, so nothing the user
-      // is reading disappears mid-close.
+      // Closing an inactive tab leaves the buffer alone; closing the active one
+      // follows its neighbour. With no tabs left the closed buffer is cleared;
+      // a failed in-flight write remains available through saveError for retry.
       const nextActive = getActiveTab(next);
       if (nextActive && nextActive.id !== bufferRef.current) {
         bufferRef.current = nextActive.id;
         setSource(nextActive.source);
       } else if (!nextActive && tabSet.activeTabId === documentId) {
         bufferRef.current = null;
+        setSource("");
       }
     },
     [tabSet],
@@ -327,14 +327,15 @@ export function useTabs(
 
   const retrySave = useCallback((): void => {
     const active = getActiveTab(tabSet);
-    if (!active) return;
+    const document = active ? tabDocumentOf(active) : saveError?.document;
+    if (!document) return;
     // Clearing the in-flight marker is what makes a retry of the *same* buffer
     // possible: the failed attempt's key is still recorded.
-    const key = writeKey(active);
+    const key = active ? writeKey(active) : `${document.id}\u0000${document.source}`;
     inFlightRef.current.delete(key);
     setSaveError(null);
-    void saveDocument(tabDocumentOf(active), key);
-  }, [tabSet, saveDocument, tabDocumentOf]);
+    void saveDocument(document, key);
+  }, [tabSet, saveError, saveDocument, tabDocumentOf]);
 
   const dismissSaveError = useCallback((): void => setSaveError(null), []);
 

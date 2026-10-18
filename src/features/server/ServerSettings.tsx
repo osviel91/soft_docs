@@ -34,6 +34,7 @@ export interface ServerSettingsProps {
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   onSetWorkspaceAuthorSelfReview: (workspaceId: string, allowed: boolean) => void;
+  onResetPanelLayout?: () => void;
   onBack: () => void;
 }
 
@@ -56,6 +57,7 @@ export default function ServerSettings({
   onRenameWorkspace,
   onDeleteWorkspace,
   onSetWorkspaceAuthorSelfReview,
+  onResetPanelLayout,
   onBack,
 }: ServerSettingsProps) {
   const user = auth.user;
@@ -95,14 +97,17 @@ export default function ServerSettings({
             Choose a workspace to manage its members and policies, or open platform-wide controls.
           </p>
         </div>
-        <button
-          type="button"
-          className="button"
-          data-testid="workspace-settings-back"
-          onClick={onBack}
-        >
-          ← Back to workspace
-        </button>
+        <div className="settings-page__actions">
+          {onResetPanelLayout ? <button type="button" className="button" data-testid="reset-panel-layout" aria-label="Restore default panel layout" onClick={onResetPanelLayout}>Reset layout</button> : null}
+          <button
+            type="button"
+            className="button"
+            data-testid="workspace-settings-back"
+            onClick={onBack}
+          >
+            ← Back to workspace
+          </button>
+        </div>
       </header>
 
       {(isPlatformAdmin || (auth.status === "authenticated" && agentsPanel)) && (

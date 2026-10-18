@@ -97,11 +97,25 @@ describe("App — auto-update", () => {
 });
 
 describe("App — status bar", () => {
-  it("places Docs and Commands in the lower-right status actions", () => {
+  it("places Docs and Commands in the top navigation and Reset layout in Settings", () => {
     render(<App />);
-    const statusbar = screen.getByRole("contentinfo");
-    expect(screen.getByTestId("open-docs").closest("footer")).toBe(statusbar);
-    expect(screen.getByTestId("command-palette-button").closest("footer")).toBe(statusbar);
+    const toolbar = screen.getByTestId("app-shell").querySelector(".app__toolbar");
+    expect(toolbar).not.toBeNull();
+    expect(screen.getByTestId("open-docs").closest("header")).toBe(toolbar);
+    expect(screen.getByTestId("command-palette-button").closest("header")).toBe(toolbar);
+    expect(screen.getByTestId("open-docs").closest("footer")).toBeNull();
+    expect(screen.getByTestId("command-palette-button").closest("footer")).toBeNull();
+    expect(screen.queryByTestId("reset-panel-layout")).toBeNull();
+
+    fireEvent.keyDown(document, { key: "p", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Command palette" }), { key: "Escape" });
+
+    fireEvent.click(screen.getByTestId("workspace-settings"));
+    const reset = screen.getByTestId("reset-panel-layout");
+    expect(reset.closest('[data-testid="workspace-settings-page"]')).not.toBeNull();
+    expect(reset.closest("footer")).toBeNull();
+    expect(screen.queryByRole("contentinfo")).toBeNull();
   });
 
   it("reports participant and message counts from the analysis", () => {
