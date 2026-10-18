@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DiagramFile, NoteFile } from "../../domain/workspace/types";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
@@ -22,6 +22,7 @@ import type { ResourceRelationship } from "../../domain/workspace/resource-relat
 import type { AnalysisContext } from "./cross-context-analysis";
 import { analysisProvenanceLabel, type KnowledgeContext } from "../../domain/workspace/knowledge-context";
 import type { ServerApiClient, ServerProject, ServerResourceRevision, ServerResourceRevisionSummary, ServerResourceType, ServerWorkspace } from "../../workspace/server/api-client";
+import type { UiPreferences } from "../../workspace/ui-preferences";
 
 export interface ComparisonViewProps {
   primary: ComparisonResource;
@@ -49,6 +50,8 @@ export interface ComparisonViewProps {
   primaryOptionId?: string;
   revisionClient?: Pick<ServerApiClient, "listResourceRevisions" | "getResourceRevision">;
   revisionResource?: RevisionComparisonResource | null;
+  layoutPreferences?: UiPreferences["screens"]["comparison"];
+  onLayoutPreferenceChange?: (patch: Partial<UiPreferences["screens"]["comparison"]>) => void;
 }
 
 export interface ComparisonOption {
@@ -271,10 +274,18 @@ export default function ComparisonView({
   primaryOptionId,
   revisionClient,
   revisionResource = null,
+  layoutPreferences,
+  onLayoutPreferenceChange,
 }: ComparisonViewProps) {
   const comparisonRef = useRef<HTMLDivElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
-  const [summaryHeight, setSummaryHeight] = useState<number | null>(null);
+  const [localSummaryHeight, setLocalSummaryHeight] = useState<number | null>(null);
+  const summaryHeight = layoutPreferences ? layoutPreferences.summaryHeight : localSummaryHeight;
+  const setSummaryHeight = (height: number | null) => {
+    if (!layoutPreferences) setLocalSummaryHeight(height);
+    onLayoutPreferenceChange?.({ summaryHeight: height });
+  };
+  const [comparisonHeight, setComparisonHeight] = useState(0);
   const [resizingSummary, setResizingSummary] = useState(false);
   const [revisionMode, setRevisionMode] = useState(false);
   const sharedContext: KnowledgeContext = { kind: "shared", id: `shared:${primary.projectId}`, projectId: primary.projectId };
@@ -339,6 +350,19 @@ export default function ComparisonView({
   const [focused, setFocused] = useState<ComparisonOccurrence | null>(null);
   const [trace, setTrace] = useState<{ start: TraceQueryStart; direction: TraceDirection; pane: Pane } | null>(null);
   const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>({ direction: "both", maxDepth: 8, maxNodes: 120, includeCandidates: false, includeRecovery: false });
+  useLayoutEffect(() => {
+    const root = comparisonRef.current;
+    if (!root) return;
+    const measure = () => setComparisonHeight(root.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
   const analysis = useMemo<CrossContextAnalysis | null>(() => semanticComparisonSupported ? crossContextAnalysis(
     primaryContext,
     secondaryContext,
@@ -390,8 +414,15 @@ export default function ComparisonView({
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     event.preventDefault();
     const current = summaryHeight ?? summaryRef.current?.getBoundingClientRect().height ?? 320;
-    setSummaryHeight(Math.max(180, current + (event.key === "ArrowUp" ? 32 : -32)));
+    const root = comparisonRef.current?.getBoundingClientRect();
+    const summary = summaryRef.current?.getBoundingClientRect();
+    const maximum = root && summary ? Math.max(180, root.bottom - summary.top - 260) : Number.POSITIVE_INFINITY;
+    setSummaryHeight(Math.min(maximum, Math.max(180, current + (event.key === "ArrowUp" ? 32 : -32))));
   };
+
+  const effectiveSummaryHeight = summaryHeight === null || comparisonHeight <= 0
+    ? null
+    : Math.min(summaryHeight, Math.max(180, comparisonHeight - 260));
 
   const canCompareRevisions = Boolean(
     revisionClient && revisionResource &&
@@ -435,7 +466,7 @@ export default function ComparisonView({
         onMaximize={onMaximize}
         onRestore={onRestore}
       /> : <p role="status">Revision comparison is unavailable for this resource.</p> : <>
-       <section ref={summaryRef} className="comparison__summary" aria-label={semanticComparisonSupported ? "Architectural analysis summary" : "Resource comparison"} data-testid={semanticComparisonSupported ? "semantic-comparison-summary" : "resource-comparison-summary"} style={summaryHeight === null ? undefined : { flexBasis: summaryHeight }}>
+        <section ref={summaryRef} className="comparison__summary" aria-label={semanticComparisonSupported ? "Architectural analysis summary" : "Resource comparison"} data-testid={semanticComparisonSupported ? "semantic-comparison-summary" : "resource-comparison-summary"} style={effectiveSummaryHeight === null ? undefined : { flexBasis: effectiveSummaryHeight }}>
          {semanticComparisonSupported && analysis ? <ComparisonSummary comparison={comparison} analysis={analysis} selected={selected} onSelect={inspectIdentity} onFocus={setFocused} onStep={focusNext} onOpenResource={onOpenResource} options={analysisOptions} onOptionsChange={setAnalysisOptions} resourceNames={{ a: primarySession?.resource.name ?? "Viewer A", b: secondary?.name ?? "Viewer B" }} />
            : !secondarySession ? <p>Select a second resource to compare.</p>
              : markdownDiff ? <section className="comparison__markdown-diff" data-testid="comparison-markdown-diff"><h2>Markdown text diff</h2><p>Textual source comparison only; this does not assert an architectural change.</p><SourceDiffView source={markdownDiff} beforeContent={primarySession!.source} afterContent={secondarySession.source} mode="side-by-side" beforeLabel={primarySession!.resource.name} afterLabel={secondarySession.resource.name} /></section>
@@ -467,7 +498,17 @@ export default function ComparisonView({
         </div>
            {secondarySession ? <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}><ComparisonPane pane="b" session={secondarySession} context={secondaryContext} index={secondaryContext.index} maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} onOpenResource={onOpenResource} comparison={comparison} selectedMessageId={selected?.pane === "b" ? selected.messageId : null} counterpartMessageId={selected?.pane === "a" ? selected.messageId : null} onSelectIdentity={(messageId) => { setSelected({ pane: "b", messageId }); setFocused(null); }} focusOccurrence={focused} onFocusOccurrence={setFocused} onTrace={openTrace} /></div> : <div className="comparison__empty">{secondaryId ? `Viewer B resource ${secondaryId} is no longer available.` : "Choose a second diagram to compare."}</div>}
       </div>
-       {trace && index ? <TraceSurface index={(trace.pane === "a" ? primaryContext.index : secondaryContext.index)} start={trace.start} direction={trace.direction} provenance={`Viewer ${trace.pane.toUpperCase()}`} contextProvenance={trace.pane === "a" ? traceProvenance(primaryContext) : traceProvenance(secondaryContext)} onOpenResource={onOpenResource} /> : null}
+        {trace && index ? <TraceSurface
+          index={(trace.pane === "a" ? primaryContext.index : secondaryContext.index)}
+          start={trace.start}
+          direction={trace.direction}
+          provenance={`Viewer ${trace.pane.toUpperCase()}`}
+          contextProvenance={trace.pane === "a" ? traceProvenance(primaryContext) : traceProvenance(secondaryContext)}
+          onOpenResource={onOpenResource}
+          preferredHeight={layoutPreferences?.traceHeight}
+          preferredMode={layoutPreferences?.traceMode}
+          onLayoutPreferenceChange={(patch) => onLayoutPreferenceChange?.({ ...(patch.height === undefined ? {} : { traceHeight: patch.height }), ...(patch.mode === undefined ? {} : { traceMode: patch.mode }) })}
+        /> : null}
       </div>
       </>}
     </div>

@@ -11,7 +11,7 @@ export const DIAGRAM_GUIDES: Record<GuidanceView, Guide> = {
     title: "Sequence",
     read: "Read interactions from top to bottom; each numbered message is one ordered step between participants.",
     notation: ["Participant boxes and actor figures own dashed lifelines.", "Solid or dashed directional arrows show messages; filled, open, cross, and two-headed endings follow the authored Sequence style.", "Activation bars show work in progress. Folded-note bullets open authored notes; frames label loop, alternative, optional, parallel, critical, and break regions."],
-    interaction: ["Select a rendered element to reveal its source.", "Drag the canvas to pan; scroll to zoom. Note bullets expand on activation."],
+    interaction: ["Select a rendered element to reveal its source.", "Hold Alt/Option near a lifeline to identify and temporarily highlight its participant; this does not select it.", "Tab focuses the participant navigator; use Left/Right or Home/End to move between lifelines, then Enter or Space to select. Click a participant name to reveal its source.", "Selecting a message also shows its authored origin and destination when available.", "Drag the canvas to pan; scroll to zoom. Note bullets expand on activation."],
   },
   "event-flow": {
     title: "Event Flow",

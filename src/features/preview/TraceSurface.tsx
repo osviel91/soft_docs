@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { TraceDirection, TraceQueryStart } from "../../domain/project/architecture-trace";
 import type { ProjectIndex } from "../../domain/project/project-index";
 import TraceExplorer from "./TraceExplorer";
 import type { AnalysisProvenance } from "../../domain/workspace/knowledge-context";
+import type { TracePanelMode } from "../../workspace/ui-preferences";
 
 interface Props {
   index: ProjectIndex;
@@ -23,21 +24,57 @@ function startKey(start: TraceQueryStart): string {
   return "messageId" in start ? `message:${start.messageId}` : `occurrence:${start.resourceId}:${start.name}:${start.step ?? ""}`;
 }
 
-export default function TraceSurface({ index, start, direction, provenance, contextProvenance, onOpenResource, embedded = false, onClose }: Props) {
+export default function TraceSurface({ index, start, direction, provenance, contextProvenance, onOpenResource, embedded = false, onClose, preferredHeight, preferredMode, onLayoutPreferenceChange }: Props & {
+  preferredHeight?: number;
+  preferredMode?: TracePanelMode;
+  onLayoutPreferenceChange?: (patch: { height?: number; mode?: TracePanelMode }) => void;
+}) {
   const surfaceRef = useRef<HTMLElement | null>(null);
-  const [mode, setMode] = useState<SurfaceMode>("normal");
-  const [height, setHeight] = useState(420);
+  const [localMode, setLocalMode] = useState<SurfaceMode>("normal");
+  const [localHeight, setLocalHeight] = useState(420);
+  const [parentHeight, setParentHeight] = useState(0);
   const [resizing, setResizing] = useState(false);
   const traceKey = startKey(start);
+  const mode = preferredMode ?? localMode;
+  const desiredHeight = preferredHeight ?? localHeight;
+  const maximumHeight = parentHeight > 0 ? Math.max(MIN_HEIGHT, parentHeight - MIN_VIEWER_HEIGHT) : desiredHeight;
+  const height = Math.min(desiredHeight, maximumHeight);
+  const expandedHeight = parentHeight > 0 ? maximumHeight : undefined;
 
-  useEffect(() => setMode("normal"), [traceKey]);
+  useEffect(() => {
+    if (preferredMode === undefined) setLocalMode("normal");
+  }, [preferredMode, traceKey]);
+
+  useLayoutEffect(() => {
+    if (embedded) return;
+    const parent = surfaceRef.current?.parentElement;
+    if (!parent) return;
+    const measure = () => setParentHeight(parent.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [embedded]);
+
+  const changeMode = (next: SurfaceMode) => {
+    if (preferredMode === undefined) setLocalMode(next);
+    onLayoutPreferenceChange?.({ mode: next });
+  };
+  const changeHeight = (next: number) => {
+    if (preferredHeight === undefined) setLocalHeight(next);
+    onLayoutPreferenceChange?.({ height: next });
+  };
 
   const resize = (clientY: number) => {
     const parent = surfaceRef.current?.parentElement;
     if (!parent) return;
     const bounds = parent.getBoundingClientRect();
     const maximum = Math.max(MIN_HEIGHT, bounds.height - MIN_VIEWER_HEIGHT);
-    setHeight(Math.min(maximum, Math.max(MIN_HEIGHT, bounds.bottom - clientY)));
+    changeHeight(Math.min(maximum, Math.max(MIN_HEIGHT, bounds.bottom - clientY)));
   };
   const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -47,24 +84,22 @@ export default function TraceSurface({ index, start, direction, provenance, cont
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     event.preventDefault();
     const delta = event.key === "ArrowUp" ? 32 : -32;
-    setHeight((current) => {
-      const parent = surfaceRef.current?.parentElement;
-      const maximum = parent ? Math.max(MIN_HEIGHT, parent.getBoundingClientRect().height - MIN_VIEWER_HEIGHT) : current;
-      return Math.min(maximum, Math.max(MIN_HEIGHT, current + delta));
-    });
+    const parent = surfaceRef.current?.parentElement;
+    const maximum = parent ? Math.max(MIN_HEIGHT, parent.getBoundingClientRect().height - MIN_VIEWER_HEIGHT) : desiredHeight;
+    changeHeight(Math.min(maximum, Math.max(MIN_HEIGHT, desiredHeight + delta)));
   };
 
   return (
-    <section ref={surfaceRef} className={`trace-surface trace-surface--${mode}${embedded ? " trace-surface--embedded" : ""}`} style={!embedded && mode === "normal" ? { flexBasis: height } : undefined} aria-label="Architectural Trace analysis surface" data-testid="trace-surface" data-provenance={provenance}>
+    <section ref={surfaceRef} className={`trace-surface trace-surface--${mode}${embedded ? " trace-surface--embedded" : ""}`} style={!embedded && mode !== "minimized" ? { flexBasis: mode === "expanded" ? expandedHeight : height } : undefined} aria-label="Architectural Trace analysis surface" data-testid="trace-surface" data-provenance={provenance}>
       {!embedded && mode !== "minimized" ? <div className="trace-surface__splitter" role="separator" tabIndex={0} aria-label="Resize Architectural Trace" aria-orientation="horizontal" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); resize(event.clientY); }} onPointerMove={(event) => { if (resizing) resize(event.clientY); }} onPointerUp={endResize} onPointerCancel={endResize} onKeyDown={resizeWithKeyboard} /> : null}
       {!embedded ? <div className="trace-surface__toolbar">
         <span><strong>Architectural Trace</strong> · launched from {provenance}</span>
         <div>
-          <button type="button" className="button button--ghost button--small" onClick={() => setMode(mode === "expanded" ? "normal" : "expanded")} aria-label={mode === "expanded" ? "Restore Architectural Trace" : "Maximize Architectural Trace"}>{mode === "expanded" ? "Restore" : "Expand"}</button>
-          <button type="button" className="button button--ghost button--small" onClick={() => setMode(mode === "minimized" ? "normal" : "minimized")} aria-label={mode === "minimized" ? "Restore Architectural Trace" : "Minimize Architectural Trace"}>{mode === "minimized" ? "Restore" : "Minimize"}</button>
+          <button type="button" className="button button--ghost button--small" onClick={() => changeMode(mode === "expanded" ? "normal" : "expanded")} aria-label={mode === "expanded" ? "Restore Architectural Trace" : "Maximize Architectural Trace"}>{mode === "expanded" ? "Restore" : "Expand"}</button>
+          <button type="button" className="button button--ghost button--small" onClick={() => changeMode(mode === "minimized" ? "normal" : "minimized")} aria-label={mode === "minimized" ? "Restore Architectural Trace" : "Minimize Architectural Trace"}>{mode === "minimized" ? "Restore" : "Minimize"}</button>
         </div>
       </div> : null}
-      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} provenance={contextProvenance} onClose={onClose ?? (() => setMode("minimized"))} onOpenResource={onOpenResource} /></div>
+      <div className="trace-surface__content"><TraceExplorer index={index} start={start} direction={direction} provenance={contextProvenance} onClose={onClose ?? (() => changeMode("minimized"))} onOpenResource={onOpenResource} /></div>
     </section>
   );
 }

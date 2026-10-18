@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ProposalReviewPanel } from "../../../src/features/proposals/ProposalReview";
 import type {
   ServerApiClient,
@@ -89,6 +89,7 @@ describe("ProposalReviewPanel", () => {
         content: "title Current",
       }),
     } as unknown as ServerApiClient;
+    const onListCollapsedChange = vi.fn();
 
     render(
       <ProposalReviewPanel
@@ -97,6 +98,8 @@ describe("ProposalReviewPanel", () => {
         initialProposalId={proposal.id}
         onBack={vi.fn()}
         canMerge
+        listCollapsed
+        onListCollapsedChange={onListCollapsedChange}
       />,
     );
 
@@ -111,5 +114,8 @@ describe("ProposalReviewPanel", () => {
       "target.seq",
     );
     expect(screen.queryByText("Old merged change")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Change proposals")).toHaveClass("is-collapsed");
+    fireEvent.click(screen.getByRole("button", { name: "Expand project changes" }));
+    expect(onListCollapsedChange).toHaveBeenCalledWith(false);
   });
 });

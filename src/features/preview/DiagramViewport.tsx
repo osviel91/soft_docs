@@ -20,6 +20,7 @@ import {
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type FocusEvent as ReactFocusEvent,
 } from "react";
 import {
   centeredTransform,
@@ -87,10 +88,30 @@ export interface DiagramViewportProps {
    * toggle must not depend on geometry.
    */
   focusReviewChange?: string | null;
+  /** Enable participant-lifeline inspection for Sequence previews only. */
+  participantAssist?: boolean;
 }
 
 /** Pixels to pan per arrow key press. */
 const KEYBOARD_PAN_STEP = 48;
+const PARTICIPANT_HIT_RADIUS = 12;
+const CONTEXT_HINT_WIDTH = 300;
+const CONTEXT_HINT_HEIGHT = 96;
+
+interface ParticipantHint {
+  participantId: string;
+  label: string;
+  left: number;
+  top: number;
+  source: "alt" | "focus";
+}
+
+interface MessageEndpointsHint {
+  from: string;
+  to: string;
+  left: number;
+  top: number;
+}
 
 /** Read an element's content-box size, with a usable fallback for tests. */
 function measure(element: HTMLElement | null): Size {
@@ -128,7 +149,9 @@ export function noteIndexFromTarget(target: EventTarget | null): number | null {
 export function nodeIdFromTarget(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   const node = target.closest("[data-node-id]");
-  return node?.getAttribute("data-node-id") ?? null;
+  return node?.getAttribute("data-node-id")
+    ?? target.closest("[data-semantic-message-id], [data-semantic-message-name]")?.querySelector("[data-node-id]")?.getAttribute("data-node-id")
+    ?? null;
 }
 
 /** The participant name carried by the closest draggable group, if any. */
@@ -142,6 +165,36 @@ export function participantDragName(target: EventTarget | null): string | null {
 function semanticTarget(target: EventTarget | null): Element | null {
   if (!(target instanceof Element)) return null;
   return target.closest("[data-semantic-message-id], [data-semantic-message-name]");
+}
+
+function participantGroup(target: EventTarget | null): SVGGElement | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest<SVGGElement>("g[data-participant-id]");
+}
+
+function participantNearPoint(content: HTMLElement | null, clientX: number, clientY: number): { group: SVGGElement; line: SVGGraphicsElement } | null {
+  if (!content) return null;
+  let nearest: { group: SVGGElement; line: SVGGraphicsElement; distance: number } | null = null;
+  for (const group of content.querySelectorAll<SVGGElement>("g[data-participant-id]")) {
+    const line = group.querySelector<SVGGraphicsElement>('line[stroke-dasharray]');
+    if (!line) continue;
+    const bounds = line.getBoundingClientRect();
+    if (clientY < bounds.top - PARTICIPANT_HIT_RADIUS || clientY > bounds.bottom + PARTICIPANT_HIT_RADIUS) continue;
+    const distance = Math.abs(clientX - (bounds.left + bounds.right) / 2);
+    if (distance <= PARTICIPANT_HIT_RADIUS && (!nearest || distance < nearest.distance)) nearest = { group, line, distance };
+  }
+  return nearest;
+}
+
+function contextHintPosition(container: HTMLElement | null, clientX: number, clientY: number): { left: number; top: number } {
+  const bounds = container?.getBoundingClientRect();
+  if (!bounds) return { left: 8, top: 8 };
+  const maxLeft = Math.max(8, bounds.width - CONTEXT_HINT_WIDTH - 8);
+  const maxTop = Math.max(8, bounds.height - CONTEXT_HINT_HEIGHT - 8);
+  return {
+    left: Math.min(maxLeft, Math.max(8, clientX - bounds.left + 14)),
+    top: Math.min(maxTop, Math.max(8, clientY - bounds.top + 14)),
+  };
 }
 
 export default function DiagramViewport({
@@ -164,12 +217,16 @@ export default function DiagramViewport({
   onTransformChange,
   activeReviewChange = null,
   focusReviewChange = null,
+  participantAssist = false,
 }: DiagramViewportProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   // The element holding the injected SVG, so the active-node highlight can be a
   // class toggle rather than a re-render.
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const [participantHint, setParticipantHint] = useState<ParticipantHint | null>(null);
+  const [focusedParticipantId, setFocusedParticipantId] = useState<string | null>(null);
+  const [messageEndpointsHint, setMessageEndpointsHint] = useState<MessageEndpointsHint | null>(null);
   const [paneSize, setPaneSize] = useState<Size>(() => measure(null));
   const [transform, setTransform] =
     useState<ViewportTransform>(IDENTITY_TRANSFORM);
@@ -283,6 +340,77 @@ export default function DiagramViewport({
     return () => pane.removeEventListener("wheel", onWheel);
   }, [updateTransform]);
 
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !participantAssist) return;
+    const groups = [...content.querySelectorAll<SVGGElement>("g[data-participant-id]")].sort((left, right) => {
+      const x = (group: SVGGElement) => Number(group.querySelector<SVGLineElement>('line[stroke-dasharray]')?.getAttribute("x1") ?? 0);
+      return x(left) - x(right);
+    });
+    const activeId = groups.some((group) => group.getAttribute("data-participant-id") === focusedParticipantId)
+      ? focusedParticipantId
+      : groups[0]?.getAttribute("data-participant-id") ?? null;
+    if (focusedParticipantId && activeId !== focusedParticipantId) setFocusedParticipantId(activeId);
+    for (const group of groups) {
+      const nodeId = group.getAttribute("data-node-id") ?? group.querySelector("[data-node-id]")?.getAttribute("data-node-id");
+      if (!nodeId) continue;
+      group.setAttribute("data-node-id", nodeId);
+      group.setAttribute("tabindex", group.getAttribute("data-participant-id") === activeId ? "0" : "-1");
+      group.setAttribute("role", "button");
+      group.setAttribute("aria-label", `Participant ${group.getAttribute("data-participant-label") ?? group.getAttribute("data-participant-id") ?? ""}`);
+      group.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight Home End Enter Space");
+    }
+  }, [focusedParticipantId, participantAssist, svg]);
+
+  useEffect(() => {
+    setParticipantHint(null);
+    setFocusedParticipantId(null);
+  }, [participantAssist, svg]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    for (const group of content.querySelectorAll(".participant--inspection")) group.classList.remove("participant--inspection");
+    if (!participantAssist || !participantHint) return;
+    for (const group of content.querySelectorAll<SVGGElement>("g[data-participant-id]")) {
+      if (group.getAttribute("data-participant-id") === participantHint.participantId) group.classList.add("participant--inspection");
+    }
+  }, [participantAssist, participantHint, svg]);
+
+  useEffect(() => {
+    if (!participantAssist) return;
+    const releaseModifier = (event: KeyboardEvent) => {
+      if (event.key === "Alt") setParticipantHint((current) => current?.source === "alt" ? null : current);
+    };
+    const clearOnBlur = () => setParticipantHint((current) => current?.source === "alt" ? null : current);
+    window.addEventListener("keyup", releaseModifier);
+    window.addEventListener("blur", clearOnBlur);
+    return () => {
+      window.removeEventListener("keyup", releaseModifier);
+      window.removeEventListener("blur", clearOnBlur);
+    };
+  }, [participantAssist]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !participantAssist || !activeNodeId) {
+      setMessageEndpointsHint(null);
+      return;
+    }
+    const node = content.querySelector(`[data-node-id="${CSS.escape(activeNodeId)}"]`);
+    const message = node?.closest<SVGGElement>("[data-sequence-message]");
+    const from = message?.getAttribute("data-message-from");
+    const to = message?.getAttribute("data-message-to");
+    if (!message || !from || !to) {
+      setMessageEndpointsHint(null);
+      return;
+    }
+    const labelFor = (participantId: string) => content.querySelector(`[data-participant-id="${CSS.escape(participantId)}"]`)?.getAttribute("data-participant-label") ?? participantId;
+    const bounds = message.getBoundingClientRect();
+    const position = contextHintPosition(viewportRef.current, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    setMessageEndpointsHint({ from: labelFor(from), to: labelFor(to), ...position });
+  }, [activeNodeId, participantAssist, svg]);
+
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return; // left button / touch / pen only
     movedSincePointerDown.current = false;
@@ -302,6 +430,20 @@ export default function DiagramViewport({
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (participantAssist) {
+      if (event.altKey && event.buttons === 0 && !dragRef.current) {
+        const match = participantNearPoint(contentRef.current, event.clientX, event.clientY);
+        if (match) {
+          const participantId = match.group.getAttribute("data-participant-id") ?? "";
+          const position = contextHintPosition(viewportRef.current, event.clientX, event.clientY);
+          setParticipantHint({ participantId, label: match.group.getAttribute("data-participant-label") ?? participantId, source: "alt", ...position });
+        } else {
+          setParticipantHint((current) => current?.source === "alt" ? null : current);
+        }
+      } else if (!event.altKey) {
+        setParticipantHint((current) => current?.source === "alt" ? null : current);
+      }
+    }
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.x;
@@ -469,6 +611,25 @@ export default function DiagramViewport({
   }, [focusReviewChange, svg, updateTransform]);
 
   const onContentKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const participant = participantAssist ? participantGroup(event.target) : null;
+    if (participant && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      const groups = [...(contentRef.current?.querySelectorAll<SVGGElement>("g[data-participant-id]") ?? [])].sort((left, right) => {
+        const x = (group: SVGGElement) => Number(group.querySelector<SVGLineElement>('line[stroke-dasharray]')?.getAttribute("x1") ?? 0);
+        return x(left) - x(right);
+      });
+      const index = groups.indexOf(participant);
+      const nextIndex = event.key === "ArrowLeft" ? Math.max(0, index - 1)
+        : event.key === "ArrowRight" ? Math.min(groups.length - 1, index + 1)
+          : event.key === "Home" ? 0
+            : event.key === "End" ? groups.length - 1
+              : -1;
+      if (nextIndex >= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (nextIndex !== index) groups[nextIndex]?.focus();
+        return;
+      }
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     const semantic = semanticTarget(event.target);
     if (semantic) {
@@ -503,6 +664,24 @@ export default function DiagramViewport({
     // browser default rather than relying on the pane's arrow-key handler.
     event.preventDefault();
     onNoteToggle(index);
+  };
+
+  const onContentFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (!participantAssist) return;
+    const group = participantGroup(event.target);
+    if (!group) return;
+    const participantId = group.getAttribute("data-participant-id") ?? "";
+    setFocusedParticipantId(participantId);
+    const label = group.getAttribute("data-participant-label") ?? participantId;
+    const line = group.querySelector<SVGGraphicsElement>('line[stroke-dasharray]');
+    const bounds = (line ?? group).getBoundingClientRect();
+    const position = contextHintPosition(viewportRef.current, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    setParticipantHint({ participantId, label, source: "focus", ...position });
+  };
+
+  const onContentBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget) && participantGroup(event.relatedTarget)) return;
+    setParticipantHint((current) => current?.source === "focus" ? null : current);
   };
 
   /**
@@ -583,6 +762,7 @@ export default function DiagramViewport({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onPointerLeave={() => setParticipantHint((current) => current?.source === "alt" ? null : current)}
         onClick={(event) => {
           if (event.target === event.currentTarget && !movedSincePointerDown.current) onNodeSelect?.(null);
         }}
@@ -600,9 +780,14 @@ export default function DiagramViewport({
           dangerouslySetInnerHTML={{ __html: svg }}
           onClick={onContentClick}
           onKeyDown={onContentKeyDown}
+          onFocus={onContentFocus}
+          onBlur={onContentBlur}
           onDragStart={onContentDragStart}
         />
       </div>
+
+      {participantHint ? <div className="viewport__context-hint" data-testid="participant-context-hint" role="status" aria-live="polite" style={{ left: participantHint.left, top: participantHint.top }}>Participant · {participantHint.label}</div> : null}
+      {!participantHint && messageEndpointsHint ? <div className="viewport__context-hint" data-testid="message-endpoints-hint" role="status" aria-live="polite" style={{ left: messageEndpointsHint.left, top: messageEndpointsHint.top }}>From {messageEndpointsHint.from} → To {messageEndpointsHint.to}</div> : null}
 
       <div className="viewport__rail" role="group" aria-label="Zoom controls">
         <button

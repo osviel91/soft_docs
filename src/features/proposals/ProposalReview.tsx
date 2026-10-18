@@ -45,6 +45,8 @@ export function ProposalReviewPanel({
   initialProposalId,
   onBack,
   readOnly = false,
+  listCollapsed: preferredListCollapsed,
+  onListCollapsedChange,
 }: {
   client: ServerApiClient;
   projectId: string;
@@ -55,6 +57,8 @@ export function ProposalReviewPanel({
   privateContextId?: string | null;
   readOnly?: boolean;
   onMerged?: () => void;
+  listCollapsed?: boolean;
+  onListCollapsedChange?: (collapsed: boolean) => void;
 }) {
   const [proposals, setProposals] = useState<ServerChangeProposal[]>([]);
   const [selected, setSelected] = useState<ServerChangeProposal | null>(null);
@@ -66,7 +70,12 @@ export function ProposalReviewPanel({
   const [proposalState, setProposalState] = useState<
     "loading" | "loaded" | "failed"
   >("loading");
-  const [listCollapsed, setListCollapsed] = useState(false);
+  const [localListCollapsed, setLocalListCollapsed] = useState(false);
+  const listCollapsed = preferredListCollapsed ?? localListCollapsed;
+  const setListCollapsed = (collapsed: boolean) => {
+    if (preferredListCollapsed === undefined) setLocalListCollapsed(collapsed);
+    onListCollapsedChange?.(collapsed);
+  };
 
   useEffect(() => {
     let active = true;
@@ -151,7 +160,7 @@ export function ProposalReviewPanel({
               ? "Expand project changes"
               : "Collapse project changes"
           }
-          onClick={() => setListCollapsed((value) => !value)}
+          onClick={() => setListCollapsed(!listCollapsed)}
         >
           {listCollapsed ? "›" : "‹"}
         </button>

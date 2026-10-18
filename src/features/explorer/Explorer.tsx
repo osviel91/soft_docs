@@ -19,7 +19,6 @@
  * reported so the shell can place it.
  */
 import {
-  useEffect,
   useState,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -33,6 +32,7 @@ import { diagramDisplayName } from "../../language/diagram-title";
 import { noteDisplayName } from "../../language/markdown/note-title";
 import { resourceTypeOfName } from "../../domain/workspace/resource-id";
 import { proposalLifecycle } from "../proposals/proposal-lifecycle";
+import type { ExplorerSection } from "../../workspace/ui-preferences";
 
 const resourceLabels = {
   "sequence-diagram": "Sequence diagram",
@@ -165,6 +165,10 @@ export interface ExplorerProps {
   serverMode?: boolean;
   /** Active server context; null/undefined means SHARED. */
   activeContextId?: string | null;
+  sectionPreferences?: Partial<Record<ExplorerSection, boolean>>;
+  onSectionPreferenceChange?: (section: ExplorerSection, expanded: boolean) => void;
+  localProjectsExpanded?: boolean;
+  onLocalProjectsExpandedChange?: (expanded: boolean) => void;
 }
 
 /** Navigation nodes are organizational only; containment is not architecture. */
@@ -272,19 +276,22 @@ function ServerWorkspaceExplorer({
   activeContextId = null,
   folderName = null,
   isLoading,
+  sectionPreferences,
+  onSectionPreferenceChange,
 }: ExplorerProps) {
   const [search, setSearch] = useState("");
-  const [sharedExpanded, setSharedExpanded] = useState(true);
-  const [myWorkExpanded, setMyWorkExpanded] = useState(false);
-  const [archivedWorkExpanded, setArchivedWorkExpanded] = useState(false);
-  const [archivedProposalsExpanded, setArchivedProposalsExpanded] = useState(false);
-  const [proposalsExpanded, setProposalsExpanded] = useState(false);
-  const [localExpanded, setLocalExpanded] = useState(false);
-  const [sectionChoicesTouched, setSectionChoicesTouched] = useState({ shared: false, myWork: false, proposals: false });
-  useEffect(() => {
-    if (!sectionChoicesTouched.myWork && privateWorkContexts.length > 0) setMyWorkExpanded(true);
-    if (!sectionChoicesTouched.proposals && architecturalProposals.length > 0) setProposalsExpanded(true);
-  }, [architecturalProposals.length, privateWorkContexts.length, sectionChoicesTouched.myWork, sectionChoicesTouched.proposals]);
+  const [localSectionPreferences, setLocalSectionPreferences] = useState<Partial<Record<ExplorerSection, boolean>>>({});
+  const sections = sectionPreferences ?? localSectionPreferences;
+  const setSection = (section: ExplorerSection, expanded: boolean) => {
+    if (!sectionPreferences) setLocalSectionPreferences((current) => ({ ...current, [section]: expanded }));
+    onSectionPreferenceChange?.(section, expanded);
+  };
+  const sharedExpanded = sections.shared ?? true;
+  const myWorkExpanded = sections.myWork ?? privateWorkContexts.length > 0;
+  const archivedWorkExpanded = sections.archivedWork ?? false;
+  const archivedProposalsExpanded = sections.archivedProposals ?? false;
+  const proposalsExpanded = sections.proposals ?? architecturalProposals.length > 0;
+  const localExpanded = sections.local ?? false;
   const resourceQuery = search.trim().toLowerCase();
   const visibleDiagrams = diagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery));
   const visibleNotes = notes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery));
@@ -324,31 +331,31 @@ function ServerWorkspaceExplorer({
       </div>
       <div className="explorer__provenance-tree" data-testid="explorer-provenance-tree">
          <section className="explorer__provenance-section" data-testid="explorer-shared-section">
-          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-shared-toggle" aria-expanded={sharedExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, shared: true })); setSharedExpanded((expanded) => !expanded); }}>SHARED <span className="explorer__section-meta">authoritative</span><span aria-hidden="true">{sharedExpanded ? "▾" : "▸"}</span></button></h2>
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-shared-toggle" aria-expanded={sharedExpanded} onClick={() => setSection("shared", !sharedExpanded)}>SHARED <span className="explorer__section-meta">authoritative</span><span aria-hidden="true">{sharedExpanded ? "▾" : "▸"}</span></button></h2>
           {sharedExpanded ? <ServerResourceTree diagrams={sharedDiagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery))} notes={sharedNotes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery))} selectedDiagramId={activeContextId === null ? selectedDiagramId : null} selectedNoteId={activeContextId === null ? selectedNoteId : null} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadSharedDiagram ?? onLoadDiagram} onLoadNote={onLoadSharedNote ?? onLoadNote} onDiagramMenu={activeContextId === null ? onDiagramMenu : undefined} onNoteMenu={activeContextId === null ? onNoteMenu : undefined} /> : null}
         </section>
            <section className="explorer__provenance-section" data-testid="explorer-my-work-section">
-            <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, myWork: true })); setMyWorkExpanded((expanded) => !expanded); }}>MY WORK <span className="explorer__section-meta">private · editable</span><span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{activeContextId !== null && activeProject && onAddMenu ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={(event) => onAddMenu(activeProject, positionBelow(event.currentTarget))}>+</button> : onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create MY WORK draft" title="Create MY WORK draft" onClick={() => onCreateMyWork()}>+</button> : null}{activeContextId !== null && onMyWorkMenu ? <button type="button" className="explorer__section-add explorer__section-add--menu" data-testid="explorer-my-work-actions" aria-label="MY WORK actions" title="MY WORK actions" onClick={(event) => { const work = privateWorkContexts.find((entry) => entry.id === activeContextId); if (work) onMyWorkMenu(work, positionBelow(event.currentTarget)); }}>⋯</button> : null}</h2>
+            <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => setSection("myWork", !myWorkExpanded)}>MY WORK <span className="explorer__section-meta">private · editable</span><span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{activeContextId !== null && activeProject && onAddMenu ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={(event) => onAddMenu(activeProject, positionBelow(event.currentTarget))}>+</button> : onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create MY WORK draft" title="Create MY WORK draft" onClick={() => onCreateMyWork()}>+</button> : null}{activeContextId !== null && onMyWorkMenu ? <button type="button" className="explorer__section-add explorer__section-add--menu" data-testid="explorer-my-work-actions" aria-label="MY WORK actions" title="MY WORK actions" onClick={(event) => { const work = privateWorkContexts.find((entry) => entry.id === activeContextId); if (work) onMyWorkMenu(work, positionBelow(event.currentTarget)); }}>⋯</button> : null}</h2>
               {myWorkExpanded ? <>
                 <ul className="explorer__context-list">{activeWorkContexts.length > 0 ? activeWorkContexts.map(renderWorkContext) : archivedWorkContexts.length === 0 && activeContextId === null ? <li className="explorer__diagram-empty">No private work yet. Create a draft to propose changes without modifying SHARED.</li> : null}</ul>
                 {archivedWorkContexts.length > 0 ? <>
-                  <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-work-toggle" aria-expanded={archivedWorkExpanded || activeWorkIsArchived} onClick={() => setArchivedWorkExpanded((expanded) => !expanded)}>Archived · {archivedWorkContexts.length} <span aria-hidden="true">{archivedWorkExpanded || activeWorkIsArchived ? "▾" : "▸"}</span></button>
+                   <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-work-toggle" aria-expanded={archivedWorkExpanded || activeWorkIsArchived} onClick={() => setSection("archivedWork", !archivedWorkExpanded)}>Archived · {archivedWorkContexts.length} <span aria-hidden="true">{archivedWorkExpanded || activeWorkIsArchived ? "▾" : "▸"}</span></button>
                   {archivedWorkExpanded || activeWorkIsArchived ? <ul className="explorer__context-list" data-testid="explorer-archived-work-list">{archivedWorkContexts.map(renderWorkContext)}</ul> : null}
                 </> : null}
               </> : null}
         </section>
         <section className="explorer__provenance-section">
-            <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => { setSectionChoicesTouched((choices) => ({ ...choices, proposals: true })); setProposalsExpanded((expanded) => !expanded); }}>PROPOSALS <span className="explorer__section-meta">team review · non-authoritative</span><span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button></h2>
+            <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-proposals-toggle" aria-expanded={proposalsExpanded} onClick={() => setSection("proposals", !proposalsExpanded)}>PROPOSALS <span className="explorer__section-meta">team review · non-authoritative</span><span aria-hidden="true">{proposalsExpanded ? "▾" : "▸"}</span></button></h2>
                 {proposalsExpanded ? <>
                   <ul className="explorer__context-list">{activeProposals.map(({ proposal, lifecycle }) => renderProposal(proposal, lifecycle))}{architecturalProposals.length === 0 ? <li className="explorer__diagram-empty">No proposals yet. Submit work from MY WORK for review.</li> : null}</ul>
                   {archivedProposals.length > 0 ? <>
-                    <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-proposals-toggle" aria-expanded={archivedProposalsExpanded || selectedProposalIsArchived} onClick={() => setArchivedProposalsExpanded((expanded) => !expanded)}>Archived · {archivedProposals.length} <span aria-hidden="true">{archivedProposalsExpanded || selectedProposalIsArchived ? "▾" : "▸"}</span></button>
+                    <button type="button" className="explorer__archived-toggle" data-testid="explorer-archived-proposals-toggle" aria-expanded={archivedProposalsExpanded || selectedProposalIsArchived} onClick={() => setSection("archivedProposals", !archivedProposalsExpanded)}>Archived · {archivedProposals.length} <span aria-hidden="true">{archivedProposalsExpanded || selectedProposalIsArchived ? "▾" : "▸"}</span></button>
                     {archivedProposalsExpanded || selectedProposalIsArchived ? <ul className="explorer__context-list" data-testid="explorer-archived-proposals-list">{archivedProposals.map(({ proposal, lifecycle }) => renderProposal(proposal, lifecycle))}</ul> : null}
                   </> : null}
                 </> : null}
         </section>
         {folderName ? <section className="explorer__provenance-section">
-          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-local-toggle" aria-expanded={localExpanded} onClick={() => setLocalExpanded((expanded) => !expanded)}>LOCAL <span aria-hidden="true">{localExpanded ? "▾" : "▸"}</span></button></h2>
+          <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-local-toggle" aria-expanded={localExpanded} onClick={() => setSection("local", !localExpanded)}>LOCAL <span aria-hidden="true">{localExpanded ? "▾" : "▸"}</span></button></h2>
           {localExpanded ? <p className="explorer__local-binding">{folderName}</p> : null}
         </section> : null}
       </div>
@@ -381,12 +388,19 @@ function LocalWorkspaceExplorer({
   workspaceLabel,
   folderSupported = false,
   switcher,
+  localProjectsExpanded,
+  onLocalProjectsExpandedChange,
 }: ExplorerProps) {
   const [pendingName, setPendingName] = useState<string>("");
   // The search filters files by name across all projects. It is local UI state:
   // clearing it restores the normal selected-project view.
   const [search, setSearch] = useState<string>("");
-  const [contentExpanded, setContentExpanded] = useState(true);
+  const [localContentExpanded, setLocalContentExpanded] = useState(true);
+  const contentExpanded = localProjectsExpanded ?? localContentExpanded;
+  const setContentExpanded = (expanded: boolean) => {
+    if (localProjectsExpanded === undefined) setLocalContentExpanded(expanded);
+    onLocalProjectsExpandedChange?.(expanded);
+  };
   const [createExpanded, setCreateExpanded] = useState(false);
 
   const create = (): void => {
@@ -497,7 +511,7 @@ function LocalWorkspaceExplorer({
           className="explorer__section-toggle"
           data-testid="explorer-content-toggle"
           aria-expanded={contentExpanded}
-          onClick={() => setContentExpanded((expanded) => !expanded)}
+          onClick={() => setContentExpanded(!contentExpanded)}
         >
           Projects <span aria-hidden="true">{contentExpanded ? "▾" : "▸"}</span>
         </button>

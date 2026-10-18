@@ -1336,7 +1336,7 @@ body {
   .comparison__pane { min-height: 420px; flex-basis: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .comparison__toolbar { align-items: stretch; flex-wrap: wrap; }
   .comparison__toolbar strong { flex-basis: 100%; }
-  .trace-surface--normal { flex-basis: min(62vh, 520px) !important; }
+  .trace-surface--normal { flex-basis: min(62vh, 520px); }
   .trace-surface--expanded { flex-basis: 70vh; }
 }
 
@@ -2805,6 +2805,10 @@ body {
 .viewport__content svg {
   display: block;
 }
+
+.viewport__content .participant--inspection line[stroke-dasharray] { stroke: var(--accent); stroke-width: 2.5; }
+.viewport__content g.participant:focus-visible { filter: drop-shadow(0 0 3px var(--accent)); outline: none; }
+.viewport__context-hint { position: absolute; z-index: 14; max-width: min(300px, calc(100% - 16px)); max-height: min(96px, calc(100% - 16px)); overflow: hidden; padding: 8px 10px; color: var(--text); background: var(--bg-elevated); border: 1px solid var(--accent); border-radius: var(--radius-sm); box-shadow: var(--shadow-pop); font-size: 12px; line-height: 1.35; pointer-events: none; }
 
 /* Floating zoom rail. */
 .viewport__rail {

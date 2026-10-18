@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import App from "./app-harness";
 import ComparisonView, { RevisionDiffSummary, type ComparisonOption, type RevisionComparisonResource } from "../src/features/preview/ComparisonView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
@@ -7,6 +7,12 @@ import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/typ
 import type { ResourceDiff } from "../src/domain/diff/resource-diff";
 import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../src/workspace/server/api-client";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
+import { UI_PREFERENCES_KEY } from "../src/workspace/ui-preferences";
+
+afterEach(() => {
+  cleanup();
+  localStorage.removeItem(UI_PREFERENCES_KEY);
+});
 
 const FLOW = [
   "event OrderCreated",

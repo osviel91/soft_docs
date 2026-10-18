@@ -386,9 +386,10 @@ function renderMessage(
   number: number,
   palette: RenderPalette,
 ): string {
+  const endpoints = ` data-message-from="${escapeXml(msg.from)}" data-message-to="${escapeXml(msg.to)}"`;
   // A self-message is a loop, not a horizontal arrow.
   if (msg.selfLoop)
-    return `<g class="sequence-message" data-sequence-message="${number}"${msg.semantics?.messageRef ? ` data-semantic-message-id="${escapeXml(msg.semantics.messageRef)}"` : msg.semantics ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"` : ""}>${renderSelfMessage(msg, number, palette)}</g>`;
+    return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${msg.semantics?.messageRef ? ` data-semantic-message-id="${escapeXml(msg.semantics.messageRef)}"` : msg.semantics ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"` : ""}>${renderSelfMessage(msg, number, palette)}</g>`;
 
   const dashed = msg.lineStyle === "dashed" ? ' stroke-dasharray="5 4"' : "";
   // `dashed` must sit inside the tag, before the self-closing slash: emitting it
@@ -427,7 +428,7 @@ function renderMessage(
     : msg.semantics
       ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"`
       : "";
-  return `<g class="sequence-message" data-sequence-message="${number}"${semanticId}>${line}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}</g>`;
+  return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${semanticId}>${line}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}</g>`;
 }
 
 /** Size of the dog-ear fold on a note's top-right corner, in pixels. */

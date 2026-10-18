@@ -23,6 +23,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -100,6 +101,15 @@ import {
   createInMemoryHiddenPathStore,
   createLocalStorageHiddenPathStore,
 } from "./workspace/hidden-paths";
+import {
+  defaultUiPreferences,
+  effectiveShellLayout,
+  readUiPreferences,
+  resetUiPreferences,
+  writeUiPreferences,
+  type ExplorerSection,
+  type UiPreferences,
+} from "./workspace/ui-preferences";
 import { useTabs } from "./features/tabs/use-tabs";
 import {
   closeTab as closeTabInSet,
@@ -546,13 +556,85 @@ export default function App() {
   const [historyResourceScoped, setHistoryResourceScoped] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(true);
   const workspaceRef = useRef<HTMLElement | null>(null);
-  const [explorerWidth, setExplorerWidth] = useState(252);
-  const [editorWidth, setEditorWidth] = useState<number | null>(null);
-  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const [uiPreferences, setUiPreferences] = useState(readUiPreferences);
+  const uiPreferencesRef = useRef(uiPreferences);
+  uiPreferencesRef.current = uiPreferences;
+  const preferenceWriteTimer = useRef<number | null>(null);
+  const [workspaceSize, setWorkspaceSize] = useState({ width: 0, height: 0 });
+  const updateUiPreferences = useCallback((update: (current: UiPreferences) => UiPreferences) => {
+    const next = update(uiPreferencesRef.current);
+    uiPreferencesRef.current = next;
+    setUiPreferences(next);
+    if (preferenceWriteTimer.current !== null) window.clearTimeout(preferenceWriteTimer.current);
+    preferenceWriteTimer.current = window.setTimeout(() => {
+      writeUiPreferences(next);
+      preferenceWriteTimer.current = null;
+    }, 180);
+  }, []);
+  const resetPanelLayout = useCallback(() => {
+    if (preferenceWriteTimer.current !== null) window.clearTimeout(preferenceWriteTimer.current);
+    preferenceWriteTimer.current = null;
+    resetUiPreferences();
+    const defaults = defaultUiPreferences();
+    uiPreferencesRef.current = defaults;
+    setUiPreferences(defaults);
+  }, []);
+  useEffect(() => () => {
+    if (preferenceWriteTimer.current !== null) {
+      window.clearTimeout(preferenceWriteTimer.current);
+      writeUiPreferences(uiPreferencesRef.current);
+    }
+  }, []);
+  useLayoutEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const measure = () => setWorkspaceSize({ width: workspace.clientWidth, height: workspace.clientHeight });
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, [page]);
+  const setExplorerWidth = useCallback((width: number) => updateUiPreferences((current) => ({
+    ...current, shell: { ...current.shell, explorerWidth: width },
+  })), [updateUiPreferences]);
+  const setEditorWidth = useCallback((width: number | null) => updateUiPreferences((current) => ({
+    ...current, shell: { ...current.shell, editorWidth: width },
+  })), [updateUiPreferences]);
+  const setExplorerCollapsed = useCallback((collapsed: boolean) => updateUiPreferences((current) => ({
+    ...current, shell: { ...current.shell, explorerCollapsed: collapsed },
+  })), [updateUiPreferences]);
+  const setComparisonEditorHidden = useCallback((hidden: boolean) => updateUiPreferences((current) => ({
+    ...current, screens: { ...current.screens, comparison: { ...current.screens.comparison, editorHidden: hidden } },
+  })), [updateUiPreferences]);
+  const updateAnalysisPreferences = useCallback((patch: Partial<UiPreferences["screens"]["workspace"]["analysis"]>) => updateUiPreferences((current) => ({
+    ...current,
+    screens: { ...current.screens, workspace: { ...current.screens.workspace, analysis: { ...current.screens.workspace.analysis, ...patch } } },
+  })), [updateUiPreferences]);
+  const updateExplorerSectionPreference = useCallback((section: ExplorerSection, expanded: boolean) => updateUiPreferences((current) => ({
+    ...current,
+    screens: { ...current.screens, workspace: { ...current.screens.workspace, explorerSections: { ...current.screens.workspace.explorerSections, [section]: expanded } } },
+  })), [updateUiPreferences]);
+  const setLocalProjectsExpanded = useCallback((expanded: boolean) => updateUiPreferences((current) => ({
+    ...current, screens: { ...current.screens, workspace: { ...current.screens.workspace, localProjectsExpanded: expanded } },
+  })), [updateUiPreferences]);
+  const updateComparisonPreferences = useCallback((patch: Partial<UiPreferences["screens"]["comparison"]>) => updateUiPreferences((current) => ({
+    ...current, screens: { ...current.screens, comparison: { ...current.screens.comparison, ...patch } },
+  })), [updateUiPreferences]);
+  const setProposalListCollapsed = useCallback((listCollapsed: boolean) => updateUiPreferences((current) => ({
+    ...current, screens: { ...current.screens, proposalReview: { ...current.screens.proposalReview, listCollapsed } },
+  })), [updateUiPreferences]);
+  const shellLayout = effectiveShellLayout(uiPreferences, workspaceSize.width);
+  const explorerWidth = shellLayout.explorerWidth;
+  const editorWidth = shellLayout.editorWidth;
+  const explorerCollapsed = shellLayout.explorerCollapsed;
+  const comparisonEditorHidden = uiPreferences.screens.comparison.editorHidden;
   const [previewMaximized, setPreviewMaximized] = useState(false);
   const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const [comparisonEditorHidden, setComparisonEditorHidden] = useState(true);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
@@ -704,7 +786,7 @@ export default function App() {
         );
         return;
       }
-      const explorerSpace = explorerCollapsed
+      const explorerSpace = shellLayout.explorerCollapsed
         ? 30
         : explorerWidth + splitterWidth;
       const maximum = Math.max(
@@ -715,7 +797,7 @@ export default function App() {
         Math.min(maximum, Math.max(280, clientX - bounds.left - explorerSpace)),
       );
     },
-    [explorerCollapsed, explorerWidth],
+    [explorerWidth, shellLayout.explorerCollapsed],
   );
 
   const startResize = useCallback(
@@ -756,12 +838,12 @@ export default function App() {
         resizePane(pane, bounds.left + explorerWidth + delta);
         return;
       }
-      const explorerSpace = explorerCollapsed ? 30 : explorerWidth + 8;
+      const explorerSpace = shellLayout.explorerCollapsed ? 30 : explorerWidth + 8;
       const currentWidth =
         editorWidth ?? Math.max(280, (bounds.width - explorerSpace - 8) * 0.42);
       resizePane(pane, bounds.left + explorerSpace + currentWidth + delta);
     },
-    [editorWidth, explorerCollapsed, explorerWidth, resizePane],
+    [editorWidth, explorerWidth, resizePane, shellLayout.explorerCollapsed],
   );
 
   useEffect(() => {
@@ -3581,14 +3663,15 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${previewMaximized || comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${previewMaximized || comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
           >
             {explorerCollapsed ? (
               <button
                 type="button"
                 className="app__explorer-restore"
-                aria-label="Expand project explorer"
-                title="Expand project explorer"
+                aria-label={shellLayout.explorerResponsiveCollapsed && !uiPreferences.shell.explorerCollapsed ? "Project explorer collapsed for narrow window" : "Expand project explorer"}
+                title={shellLayout.explorerResponsiveCollapsed && !uiPreferences.shell.explorerCollapsed ? "Widen the window to restore the project explorer" : "Expand project explorer"}
+                disabled={shellLayout.explorerResponsiveCollapsed}
                 onClick={() => setExplorerCollapsed(false)}
               >
                 ›
@@ -3695,7 +3778,11 @@ export default function App() {
                         ? `Local folder: ${openedFolder.folderName}`
                         : undefined
                   }
-                  folderSupported={supportsFileSystemAccess()}
+                    folderSupported={supportsFileSystemAccess()}
+                    sectionPreferences={uiPreferences.screens.workspace.explorerSections}
+                    onSectionPreferenceChange={updateExplorerSectionPreference}
+                    localProjectsExpanded={uiPreferences.screens.workspace.localProjectsExpanded}
+                    onLocalProjectsExpandedChange={setLocalProjectsExpanded}
                 />
                 <button
                   type="button"
@@ -3756,12 +3843,14 @@ export default function App() {
                         : undefined
                   }
                   initialProposalId={reviewProposalId}
-                   onBack={() => {
-                     setProposalReviewOpen(false);
-                     setReviewProposalId(null);
-                     setReviewReadOnly(false);
-                   }}
-                   canMerge={metadataWritable}
+                  onBack={() => {
+                    setProposalReviewOpen(false);
+                    setReviewProposalId(null);
+                    setReviewReadOnly(false);
+                  }}
+                  listCollapsed={uiPreferences.screens.proposalReview.listCollapsed}
+                  onListCollapsedChange={setProposalListCollapsed}
+                  canMerge={metadataWritable}
                    privateContextId={server.active?.contextId}
                    readOnly={reviewReadOnly}
                    onMerged={() => {
@@ -4044,7 +4133,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {comparisonEditorHidden ? <button type="button" className="editor-restore-button" onClick={() => setComparisonEditorHidden(false)} aria-label={architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
+                   {comparisonEditorHidden || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {revisionProposalId && server.active?.contextId ? (
                     revisionComparisonResource ? <ProposalResourceComparison resource={revisionComparisonResource} mode={revisionComparisonMode} onModeChange={setRevisionComparisonMode} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" inspectorLabel="REVISION COMPARISON" headingLabel="EDITING" /> : <section className="proposal-inspector" aria-label="Revision comparison"><p className="governance-eyebrow">REVISION COMPARISON</p><p>Select a proposal artifact tab to compare MY WORK with the submitted version.</p></section>
                   ) : architecturalProposalId && view === "changes" && proposalInspector.proposalId === architecturalProposalId ? (
@@ -4083,6 +4172,8 @@ export default function App() {
                       primaryOptionId={comparisonOptions.length ? comparisonPrimaryOptionId : undefined}
                       revisionClient={historicalComparisonResource ? apiClient : undefined}
                       revisionResource={historicalComparisonResource}
+                      layoutPreferences={uiPreferences.screens.comparison}
+                      onLayoutPreferenceChange={updateComparisonPreferences}
                     />
                   ) : noteMode ? (
                     <MarkdownView
@@ -4127,6 +4218,10 @@ export default function App() {
                     />
                   )}
                   {((!comparisonOpen && hasActiveSemanticOccurrence) || (traceStart && index && (isSequence || isEventFlow)) || (workspaceMode === "server" && server.active && bindingEntities.length > 0)) ? <AnalysisSurface
+                    minimized={uiPreferences.screens.workspace.analysis.minimized}
+                    height={uiPreferences.screens.workspace.analysis.height}
+                    preferredTab={uiPreferences.screens.workspace.analysis.tab}
+                    onLayoutPreferenceChange={updateAnalysisPreferences}
                     message={!comparisonOpen && (isEventFlow
                       ? <SemanticMessageInspector index={index} eventFlow={eventFlow} activeResourceId={activeResourceId} activeNodeId={activeNodeId} activeSemanticMessageId={activeSemanticMessageId} onOpenResource={openResourceById} onBind={updateSemanticOccurrence} onCreateIdentity={createAndBindSemanticMessage} onTrace={openTrace} />
                       : isSequence
@@ -4276,6 +4371,16 @@ export default function App() {
               <kbd className="app__command-shortcut" data-testid="palette-hint">
                 {bindingLabel(COMMAND_PALETTE_BINDING)}
               </kbd>
+            </button>
+            <button
+              type="button"
+              className="button app__statusbar-button"
+              data-testid="reset-panel-layout"
+              aria-label="Restore default panel layout"
+              title="Restore default panel layout"
+              onClick={resetPanelLayout}
+            >
+              Reset layout
             </button>
             <span className="app__status-item app__status-item--muted">
               {noteMode ? "Note" : autoUpdate ? "Live" : "Paused"}

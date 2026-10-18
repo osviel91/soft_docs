@@ -97,6 +97,26 @@ describe("renderDiagramToSvg — structure", () => {
     );
   });
 
+  it("exports exact message endpoint participant IDs without adding preview focus controls", () => {
+    const layout = sampleLayout();
+    const svg = renderDiagramToSvg(layout);
+
+    expect(svg).toContain('data-sequence-message="1" data-message-from="A" data-message-to="B"');
+    expect(svg).toContain('data-participant-id="A" data-participant-label="A"');
+    expect(svg).not.toContain('class="participant" data-participant-id="A" data-participant-label="A" tabindex=');
+    expect(layout.messages[0]!.from).toBe("A");
+    expect(layout.messages[0]!.to).toBe("B");
+    expect(layout.width).toBe(264);
+    expect(layout.height).toBe(96);
+  });
+
+  it("keeps self-message endpoints explicit and identical", () => {
+    const layout = sampleLayout();
+    layout.messages[0] = { ...layout.messages[0]!, to: "A", endX: 84, selfLoop: { width: 32, height: 24 } };
+
+    expect(renderDiagramToSvg(layout)).toContain('data-sequence-message="1" data-message-from="A" data-message-to="A"');
+  });
+
   it("renders semantic message metadata as a restrained text affordance", () => {
     const layout = sampleLayout();
     layout.messages[0].semantics = {

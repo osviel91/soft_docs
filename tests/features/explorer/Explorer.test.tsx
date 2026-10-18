@@ -102,6 +102,27 @@ describe("Explorer", () => {
     expect(screen.queryByText("PROJECT KNOWLEDGE")).toBeNull();
   });
 
+  it("honors a stored collapsed section instead of auto-expanding when MY WORK appears", () => {
+    const onSectionPreferenceChange = vi.fn();
+    render(<Explorer
+      projects={[project]}
+      diagrams={[diagram]}
+      selectedProjectId={project.id}
+      selectedDiagramId={diagram.id}
+      isLoading={false}
+      onCreateProject={vi.fn()}
+      onLoadDiagram={vi.fn()}
+      serverMode
+      privateWorkContexts={[{ id: "work", name: "Draft", lifecycle: "active" }]}
+      sectionPreferences={{ myWork: false }}
+      onSectionPreferenceChange={onSectionPreferenceChange}
+    />);
+
+    expect(screen.getByTestId("explorer-my-work-toggle")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByTestId("explorer-my-work-toggle"));
+    expect(onSectionPreferenceChange).toHaveBeenCalledWith("myWork", true);
+  });
+
   it("renders only the Project Browser before a server project is open", () => {
     render(
       <Explorer
