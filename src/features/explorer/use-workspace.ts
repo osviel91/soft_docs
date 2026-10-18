@@ -121,6 +121,8 @@ export interface WorkspaceHook {
   loadDiagram(diagram: DiagramFile): void;
   /** Load a note's markdown into the editor and select its project. */
   loadNote(note: NoteFile): void;
+  /** Clear only the selected file and buffers, keeping the current project. */
+  clearDocumentSelection(): void;
   /** Persist the current source back to the loaded diagram file. */
   saveCurrentDiagram(source: string): Promise<void>;
   /** Persist the current markdown back to the loaded note. */
@@ -647,6 +649,13 @@ export function useWorkspace(
     },
     [mergeNotes, refreshProjectFiles],
   );
+
+  const clearDocumentSelection = useCallback(() => {
+    setSelectedDiagramId(null);
+    setSelectedNoteId(null);
+    setSource("");
+    setNoteMarkdown("");
+  }, []);
 
   const saveCurrentDiagram = useCallback(
     async (nextSource: string): Promise<void> => {
@@ -1460,6 +1469,7 @@ export function useWorkspace(
     resourceIdForFile,
     loadDiagram,
     loadNote,
+    clearDocumentSelection,
     saveCurrentDiagram,
     saveCurrentNote,
     createProject,

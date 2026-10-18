@@ -391,16 +391,31 @@ describe("App — authenticated browser", () => {
     expect(window.location.search).toContain("q=ledger");
   });
 
-  it("keeps the active project and exposes a return path when opening the Inbox", async () => {
-    state.signedIn = true;
-    render(<App />);
-    await screen.findByTestId("workspace-server-project-filter");
+  it("returns from the Inbox top navigation to the active project", async () => {
+    await openServerProject("title Checkout", false);
     fireEvent.click(screen.getByTestId("open-architecture-inbox"));
 
+    const inbox = await screen.findByTestId("architecture-inbox");
+    const back = screen.getByTestId("inbox-back-to-workspace");
+    expect(back.closest("header")?.className).toContain("app__toolbar");
+    expect(within(inbox).queryByRole("button", { name: /back to workspace/i })).toBeNull();
+    fireEvent.click(back);
+    await waitFor(() => expect(screen.getByTestId("dsl-textarea")).toHaveValue("title Checkout"));
+    expect(window.location.search).toContain("project=p1");
+  });
+
+  it("opens the Inbox directly from its URL with its filters and top-level return", async () => {
+    state.signedIn = true;
+    state.crossWorkspace = true;
+    window.history.replaceState({}, "", "/?inbox=proposals&workspace=w2&projectFilter=p3&attention=CHANGES_REQUESTED&q=ledger");
+    render(<App />);
+
     expect(await screen.findByTestId("architecture-inbox")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /back to workspace/i })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /back to workspace/i }));
-    expect(await screen.findByTestId("workspace-server-project-filter")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace")).toHaveValue("w2");
+    expect(screen.getByLabelText("Project")).toHaveValue("p3");
+    expect(screen.getByLabelText("Proposal title")).toHaveValue("ledger");
+    expect(screen.getByTestId("inbox-back-to-workspace").closest("header")?.className).toContain("app__toolbar");
+    expect(within(screen.getByTestId("architecture-inbox")).queryByRole("button", { name: /back to workspace/i })).toBeNull();
   });
 
   it("opens one cross-workspace proposal after the destination catalog switches", async () => {

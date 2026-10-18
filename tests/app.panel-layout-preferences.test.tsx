@@ -71,8 +71,11 @@ describe("App panel layout preferences", () => {
     const serialized = JSON.parse(localStorage.getItem(UI_PREFERENCES_KEY)!);
     expect(serialized).not.toHaveProperty("selectedResourceId");
     expect(serialized).not.toHaveProperty("selectedNodeId");
+    fireEvent.click(screen.getByTestId("workspace-settings"));
+    expect(screen.getByTestId("workspace-settings-page")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("reset-panel-layout"));
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBeNull();
+    fireEvent.click(screen.getByTestId("workspace-settings-back"));
     expect(screen.getByRole("region", { name: "Project explorer" })).toHaveStyle({ flexBasis: "252px" });
   });
 });
