@@ -4322,6 +4322,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Load diagram Domain" }).click();
       await page.getByTestId("conceptual-preview-svg").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const panel = page.getByTestId("semantic-bindings");
+      await page.getByRole("button", { name: "Restore analysis panels" }).click();
       await panel.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
       await panel.getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -4394,6 +4395,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await reviewerPage.reload({ waitUntil: "domcontentloaded" });
       await openServerProject(reviewerPage, projectName);
       await reviewerPage.getByRole("button", { name: "Load diagram Domain" }).click();
+      await reviewerPage.getByRole("button", { name: "Restore analysis panels" }).click();
       await reviewerPage.getByTestId("conceptual-preview-svg").locator('[data-node-id="project"]').click();
       await reviewerPage.getByTestId("semantic-bindings").getByText("No explicit bindings for this entity.").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const anotherContext = await apiRequest(reviewerPage, `/api/projects/${projectId}/semantic-bindings?contextId=${work.id}`);
