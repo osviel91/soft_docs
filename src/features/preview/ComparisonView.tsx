@@ -164,7 +164,12 @@ function ComparisonPane({
     setActiveSemanticMessageId(focusOccurrence.messageId ?? null);
   }, [focusOccurrence, resourceId]);
 
-  const selectNode = (nodeId: string) => {
+  const selectNode = (nodeId: string | null) => {
+    if (nodeId === null) {
+      setActiveNodeId(null);
+      setActiveSemanticMessageId(null);
+      return;
+    }
     setActiveNodeId(nodeId);
     setActiveSemanticMessageId(null);
   };

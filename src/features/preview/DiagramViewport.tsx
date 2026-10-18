@@ -59,7 +59,7 @@ export interface DiagramViewportProps {
    * them from the AST, so the shell can map a click back to a source range
    * without matching any text.
    */
-  onNodeSelect?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string | null) => void;
   onSemanticMessageSelect?: (messageId: string, nodeId: string | null) => void;
   onSemanticOccurrenceSelect?: (name: string, nodeId: string | null) => void;
   onCausalNodeSelect?: (nodeId: string) => void;
@@ -386,9 +386,13 @@ export default function DiagramViewport({
     const causalNode = event.target instanceof Element
       ? event.target.closest("[data-causal-id]")?.getAttribute("data-causal-id")
       : null;
-    if (causalNode) onCausalNodeSelect?.(causalNode);
+    if (causalNode) {
+      onCausalNodeSelect?.(causalNode);
+      return;
+    }
     const nodeId = nodeIdFromTarget(event.target);
     if (nodeId !== null) onNodeSelect?.(nodeId);
+    else onNodeSelect?.(null);
   };
 
   // Highlight the active node by toggling a class on the injected SVG. Doing it
@@ -579,6 +583,9 @@ export default function DiagramViewport({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onClick={(event) => {
+          if (event.target === event.currentTarget && !movedSincePointerDown.current) onNodeSelect?.(null);
+        }}
       >
         <div
           ref={contentRef}

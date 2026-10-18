@@ -189,6 +189,23 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("database-preview-svg").querySelectorAll(".database__table.is-unrelated")).toHaveLength(0);
   });
 
+  it("clears ComparisonPane's controlled highlight when its blank canvas is clicked", async () => {
+    const resources: DiagramFile[] = [
+      { id: "sequence-a", name: "a.seq", projectId: "models", source: "participant Client\nparticipant API\nClient -> API: request" },
+      { id: "sequence-b", name: "b.seq", projectId: "models", source: "participant Client\nparticipant API\nClient -> API: response" },
+    ];
+    const index = { projectId: "models", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
+    render(<ComparisonView primary={resources[0]!} primarySource={resources[0]!.source} resources={resources} index={index} resourceIdForFile={resource => resource.id} onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} />);
+
+    const pane = screen.getByTestId("comparison-pane-a");
+    await waitFor(() => expect(pane.querySelector('[data-testid="preview-svg"] [data-node-id]')).not.toBeNull());
+    const node = pane.querySelector('[data-testid="preview-svg"] [data-node-id]')!;
+    fireEvent.click(node);
+    await waitFor(() => expect(node).toHaveClass("svg-node--active"));
+    fireEvent.click(within(pane).getByTestId("viewport-pane"));
+    await waitFor(() => expect(node).not.toHaveClass("svg-node--active"));
+  });
+
   it("does not reuse a node id shared by different Conceptual and Database resources", async () => {
     render(<App />);
     const diagrams: DiagramFile[] = [
@@ -319,8 +336,10 @@ describe("App — dual viewer foundation", () => {
       pending[0].resolve(snapshots[1]);
       pending[1].resolve(snapshots[2]);
     });
-    expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1");
-    expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("Revision One");
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1");
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("Revision One");
+    });
   });
 
   it("reports semantic truncation instead of implying the returned subset is complete", () => {

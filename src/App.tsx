@@ -2134,7 +2134,13 @@ export default function App() {
   // Preview → editor: clicking a rendered element selects its source range. The
   // mapping is by node id, never by matching text.
   const onNodeSelect = useCallback(
-    (nodeId: string) => {
+    (nodeId: string | null) => {
+      if (nodeId === null) {
+        setActiveEntityAnchor(null);
+        setActiveSemanticMessageId(null);
+        setActiveNodeId(null, activeNodeScope);
+        return;
+      }
       const matchingEntities = bindingEntities.filter(entity => entity.anchor.representation === activeRepresentation && entity.anchor.identity.kind === "local-id" && entity.anchor.identity.value === nodeId);
       const indexedEntity = matchingEntities.find(entity => entity.anchor.resourceId === activeBindingResourceId) ?? (matchingEntities.length === 1 ? matchingEntities[0] : undefined);
       setActiveEntityAnchor(indexedEntity?.anchor ?? null);

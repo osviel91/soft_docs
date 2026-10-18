@@ -62,12 +62,22 @@ describe("causal React Flow adapter", () => {
   it("wraps very long atomic tokens without dropping below the minimum font size", () => {
     const label = "A".repeat(300);
     const size = causalNodeSize({ label, kind: "message" });
-    const maxLineLength = Math.floor((size.width - 28) / (size.labelFontSize * 0.55));
+    const maxLineLength = Math.floor((size.width - 28) / (size.labelFontSize * 0.95));
 
     expect(size.width).toBeLessThanOrEqual(480);
     expect(size.labelFontSize).toBeGreaterThanOrEqual(9);
     expect(size.labelLines.join("")).toBe(label);
     expect(size.labelLines.every((line) => Array.from(line).length <= maxLineLength)).toBe(true);
+  });
+
+  it("wraps wide uppercase identifiers conservatively to avoid node overflow", () => {
+    const label = "W".repeat(60);
+    const size = causalNodeSize({ label, kind: "handler" });
+    const maxLineLength = Math.floor((size.width - 28) / (size.labelFontSize * 0.95));
+
+    expect(size.labelLines.join("")).toBe(label);
+    expect(size.labelLines.every((line) => line.length <= maxLineLength)).toBe(true);
+    expect(size.height).toBeGreaterThan(size.labelFontSize * 1.25 + 40);
   });
 
   it("keeps complete grapheme clusters together", () => {

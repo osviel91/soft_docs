@@ -11,7 +11,8 @@ export const CONCEPTUAL_SVG_STYLE = `
 .conceptual__edge-label text { fill: currentColor; font: 500 12px var(--font-sans, system-ui, sans-serif); }
 .conceptual__key-caption { fill: var(--text-muted, var(--muted, #5b6472)); font: 500 10px var(--font-sans, system-ui, sans-serif); }
 .conceptual__concept:focus rect, .conceptual__concept.svg-node--active rect { stroke: var(--accent, #1f5fbf); stroke-width: 3; }
-.conceptual__concept.svg-node--active rect { fill: var(--accent-soft, #e7effb); }
+.conceptual__concept.svg-node--active rect { fill: var(--accent, #1f5fbf); }
+.conceptual__concept.svg-node--active .conceptual__name, .conceptual__concept.svg-node--active .conceptual__description { fill: var(--bg, #fff); }
 .conceptual__connection--related { color: var(--accent-strong, var(--accent, #1f5fbf)); }
 .conceptual__connection--dim { opacity: .58; }
 `;

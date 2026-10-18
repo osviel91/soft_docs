@@ -10,7 +10,7 @@ import DiagramGuidance from "./DiagramGuidance";
 
 export interface ConceptualPreviewProps {
   source: string;
-  onNodeSelect?: (conceptId: string) => void;
+  onNodeSelect?: (conceptId: string | null) => void;
   activeNodeId?: string | null;
   reviewChanges?: SemanticChange[];
   reviewSide?: "base" | "proposed";

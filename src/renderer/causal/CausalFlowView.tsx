@@ -10,7 +10,7 @@ import "./causal-flow.css";
 export interface CausalFlowViewProps {
   view: CausalViewModel;
   selectedNodeId?: CausalNodeId | null;
-  onNodeSelect?: (nodeId: CausalNodeId) => void;
+  onNodeSelect?: (nodeId: CausalNodeId | null) => void;
   onSourceSelect?: (nodeId: string) => void;
   onLayoutState?: (state: "loading" | "ready" | "error") => void;
   onLayoutError?: (message: string) => void;
@@ -77,7 +77,7 @@ export default function CausalFlowView({ view, selectedNodeId = null, onNodeSele
       onNodeSelect?.(id);
       const source = (node.data as CausalFlowNode["data"]).sourceNodeIds[0];
       if (source) onSourceSelect?.(source);
-    }} onEdgeClick={(_, edge) => { setSelected(null); setSelectedEdgeId(edge.id); }} onPaneClick={() => { setSelected(null); setSelectedEdgeId(null); }}>
+    }} onEdgeClick={(_, edge) => { setSelected(null); setSelectedEdgeId(edge.id); onNodeSelect?.(null); }} onPaneClick={() => { setSelected(null); setSelectedEdgeId(null); onNodeSelect?.(null); }}>
       <Background gap={24} size={1} /><Controls /><MiniMap nodeColor={(node) => node.data.kind === "message" ? "#4f46e5" : node.data.kind === "handler" ? "#0f766e" : node.data.kind === "effect" ? "#b45309" : "#be123c"} />
     </ReactFlow></ReactFlowProvider>
   </div>;
