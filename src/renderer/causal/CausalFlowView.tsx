@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { BaseEdge, Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, type EdgeProps, type NodeProps } from "@xyflow/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BaseEdge, Background, ControlButton, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type EdgeProps, type NodeProps } from "@xyflow/react";
 import { type CausalNodeId, type CausalViewModel } from "../../domain/eventflow/causal-projection";
 import { parseNodeId } from "../../domain/diagram/node-id";
-import { CAUSAL_PORT_SIZE, causalElkGraph, causalNodeSize, causalReachability, positionedCausalFlow, type CausalFlowEdgeData, type CausalFlowGraph, type CausalFlowNode } from "./causal-flow-adapter";
+import { CAUSAL_PORT_SIZE, causalElkGraph, causalNodeSize, causalReachability, positionedCausalFlow, type CausalFlowEdge, type CausalFlowEdgeData, type CausalFlowGraph, type CausalFlowNode } from "./causal-flow-adapter";
 import { createCausalElkLayout, type CausalWorkerFactory } from "./causal-elk-layout";
 import "@xyflow/react/dist/style.css";
 import "./causal-flow.css";
+
+const READING_ZOOM = 1;
+const INITIAL_MIN_ZOOM = 0.8;
+const FIT_PADDING = 0.18;
 
 export interface CausalFlowViewProps {
   view: CausalViewModel;
@@ -18,6 +22,7 @@ export interface CausalFlowViewProps {
 }
 
 export default function CausalFlowView({ view, selectedNodeId = null, onNodeSelect, onSourceSelect, onLayoutState, onLayoutError, workerFactory }: CausalFlowViewProps) {
+  const flowContainerRef = useRef<HTMLDivElement | null>(null);
   const [graph, setGraph] = useState<CausalFlowGraph | null>(null);
   const [selected, setSelected] = useState<CausalNodeId | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -59,7 +64,7 @@ export default function CausalFlowView({ view, selectedNodeId = null, onNodeSele
   }));
   const edgeSourceIds = selectedEdge?.data?.sourceNodeIds ?? [];
   const sourceSpans = edgeSourceIds.map((id) => ({ id, location: parseNodeId(id) })).filter((item) => item.location);
-  return <div className="causal-flow">
+  return <div className="causal-flow" ref={flowContainerRef}>
     {graph.layoutWarnings.length > 0 && <div className="causal-flow__warning" role="status">
       {graph.layoutWarnings.length} causal route{graph.layoutWarnings.length === 1 ? "" : "s"} failed validation. Dashed direct fallbacks are used only when both ports are available.
       <details><summary>Route diagnostics</summary><ul>{graph.layoutWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>
@@ -70,7 +75,7 @@ export default function CausalFlowView({ view, selectedNodeId = null, onNodeSele
       {selectedEdge.data?.routeWarning && <small>{selectedEdge.data.routeWarning}</small>}
       {sourceSpans.length ? <ul>{sourceSpans.map(({ id, location }) => <li key={id}><button type="button" onClick={() => onSourceSelect?.(id)}>Source line {location!.line + 1}</button></li>)}</ul> : <small>Source location unavailable.</small>}
     </aside>}
-    <ReactFlowProvider><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ causal: CausalNode }} edgeTypes={{ causal: CausalEdge }} fitView fitViewOptions={{ padding: 0.18 }} onNodeClick={(_, node) => {
+    <ReactFlowProvider><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ causal: CausalNode }} edgeTypes={{ causal: CausalEdge }} fitView fitViewOptions={{ padding: FIT_PADDING, minZoom: INITIAL_MIN_ZOOM, maxZoom: READING_ZOOM }} onNodeClick={(_, node) => {
       const id = node.id as CausalNodeId;
       setSelected(id);
       setSelectedEdgeId(null);
@@ -78,9 +83,39 @@ export default function CausalFlowView({ view, selectedNodeId = null, onNodeSele
       const source = (node.data as CausalFlowNode["data"]).sourceNodeIds[0];
       if (source) onSourceSelect?.(source);
     }} onEdgeClick={(_, edge) => { setSelected(null); setSelectedEdgeId(edge.id); onNodeSelect?.(null); }} onPaneClick={() => { setSelected(null); setSelectedEdgeId(null); onNodeSelect?.(null); }}>
-      <Background gap={24} size={1} /><Controls /><MiniMap nodeColor={(node) => node.data.kind === "message" ? "#4f46e5" : node.data.kind === "handler" ? "#0f766e" : node.data.kind === "effect" ? "#b45309" : "#be123c"} />
+      <Background gap={24} size={1} />
+      <Controls aria-label="Causal graph navigation" showFitView={false}>
+        <CausalViewportControls flowContainerRef={flowContainerRef} />
+      </Controls>
+      <MiniMap nodeColor={(node) => node.data.kind === "message" ? "#4f46e5" : node.data.kind === "handler" ? "#0f766e" : node.data.kind === "effect" ? "#b45309" : "#be123c"} />
     </ReactFlow></ReactFlowProvider>
   </div>;
+}
+
+function CausalViewportControls({ flowContainerRef }: { flowContainerRef: { current: HTMLDivElement | null } }) {
+  const { fitView, screenToFlowPosition, setCenter } = useReactFlow<CausalFlowNode, CausalFlowEdge>();
+  const previousReadingCenter = useRef<{ x: number; y: number } | null>(null);
+  const viewportCenter = () => {
+    const bounds = flowContainerRef.current?.querySelector(".react-flow")?.getBoundingClientRect();
+    return bounds && bounds.width > 0 && bounds.height > 0
+      ? screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 })
+      : null;
+  };
+  const showOverview = () => {
+    previousReadingCenter.current = viewportCenter();
+    void fitView({ padding: FIT_PADDING, minZoom: 0.1, maxZoom: READING_ZOOM });
+  };
+  const restoreReadingScale = () => {
+    const center = previousReadingCenter.current ?? viewportCenter();
+    previousReadingCenter.current = null;
+    if (!center) return;
+    void setCenter(center.x, center.y, { zoom: READING_ZOOM, duration: 180 });
+  };
+
+  return <>
+    <ControlButton className="causal-flow__view-control" aria-label="Show full graph overview" title="Show full graph overview" onClick={showOverview}>All</ControlButton>
+    <ControlButton className="causal-flow__view-control" aria-label="Restore reading scale" title="Restore reading scale" onClick={restoreReadingScale}>Read</ControlButton>
+  </>;
 }
 
 function CausalNode({ data }: NodeProps<CausalFlowNode>) {

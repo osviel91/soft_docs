@@ -7,6 +7,9 @@
 .causal-flow__edge-details button { padding: 0; border: 0; color: #4338ca; background: transparent; cursor: pointer; text-decoration: underline; }
 .causal-flow .react-flow__edge.is-selected .react-flow__edge-path { stroke: #0f172a; stroke-width: 4; }
 .causal-flow .causal-edge--fallback { stroke: #7c3aed; stroke-dasharray: 3 3; }
+.causal-flow .react-flow__controls-button.causal-flow__view-control { width: auto; min-width: 30px; padding: 0 6px; color: #0f172a; background: #fff; border-color: #cbd5e1; font-size: 10px; font-weight: 700; opacity: 1; white-space: nowrap; }
+.causal-flow .react-flow__controls-button.causal-flow__view-control:hover { background: #e2e8f0; }
+.causal-flow .react-flow__controls-button.causal-flow__view-control:focus-visible { position: relative; z-index: 1; outline: 2px solid #4338ca; outline-offset: 2px; }
 .causal-node { box-sizing: border-box; position: relative; min-width: 130px; max-width: 480px; padding: 10px 14px; border: 1px solid #94a3b8; border-radius: 10px; color: #0f172a; background: #fff; box-shadow: 0 3px 12px #17203320; }
 .causal-node strong, .causal-node small { display: block; width: 100%; white-space: normal; word-break: normal; overflow-wrap: normal; }
 .causal-node strong { margin-top: 3px; color: #0f172a; }
