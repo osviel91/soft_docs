@@ -71,7 +71,7 @@ function repository(): WorkspaceRepository {
       userId === "admin" || userId === "editor"
         ? [{ ...workspace, role: userId === "admin" ? "ADMIN" : "EDITOR" }]
         : [],
-    listAll: async () => [workspace],
+    listForPlatformAdmin: async () => [{ id: "w1", name: "Personal Workspace", allowAuthorSelfReview: false }],
     authorSelfReviewAllowed: async () => false,
     setAuthorSelfReviewAllowed: async () => {},
     listMembers: async () => members,
@@ -136,6 +136,10 @@ describe("workspace service", () => {
     const service = createWorkspaceService(repository());
     await expect(service.setAuthorSelfReviewAllowed(context("admin"), "w1", true)).rejects.toMatchObject({ code: "forbidden" });
     await expect(service.setAuthorSelfReviewAllowed(platformAdminContext(), "w1", true)).resolves.toBeUndefined();
-    await expect(service.listWorkspaces(platformAdminContext())).resolves.toHaveLength(1);
+    await expect(service.listWorkspaces(platformAdminContext())).resolves.toHaveLength(0);
+    await expect(service.listPlatformWorkspaces(platformAdminContext())).resolves.toEqual([
+      { id: "w1", name: "Personal Workspace", allowAuthorSelfReview: false },
+    ]);
+    await expect(service.listPlatformWorkspaces(context("admin"))).rejects.toMatchObject({ code: "forbidden" });
   });
 });

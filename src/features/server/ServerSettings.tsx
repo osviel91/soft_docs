@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { AuthState } from "./use-auth";
 import type {
   ServerAdminUser,
+  ServerAdminWorkspacePolicy,
   ServerWorkspace,
   ServerWorkspaceMember,
   ServerWorkspaceInvitation,
@@ -15,6 +16,10 @@ export interface ServerSettingsProps {
   auth: AuthState;
   agentsPanel?: ReactNode;
   adminUsers: ServerAdminUser[];
+  adminWorkspaces: ServerAdminWorkspacePolicy[];
+  adminWorkspacesError: string | null;
+  adminWorkspacesLoading: boolean;
+  onRetryAdminWorkspaces: () => void;
   onSetUserStatus: (userId: string, status: ServerAdminUser["status"]) => void;
   onCreatePasswordRecovery: (userId: string) => Promise<string>;
   workspaces: ServerWorkspace[];
@@ -42,6 +47,10 @@ export default function ServerSettings({
   auth,
   agentsPanel,
   adminUsers,
+  adminWorkspaces,
+  adminWorkspacesError,
+  adminWorkspacesLoading,
+  onRetryAdminWorkspaces,
   onSetUserStatus,
   onCreatePasswordRecovery,
   workspaces,
@@ -144,7 +153,8 @@ export default function ServerSettings({
       {activeArea === "agents" ? (
         agentsPanel
       ) : activeArea === "platform" ? (
-        <section className="settings-card settings-platform" aria-labelledby="settings-platform-title">
+        <div className="settings-platform">
+        <section className="settings-card" aria-labelledby="settings-platform-title">
           <div className="settings-card__heading">
             <div>
               <p className="settings-card__eyebrow">Platform administration</p>
@@ -197,6 +207,41 @@ export default function ServerSettings({
             {adminUsers.length === 0 && <p className="settings-card__empty">No accounts to manage.</p>}
           </div>
         </section>
+        <section className="settings-card" aria-labelledby="settings-platform-workspaces-title">
+          <div className="settings-card__heading">
+            <div>
+              <p className="settings-card__eyebrow">Platform administration</p>
+              <h2 id="settings-platform-workspaces-title">Workspace proposal policy</h2>
+            </div>
+            <span className="settings-card__count">{adminWorkspaces.length} workspaces</span>
+          </div>
+          <p className="settings-card__muted">Configure author self-approval. This administrative catalog does not grant access to workspace projects or membership.</p>
+          {adminWorkspacesLoading && <p role="status">Loading workspace policies…</p>}
+          {adminWorkspacesError && (
+            <div role="alert">
+              <p className="login-card__error">{adminWorkspacesError}</p>
+              <button type="button" className="button button--small" onClick={onRetryAdminWorkspaces} disabled={adminWorkspacesLoading}>Retry</button>
+            </div>
+          )}
+          <div className="settings-users" role="list">
+            {adminWorkspaces.map((item) => (
+              <div className="settings-user" role="listitem" key={item.id}>
+                <div><strong>{item.name}</strong><span>{item.id}</span></div>
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`Allow authors to approve proposals in ${item.name}`}
+                    checked={item.allowAuthorSelfReview}
+                    onChange={(event) => onSetWorkspaceAuthorSelfReview(item.id, event.target.checked)}
+                  />
+                  Allow author self-approval
+                </label>
+              </div>
+            ))}
+            {!adminWorkspacesLoading && !adminWorkspacesError && adminWorkspaces.length === 0 && <p className="settings-card__empty">No workspaces are available for platform policy administration.</p>}
+          </div>
+        </section>
+        </div>
       ) : (
         <section className="settings-workspace-layout" aria-label="Workspace settings">
           <aside className="settings-workspace-rail">
@@ -435,14 +480,7 @@ export default function ServerSettings({
                       <p className="settings-card__muted">Allow proposal authors to approve their own proposals. Approval does not promote a proposal or change SHARED.</p>
                       {!isPlatformAdmin && <small>Managed by a platform administrator.</small>}
                     </div>
-                    {isPlatformAdmin ? (
-                      <input
-                        type="checkbox"
-                        aria-label={`Allow authors to approve proposals in ${workspace.name}`}
-                        checked={workspace.allowAuthorSelfReview}
-                        onChange={(event) => onSetWorkspaceAuthorSelfReview(workspace.id, event.target.checked)}
-                      />
-                    ) : <span className="settings-card__badge">{workspace.allowAuthorSelfReview ? "Enabled" : "Disabled"}</span>}
+                    <span className="settings-card__badge">{workspace.allowAuthorSelfReview ? "Enabled" : "Disabled"}</span>
                   </div>
                 </section>
               ) : null}

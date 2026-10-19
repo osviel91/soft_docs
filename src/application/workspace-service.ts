@@ -1,6 +1,6 @@
 import type { ApplicationContext } from "./context";
 import { forbidden, notFound, invalid } from "./errors";
-import type { WorkspaceRepository } from "./ports/workspace-repository";
+import type { AdminWorkspacePolicy, WorkspaceRepository } from "./ports/workspace-repository";
 import type {
   ServerWorkspace,
   WorkspaceMember,
@@ -22,6 +22,7 @@ export interface WorkspaceService {
     workspaceId: string,
   ): Promise<void>;
   listWorkspaces(context: ApplicationContext): Promise<ServerWorkspace[]>;
+  listPlatformWorkspaces(context: ApplicationContext): Promise<AdminWorkspacePolicy[]>;
   setAuthorSelfReviewAllowed(context: ApplicationContext, workspaceId: string, allowed: boolean): Promise<void>;
   listMembers(
     context: ApplicationContext,
@@ -102,9 +103,14 @@ export function createWorkspaceService(
     },
 
     listWorkspaces(context) {
-      return context.principal.platformAdmin === true
-        ? repository.listAll(context.principal.subjectUserId)
-        : repository.listForUser(context.principal.subjectUserId);
+      return repository.listForUser(context.principal.subjectUserId);
+    },
+
+    async listPlatformWorkspaces(context) {
+      if (context.principal.platformAdmin !== true) {
+        throw forbidden("Platform administrator access is required.");
+      }
+      return repository.listForPlatformAdmin();
     },
 
     async setAuthorSelfReviewAllowed(context, workspaceId, allowed) {

@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import ServerSettings from "../../../src/features/server/ServerSettings";
 
-function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="agents-panel">Agent access settings</div>) {
+function renderSettings(
+  platformAdmin: boolean,
+  agentsPanel = <div data-testid="agents-panel">Agent access settings</div>,
+  adminWorkspacesError: string | null = null,
+) {
   const actions = {
+    onRetryAdminWorkspaces: vi.fn(),
     onSetUserStatus: vi.fn(),
     onCreatePasswordRecovery: vi.fn().mockResolvedValue("recovery-token"),
     onSelectWorkspace: vi.fn(),
@@ -34,6 +39,14 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
         status: "PENDING",
         platformAdmin: false,
       }]}
+      adminWorkspaces={[{
+        id: "workspace-private",
+        name: "Private Research",
+        allowAuthorSelfReview: true,
+      }]}
+      adminWorkspacesError={adminWorkspacesError}
+      adminWorkspacesLoading={false}
+      onRetryAdminWorkspaces={actions.onRetryAdminWorkspaces}
       onSetUserStatus={actions.onSetUserStatus}
       onCreatePasswordRecovery={actions.onCreatePasswordRecovery}
       workspaces={[
@@ -43,7 +56,7 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
           name: "Ada Workspace",
           isDefault: true,
           allowAuthorSelfReview: false,
-          role: platformAdmin ? "ADMIN" : "VIEWER",
+          role: "ADMIN",
           createdAt: new Date(0).toISOString(),
           updatedAt: new Date(0).toISOString(),
         },
@@ -52,8 +65,8 @@ function renderSettings(platformAdmin: boolean, agentsPanel = <div data-testid="
           ownerId: "other",
           name: "Research",
           isDefault: false,
-          allowAuthorSelfReview: true,
-          role: "VIEWER",
+          allowAuthorSelfReview: false,
+          role: "EDITOR",
           createdAt: new Date(0).toISOString(),
           updatedAt: new Date(0).toISOString(),
         },
@@ -121,11 +134,11 @@ describe("ServerSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
     expect(onRevokeWorkspaceInvitation).toHaveBeenCalledWith("workspace-1", "invitation-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Governance" }));
-    fireEvent.click(screen.getByLabelText("Allow authors to approve proposals in Ada Workspace"));
-    expect(onSetWorkspaceAuthorSelfReview).toHaveBeenCalledWith("workspace-1", true);
-
     fireEvent.click(screen.getByTestId("settings-scope-platform"));
+    expect(screen.getByText("Private Research")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Private Research/ })).toBeNull();
+    fireEvent.click(screen.getByLabelText("Allow authors to approve proposals in Private Research"));
+    expect(onSetWorkspaceAuthorSelfReview).toHaveBeenCalledWith("workspace-private", false);
     fireEvent.change(screen.getByLabelText("Status for grace@example.test"), { target: { value: "ACTIVE" } });
     expect(onSetUserStatus).toHaveBeenCalledWith("pending", "ACTIVE");
     expect(screen.getByText("Account approval")).toBeInTheDocument();
@@ -135,12 +148,23 @@ describe("ServerSettings", () => {
     renderSettings(false);
     expect(screen.queryByTestId("settings-scope-platform")).toBeNull();
     expect(screen.queryByText("Account approval")).toBeNull();
+    expect(screen.queryByText("Private Research")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Governance" }));
     const governance = screen.getByRole("region", { name: "Governance" });
     expect(within(governance).getByText("Managed by a platform administrator.")).toBeInTheDocument();
     expect(within(governance).getByText("Disabled")).toBeInTheDocument();
     expect(within(governance).queryByRole("checkbox")).toBeNull();
+  });
+
+  it("shows catalog load errors without claiming the catalog is empty and retries", () => {
+    const { onRetryAdminWorkspaces } = renderSettings(true, undefined, "Could not load platform workspace policies. Please try again.");
+    fireEvent.click(screen.getByTestId("settings-scope-platform"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load platform workspace policies. Please try again.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByText("No workspaces are available for platform policy administration.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetryAdminWorkspaces).toHaveBeenCalledOnce();
   });
 
   it("opens agent access inside its own settings tab", () => {

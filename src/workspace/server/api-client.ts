@@ -89,6 +89,12 @@ export interface ServerWorkspace {
   updatedAt: string;
 }
 
+export interface ServerAdminWorkspacePolicy {
+  id: string;
+  name: string;
+  allowAuthorSelfReview: boolean;
+}
+
 export interface ServerWorkspaceMember {
   workspaceId: string;
   userId: string;
@@ -536,6 +542,15 @@ export class ServerApiClient {
       "/api/workspaces",
     );
     if (!Array.isArray(body.workspaces)) throw new Error("The workspace catalog response was invalid.");
+    return body.workspaces;
+  }
+
+  async listAdminWorkspaces(): Promise<ServerAdminWorkspacePolicy[]> {
+    const body = await this.request<{ workspaces: ServerAdminWorkspacePolicy[] }>(
+      "GET",
+      "/api/admin/workspaces",
+    );
+    if (!Array.isArray(body.workspaces)) throw new Error("The administrative workspace catalog response was invalid.");
     return body.workspaces;
   }
 

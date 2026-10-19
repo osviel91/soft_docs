@@ -4,6 +4,12 @@ import type {
   WorkspaceRole,
 } from "../../domain/workspace/server-workspace";
 
+export interface AdminWorkspacePolicy {
+  id: string;
+  name: string;
+  allowAuthorSelfReview: boolean;
+}
+
 export interface WorkspaceRepository {
   create(input: { ownerId: string; name: string }): Promise<ServerWorkspace>;
   rename(
@@ -13,7 +19,7 @@ export interface WorkspaceRepository {
   ): Promise<ServerWorkspace>;
   delete(workspaceId: string): Promise<void>;
   listForUser(userId: string): Promise<ServerWorkspace[]>;
-  listAll(userId: string): Promise<ServerWorkspace[]>;
+  listForPlatformAdmin(): Promise<AdminWorkspacePolicy[]>;
   authorSelfReviewAllowed(workspaceId: string): Promise<boolean>;
   setAuthorSelfReviewAllowed(workspaceId: string, allowed: boolean): Promise<void>;
   listMembers(workspaceId: string): Promise<WorkspaceMember[]>;

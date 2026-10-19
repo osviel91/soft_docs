@@ -29,6 +29,7 @@ import type {
 } from "../../workspace/server/api-client";
 import type { AuthHook } from "./use-auth";
 import { useAgents } from "./use-agents";
+import { ResourceNotFoundError } from "../../workspace/server/api-errors";
 
 /** The expiry choices the form offers. */
 const EXPIRY_CHOICES = [
@@ -137,6 +138,7 @@ export default function AgentsAndTokens({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // The default scope set is the server's, not the screen's.
@@ -149,19 +151,26 @@ export default function AgentsAndTokens({
   useEffect(() => {
     if (auth.status !== "authenticated") return;
     let cancelled = false;
+    setProjectLoadError(null);
     client
       .listWorkspaces()
-      .then((workspaces) =>
-        Promise.all(
-          workspaces.map((workspace) => client.listProjects(workspace.id)),
-        ),
-      )
-      .then((lists) => {
-        const listed = lists.flat();
+      .then(async (workspaces) => {
+        const results = await Promise.allSettled(workspaces.map((workspace) => client.listProjects(workspace.id)));
+        const listed = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+        const failures = results.filter((result) => result.status === "rejected");
         if (!cancelled) setProjects(listed);
+        if (!cancelled && failures.length > 0) {
+          const onlyUnavailable = failures.every((result) => result.status === "rejected" && result.reason instanceof ResourceNotFoundError);
+          setProjectLoadError(onlyUnavailable
+            ? "Some workspaces are no longer accessible. Available projects are shown."
+            : "Could not load projects for every accessible workspace. Available projects are shown; try again later.");
+        }
       })
-      .catch(() => {
-        if (!cancelled) setProjects([]);
+      .catch((failure: unknown) => {
+        if (!cancelled) {
+          setProjects([]);
+          setProjectLoadError(failure instanceof Error ? failure.message : "Could not load accessible workspaces and projects.");
+        }
       });
     return () => {
       cancelled = true;
@@ -344,6 +353,11 @@ export default function AgentsAndTokens({
         {error !== null ? (
           <p className="tokens__error" role="alert" data-testid="agents-error">
             {error}
+          </p>
+        ) : null}
+        {projectLoadError !== null ? (
+          <p className="tokens__error" role="alert" data-testid="agents-error">
+            {projectLoadError}
           </p>
         ) : null}
       </section>

@@ -277,6 +277,14 @@ export function createRouter(dependencies: AppDependencies): Router {
     }),
   );
 
+  router.get("/api/admin/workspaces", async (request) =>
+    guarded(correlationId(request), async () => {
+      const context = await contextOf(request);
+      const workspaces = await dependencies.workspaceService.listPlatformWorkspaces(context);
+      return json(200, { workspaces });
+    }),
+  );
+
   router.get("/api/inbox/proposals", async (request) =>
     guarded(correlationId(request), async () => {
       const context = await contextOf(request);
