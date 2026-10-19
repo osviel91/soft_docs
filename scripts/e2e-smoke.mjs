@@ -2226,8 +2226,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         { path: "focus-sequence.seq", type: "sequence-diagram", content: 'title "Focus Sequence"\nparticipant Browser\nparticipant API\nBrowser ->> API: request' },
         { path: "focus-event-flow.eventseq", type: "event-flow", content: causalFocusSource },
         { path: "focus-concept.concept", type: "conceptual", content: 'concept account "Account"\nconcept invoice "Invoice"\nrelation owns account -> invoice "owns"' },
-        { path: "focus-schema.dbschema", type: "database", content: 'table accounts - "Accounts"\ncolumn accounts account_id "id" {uuid} not-null\nprimary-key accounts_pk accounts (account_id)' },
-        { path: "focus-reading.md", type: "markdown-document", content: "# Focus reading\n\nA readable note." },
+        { path: "focus-schema.dbschema", type: "database", content: 'title "Focus Schema"\ntable users - "users"\ncolumn users user_id "id" {uuid} not-null\nprimary-key users_pk users (id)' },
+        { path: "focus-reading.md", type: "markdown-document", content: `# Focus reading\n\n${Array.from({ length: 40 }, (_, index) => `Section ${index + 1}\n\nA readable paragraph in the focus reading fixture.`).join("\n\n")}` },
       ];
       for (const resource of resources) {
         const response = await apiRequest(page, `/api/projects/${projectId}/resources`, { method: "POST", body: JSON.stringify({ ...resource, contextId: workId }) });
@@ -2243,6 +2243,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const representations = [
         { path: "focus-sequence.seq", label: "Focus Sequence", view: "Sequence", svg: "preview-svg" },
         { path: "focus-event-flow.eventseq", label: "Focus Event Flow", view: "Event Flow Flow", svg: "preview-svg" },
+        { path: "focus-concept.concept", label: "focus-concept.concept", view: "Conceptual", svg: "conceptual-preview-svg" },
+        { path: "focus-schema.dbschema", label: "Focus Schema", view: "Database", svg: "database-preview-svg" },
       ];
       for (const [index, representation] of representations.entries()) {
         const row = page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"], [data-testid="explorer-my-work-section"] [data-testid="explorer-note"]').filter({ hasText: representation.label });
@@ -2267,24 +2269,32 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         }
         if (representation.view === "Sequence") {
           const prefsBefore = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
+          const focusChord = await page.evaluate(() => /mac|iphone|ipad/i.test(navigator.platform) ? "Meta+;" : "Control+;");
           const focusButton = page.getByTestId("viewer-focus-toggle");
+          const focusLabel = await page.evaluate(() => /mac|iphone|ipad/i.test(navigator.platform) ? "⌘;" : "Ctrl+;");
+          check("Focus button and tooltip document the two-key shortcut", (await focusButton.innerText()).includes(focusLabel) && (await focusButton.getAttribute("title")).includes(focusLabel));
           await focusButton.focus();
-          await page.keyboard.press("f");
-          check("F is ignored while a button owns focus", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
+          await page.keyboard.press(focusChord);
+          check("Focus chord is ignored while an interactive button owns focus", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
           await page.getByTestId("command-palette-button").click();
           await page.getByTestId("palette-input").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-          await page.keyboard.press("f");
-          check("F is ignored in an editable palette field and active overlay", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
+          await page.keyboard.press(focusChord);
+          check("Focus chord is ignored in an editable palette field and active overlay", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
           await page.keyboard.press("Escape");
-          await page.locator(".viewport__pane").click({ position: { x: 300, y: 250 } });
           await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
-          await page.keyboard.press("f");
+          await page.keyboard.press(focusChord);
           await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
-          check("F activates focus from non-interactive viewer context", true);
+          check("Focus chord activates focus from non-editable application space", true);
+          await page.keyboard.press("Escape");
+          await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+          await page.locator("[data-testid=viewport-pane]").focus();
+          await page.keyboard.press(focusChord);
+          await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+          check("Focus chord activates focus while the viewer canvas has keyboard focus", true);
           await page.keyboard.press("Escape");
           await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
           check("Escape restores focus to the available origin control", await focusButton.evaluate((button) => document.activeElement === button));
-          check("F and Escape leave persisted UI preferences untouched", await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences")) === prefsBefore);
+          check("Focus chord and Escape leave persisted UI preferences untouched", await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences")) === prefsBefore);
         }
         const focus = page.getByTestId("viewer-focus-toggle");
         check(`${representation.view} exposes one shared viewer expansion control`, await focus.count() === 1 && await page.getByTestId("preview-maximize").count() === 0);
@@ -2309,25 +2319,97 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         }
         await focus.click();
         await page.locator('[data-testid="app-shell"] .app__workspace--focus').waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         check(`${representation.view} renderer remains mounted in focus mode`, !renderedNode || await renderedNode.evaluate((element) => element.isConnected));
-        if (representation.svg) check(`${representation.view} camera is unchanged by focus`, await renderedNode.getAttribute("style") === camera);
+        if (representation.svg) {
+          const geometry = await page.evaluate((testId) => {
+            const content = document.querySelector(`[data-testid="${testId}"]`);
+            const viewport = document.querySelector('[data-testid="viewport-pane"]');
+            if (!content || !viewport) return null;
+            const diagram = content.getBoundingClientRect();
+            const pane = viewport.getBoundingClientRect();
+            return {
+              centerDeltaX: Math.abs((diagram.left + diagram.right) / 2 - (pane.left + pane.right) / 2),
+              centerDeltaY: Math.abs((diagram.top + diagram.bottom) / 2 - (pane.top + pane.bottom) / 2),
+              contained: diagram.left >= pane.left - 2 && diagram.top >= pane.top - 2 && diagram.right <= pane.right + 2 && diagram.bottom <= pane.bottom + 2,
+            };
+          }, representation.svg);
+          check(`${representation.view} content is centered and fitted in focus`, geometry !== null && geometry.centerDeltaX < 8 && geometry.centerDeltaY < 8 && geometry.contained, JSON.stringify(geometry));
+          const fittedCamera = await renderedNode.getAttribute("style");
+          await page.locator('[data-testid="viewport-pane"]').hover();
+          await page.mouse.wheel(0, -160);
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          const manuallyAdjustedCamera = await renderedNode.getAttribute("style");
+          await page.waitForTimeout(120);
+          check(`${representation.view} manual zoom is not refitted in focus`, manuallyAdjustedCamera !== fittedCamera && await renderedNode.getAttribute("style") === manuallyAdjustedCamera);
+        }
         check(`${representation.view} exit control remains available`, await page.getByRole("button", { name: /Exit focus/ }).isVisible());
         if (index === 0 && process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-focus-mode.png"), fullPage: true });
         await page.keyboard.press("Escape");
         await page.locator('[data-testid="app-shell"] .app__workspace:not(.app__workspace--focus)').waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        if (representation.svg) check(`${representation.view} camera restores after focus`, await renderedNode.getAttribute("style") === camera);
+        if (index === 0 && process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-focus-restored.png"), fullPage: true });
         check(`${representation.view} restores shell panels`, await page.getByTestId("viewer-focus-toggle").isVisible() && await page.locator('[data-testid="explorer-my-work-section"]').isVisible());
 
         if (representation.view === "Event Flow Flow") {
           for (const subview of ["Topology", "Causal", "Flow"]) {
             await page.getByRole("button", { name: subview, exact: true }).click();
-            if (subview === "Causal") await page.locator(".react-flow__viewport").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+            let causalCamera = null;
+            if (subview === "Causal") {
+              const causalViewport = page.locator(".react-flow__viewport");
+              await causalViewport.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+              causalCamera = await causalViewport.getAttribute("style");
+            }
             await page.getByTestId("viewer-focus-toggle").click();
             await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+            await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            if (subview === "Causal") {
+              const graphGeometry = await page.evaluate(() => {
+                const pane = document.querySelector(".react-flow");
+                const nodes = [...document.querySelectorAll(".react-flow__node")];
+                if (!pane || nodes.length === 0) return null;
+                const bounds = pane.getBoundingClientRect();
+                const rects = nodes.map((node) => node.getBoundingClientRect());
+                const graph = {
+                  left: Math.min(...rects.map((rect) => rect.left)),
+                  top: Math.min(...rects.map((rect) => rect.top)),
+                  right: Math.max(...rects.map((rect) => rect.right)),
+                  bottom: Math.max(...rects.map((rect) => rect.bottom)),
+                };
+                return {
+                  centerDeltaX: Math.abs((graph.left + graph.right) / 2 - (bounds.left + bounds.right) / 2),
+                  centerDeltaY: Math.abs((graph.top + graph.bottom) / 2 - (bounds.top + bounds.bottom) / 2),
+                  contained: graph.left >= bounds.left - 2 && graph.top >= bounds.top - 2 && graph.right <= bounds.right + 2 && graph.bottom <= bounds.bottom + 2,
+                };
+              });
+              check("Causal graph is centered and fitted in focus", graphGeometry !== null && graphGeometry.centerDeltaX < 20 && graphGeometry.centerDeltaY < 20 && graphGeometry.contained, JSON.stringify(graphGeometry));
+              const causalViewport = page.locator(".react-flow__viewport");
+              const fittedCamera = await causalViewport.getAttribute("style");
+              await page.locator(".react-flow").hover();
+              await page.mouse.wheel(0, -160);
+              await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+              const manuallyAdjustedCamera = await causalViewport.getAttribute("style");
+              await page.waitForTimeout(120);
+              check("Causal manual zoom is not refitted in focus", manuallyAdjustedCamera !== fittedCamera && await causalViewport.getAttribute("style") === manuallyAdjustedCamera);
+            }
             await page.keyboard.press("Escape");
             await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+            if (subview === "Causal") check("Causal camera restores after focus", await page.locator(".react-flow__viewport").getAttribute("style") === causalCamera);
           }
         }
       }
+      const markdownRow = page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-note"]').filter({ hasText: "Focus reading" });
+      await markdownRow.getByTestId("select-note-button").click();
+      await page.getByTestId("note-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const markdownScroller = page.getByTestId("note-preview");
+      await markdownScroller.evaluate((element) => { element.scrollTop = 160; });
+      const markdownScroll = await markdownScroller.evaluate((element) => element.scrollTop);
+      await page.getByTestId("viewer-focus-toggle").click();
+      await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      check("Markdown preserves reading scroll in focus", await markdownScroller.evaluate((element) => element.scrollTop) === markdownScroll);
+      await page.keyboard.press("Escape");
+      await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
     } finally {
       if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
       await context.close();

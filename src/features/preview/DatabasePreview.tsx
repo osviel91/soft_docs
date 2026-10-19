@@ -8,9 +8,9 @@ import { renderDatabaseSvg } from "../../renderer/svg/database-svg-renderer";
 import DiagramViewport, { type DiagramViewportTransform } from "./DiagramViewport";
 import DiagramGuidance from "./DiagramGuidance";
 
-export default function DatabasePreview({ source, onNodeSelect, activeNodeId = null, reviewChanges = [], linkedTransform = null, onTransformChange, reviewMode = false, comparisonMode = false }: {
+export default function DatabasePreview({ source, onNodeSelect, activeNodeId = null, reviewChanges = [], linkedTransform = null, onTransformChange, reviewMode = false, comparisonMode = false, focusMode = false }: {
   source: string; onNodeSelect?: (tableId: string | null) => void; activeNodeId?: string | null; reviewChanges?: SemanticChange[];
-  linkedTransform?: DiagramViewportTransform | null; onTransformChange?: (transform: DiagramViewportTransform) => void; reviewMode?: boolean; comparisonMode?: boolean;
+  linkedTransform?: DiagramViewportTransform | null; onTransformChange?: (transform: DiagramViewportTransform) => void; reviewMode?: boolean; comparisonMode?: boolean; focusMode?: boolean;
 }) {
   const parsed = useMemo(() => parseDatabase(source), [source]);
   const projection = useMemo(() => parsed.model ? projectDatabase(parsed.model) : null, [parsed.model]);
@@ -27,5 +27,5 @@ export default function DatabasePreview({ source, onNodeSelect, activeNodeId = n
   if (invalid) return <div className="database-preview" data-testid="database-preview-invalid" role="status"><DiagramGuidance view="database" comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} /><p>Database source has errors. Fix the diagnostics to render this Database Diagram.</p></div>;
   if (layoutError) return <div className="database-preview" role="alert">Database Diagram layout failed. The source remains available for editing; this does not indicate invalid source.</div>;
   if (!projection || !layout) return <div className="database-preview" aria-busy="true" role="status">Laying out Database Diagram…</div>;
-   return <div className="preview database-preview" data-testid="database-preview"><div className="sequence-guidance-toolbar"><DiagramGuidance view="database" comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} /></div><DiagramViewport svg={renderDatabaseSvg(projection, layout, reviewChanges, activeNodeId)} size={{ width: layout.width, height: layout.height }} svgTestId="database-preview-svg" onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} reviewMode={reviewMode} linkedTransform={linkedTransform} onTransformChange={onTransformChange} /></div>;
+   return <div className="preview database-preview" data-testid="database-preview"><div className="sequence-guidance-toolbar"><DiagramGuidance view="database" comparison={comparisonMode} diffDecorations={reviewChanges.length > 0} /></div><DiagramViewport svg={renderDatabaseSvg(projection, layout, reviewChanges, activeNodeId)} size={{ width: layout.width, height: layout.height }} svgTestId="database-preview-svg" onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} reviewMode={reviewMode} linkedTransform={linkedTransform} onTransformChange={onTransformChange} focusMode={focusMode} /></div>;
 }

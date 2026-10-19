@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FOCUS_MODE_BINDING,
   bindingLabel,
   bindingMatches,
   type KeyBinding,
@@ -18,6 +19,11 @@ function chordEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
 }
 
 describe("bindingMatches", () => {
+  it("matches the two-key Focus chord with either platform modifier", () => {
+    expect(bindingMatches(FOCUS_MODE_BINDING, chordEvent({ key: ";", metaKey: true }))).toBe(true);
+    expect(bindingMatches(FOCUS_MODE_BINDING, chordEvent({ key: ";", ctrlKey: true }))).toBe(true);
+    expect(bindingMatches(FOCUS_MODE_BINDING, chordEvent({ key: ";", metaKey: true, shiftKey: true }))).toBe(false);
+  });
   it("requires the key and every declared modifier to be present", () => {
     const binding: KeyBinding = { key: "p", mod: true, shift: true };
     expect(

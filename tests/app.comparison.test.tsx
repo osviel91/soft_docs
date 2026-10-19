@@ -80,7 +80,7 @@ function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conce
 }
 
 describe("App — dual viewer foundation", () => {
-  it("focuses the mounted viewer without changing preferences or its camera, and restores focus after Escape", async () => {
+  it("focuses the mounted viewer with the two-key chord and restores camera and focus after Escape", async () => {
     const saved = defaultUiPreferences();
     saved.shell.explorerWidth = 342;
     saved.shell.editorWidth = 390;
@@ -90,12 +90,12 @@ describe("App — dual viewer foundation", () => {
     await command("New Diagram");
 
     const editor = screen.getByTestId("dsl-textarea");
-    fireEvent.keyDown(editor, { key: "f" });
+    fireEvent.keyDown(editor, { key: ";", ctrlKey: true });
     expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
     editor.blur();
-    fireEvent.keyDown(document.body, { key: "f" });
+    fireEvent.keyDown(document.body, { key: ";", ctrlKey: true });
     expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--focus");
-    fireEvent.keyDown(document.body, { key: "f" });
+    fireEvent.keyDown(document.body, { key: ";", ctrlKey: true });
     expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
 
     const viewportSvg = await screen.findByTestId("preview-svg");
@@ -103,14 +103,13 @@ describe("App — dual viewer foundation", () => {
     const cameraBefore = viewportSvg.style.transform;
     const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
     const focusButton = screen.getByTestId("viewer-focus-toggle");
-    fireEvent.keyDown(focusButton, { key: "f" });
+    fireEvent.keyDown(focusButton, { key: ";", ctrlKey: true });
     expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
 
     fireEvent.click(focusButton);
     const workspace = document.querySelector(".app__workspace")!;
     expect(workspace).toHaveClass("app__workspace--focus");
     expect(screen.getByTestId("preview-svg")).toBe(viewportSvg);
-    expect(viewportSvg.style.transform).toBe(cameraBefore);
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
     expect(screen.getByRole("button", { name: /Exit focus/ })).toBeInTheDocument();
     expect(screen.getAllByTestId("viewer-focus-toggle")).toHaveLength(1);
@@ -121,6 +120,7 @@ describe("App — dual viewer foundation", () => {
 
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(workspace).not.toHaveClass("app__workspace--focus");
+    expect(viewportSvg.style.transform).toBe(cameraBefore);
     expect(document.activeElement).toBe(screen.getByTestId("viewer-focus-toggle"));
     expect(screen.getByRole("region", { name: "Project explorer" })).toBeInTheDocument();
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);

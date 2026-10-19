@@ -50,6 +50,7 @@ export interface EventFlowPreviewProps {
   focusReviewChange?: string | null;
   reviewSide?: "base" | "proposed";
   comparisonMode?: boolean;
+  focusMode?: boolean;
 }
 
 export default function EventFlowPreview({
@@ -70,6 +71,7 @@ export default function EventFlowPreview({
   focusReviewChange = null,
   reviewSide = "proposed",
   comparisonMode = false,
+  focusMode = false,
 }: EventFlowPreviewProps) {
   const document = useMemo(() => {
     // Parsing here rather than taking an AST keeps this component's contract the
@@ -314,6 +316,7 @@ export default function EventFlowPreview({
                 onTransformChange={onTransformChange}
                 activeReviewChange={activeReviewChange}
                 focusReviewChange={focusReviewChange}
+                focusMode={focusMode}
               />
               {topologyDetailsOpen && <div
                 id="topology-relationships"
@@ -415,7 +418,7 @@ export default function EventFlowPreview({
             </p>
           ) : (
             <>
-              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} selectedNodeId={activeCausalNodeId} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} />}
+              {causalError ? <p className="preview__empty" role="alert">Unable to lay out causal graph: {causalError}. Check the causal document and try again.</p> : <CausalFlowView view={causal} selectedNodeId={activeCausalNodeId} onNodeSelect={selectCausal} onSourceSelect={onNodeSelect} onLayoutState={setCausalLayoutState} onLayoutError={setCausalError} focusMode={focusMode} />}
               {selected && causalDetailsOpen && (
                 <CausalDetails item={selected} view={causal} onSourceSelect={onNodeSelect} />
               )}
@@ -455,6 +458,7 @@ export default function EventFlowPreview({
         onTransformChange={onTransformChange}
         activeReviewChange={activeReviewChange}
         focusReviewChange={focusReviewChange}
+        focusMode={focusMode}
       />
     </div>
   );

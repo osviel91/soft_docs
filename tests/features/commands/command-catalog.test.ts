@@ -4,6 +4,7 @@ import {
   COMMAND_CATEGORIES,
   availableCommands,
 } from "../../../src/features/commands/command-catalog";
+import { FOCUS_MODE_BINDING } from "../../../src/features/commands/shortcuts";
 
 /** A stable fingerprint of a chord, for the uniqueness check. */
 function fingerprint(binding: {
@@ -48,6 +49,17 @@ describe("command catalog", () => {
         expect(seen.has(key), `${spec.id} duplicates ${key}`).toBe(false);
         seen.add(key);
       }
+    }
+  });
+
+  it("keeps the Focus shortcut free of registered command collisions", () => {
+    const focusChord = fingerprint(FOCUS_MODE_BINDING);
+    for (const environment of [
+      { folderSupported: false, folderOpen: false },
+      { folderSupported: true, folderOpen: false },
+      { folderSupported: true, folderOpen: true },
+    ]) {
+      expect(availableCommands(environment).map((spec) => fingerprint(spec.binding))).not.toContain(focusChord);
     }
   });
 

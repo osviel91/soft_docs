@@ -46,6 +46,7 @@ export interface DiagramViewportProps {
   keyboardStep?: number;
   /** Bumping this value re-fits the diagram (e.g. when a new one loads). */
   resetKey?: string;
+  focusMode?: boolean;
   /** Test id for the element holding the SVG markup. */
   svgTestId?: string;
   /**
@@ -198,6 +199,7 @@ export default function DiagramViewport({
   size,
   keyboardStep = KEYBOARD_PAN_STEP,
   resetKey = "",
+  focusMode = false,
   svgTestId = "viewport-content",
   onNoteToggle,
   onNodeSelect,
@@ -230,6 +232,8 @@ export default function DiagramViewport({
   // Latest camera, readable synchronously so a burst of interactions in one
   // event batch accumulates instead of each computing from a stale render.
   const transformRef = useRef<ViewportTransform>(IDENTITY_TRANSFORM);
+  const preFocusTransform = useRef<ViewportTransform | null>(null);
+  const focusModeRef = useRef(false);
   // Read the callback through a ref so `updateTransform` keeps one identity for
   // the pane's whole life. Callers wire linking conditionally (the callback is
   // undefined while unlinked), and an identity change here would re-run the
@@ -307,6 +311,24 @@ export default function DiagramViewport({
     paneMeasured,
     updateTransform,
   ]);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || focusModeRef.current === focusMode) return;
+    focusModeRef.current = focusMode;
+    if (focusMode) {
+      preFocusTransform.current = transformRef.current;
+      const frame = requestAnimationFrame(() => {
+        if (pane.isConnected) updateTransform(fitTransform(size, measure(pane)));
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    if (preFocusTransform.current) {
+      const previous = preFocusTransform.current;
+      preFocusTransform.current = null;
+      updateTransform(previous);
+    }
+  }, [focusMode, size.width, size.height, updateTransform]);
 
   // Wheel zoom must be a non-passive native listener: React attaches wheel
   // handlers passively, so preventDefault there is ignored and the pane would

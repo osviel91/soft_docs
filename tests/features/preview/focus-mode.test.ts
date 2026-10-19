@@ -11,14 +11,18 @@ describe("focus mode keyboard guards", () => {
     ["link", '<a href="/">link</a>'],
     ["focusable control", '<div tabindex="0"></div>'],
     ["menu item", '<div role="menuitem"></div>'],
-  ])("ignores plain F from %s", (_label, markup) => {
+  ])("ignores the focus chord from %s", (_label, markup) => {
     const target = document.createElement("div");
     target.innerHTML = markup;
     expect(focusShortcutTargetIsInteractive(target.firstElementChild)).toBe(true);
   });
 
-  it("allows plain F from non-interactive shell space", () => {
+  it("allows the focus chord from non-interactive shell space and the viewer canvas", () => {
     expect(focusShortcutTargetIsInteractive(document.createElement("main"))).toBe(false);
+    const canvas = document.createElement("div");
+    canvas.className = "viewport__pane";
+    canvas.tabIndex = 0;
+    expect(focusShortcutTargetIsInteractive(canvas)).toBe(false);
   });
 
   it("recognizes dialog and menu keyboard owners", () => {

@@ -84,3 +84,6 @@ export const COMMAND_PALETTE_BINDING: KeyBinding = {
 
 /** Quick open: the platform modifier plus `P` (plain, no Shift). */
 export const QUICK_OPEN_BINDING: KeyBinding = { key: "p", mod: true };
+
+/** Focus the active viewer without colliding with browser find or project search. */
+export const FOCUS_MODE_BINDING: KeyBinding = { key: ";", mod: true };
