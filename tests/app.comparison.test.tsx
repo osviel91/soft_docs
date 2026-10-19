@@ -7,7 +7,7 @@ import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/typ
 import type { ResourceDiff } from "../src/domain/diff/resource-diff";
 import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../src/workspace/server/api-client";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
-import { UI_PREFERENCES_KEY } from "../src/workspace/ui-preferences";
+import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "../src/workspace/ui-preferences";
 
 afterEach(() => {
   cleanup();
@@ -80,6 +80,52 @@ function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conce
 }
 
 describe("App — dual viewer foundation", () => {
+  it("focuses the mounted viewer without changing preferences or its camera, and restores focus after Escape", async () => {
+    const saved = defaultUiPreferences();
+    saved.shell.explorerWidth = 342;
+    saved.shell.editorWidth = 390;
+    writeUiPreferences(saved);
+    render(<App />);
+    await project();
+    await command("New Diagram");
+
+    const editor = screen.getByTestId("dsl-textarea");
+    fireEvent.keyDown(editor, { key: "f" });
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
+    editor.blur();
+    fireEvent.keyDown(document.body, { key: "f" });
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--focus");
+    fireEvent.keyDown(document.body, { key: "f" });
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
+
+    const viewportSvg = await screen.findByTestId("preview-svg");
+    fireEvent.click(screen.getByTestId("zoom-in"));
+    const cameraBefore = viewportSvg.style.transform;
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
+    const focusButton = screen.getByTestId("viewer-focus-toggle");
+    fireEvent.keyDown(focusButton, { key: "f" });
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
+
+    fireEvent.click(focusButton);
+    const workspace = document.querySelector(".app__workspace")!;
+    expect(workspace).toHaveClass("app__workspace--focus");
+    expect(screen.getByTestId("preview-svg")).toBe(viewportSvg);
+    expect(viewportSvg.style.transform).toBe(cameraBefore);
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+    expect(screen.getByRole("button", { name: /Exit focus/ })).toBeInTheDocument();
+    expect(screen.getAllByTestId("viewer-focus-toggle")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("command-palette-button"));
+    fireEvent.keyDown(screen.getByTestId("palette-input"), { key: "Escape" });
+    expect(workspace).toHaveClass("app__workspace--focus");
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(workspace).not.toHaveClass("app__workspace--focus");
+    expect(document.activeElement).toBe(screen.getByTestId("viewer-focus-toggle"));
+    expect(screen.getByRole("region", { name: "Project explorer" })).toBeInTheDocument();
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
   it("labels same-path SHARED and MY WORK diagrams as distinct selectable versions", () => {
     const shared: DiagramFile = { id: "shared-file", name: "checkout.seq", source: "participant Shared", projectId: "p" };
     const work: DiagramFile = { id: "work-file", name: "checkout.seq", source: "participant Work", projectId: "p" };

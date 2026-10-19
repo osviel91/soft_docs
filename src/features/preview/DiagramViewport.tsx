@@ -71,10 +71,6 @@ export interface DiagramViewportProps {
    */
   activeNodeId?: string | null;
   activeSemanticMessageId?: string | null;
-  /** Whether the shell has expanded this preview to its full workspace. */
-  maximized?: boolean;
-  /** Toggles the preview-only app layout. */
-  onToggleMaximize?: () => void;
   /** Use the smaller control rail and minimap intended for side-by-side review. */
   reviewMode?: boolean;
   /** Optional shared transform for linked comparison panes. */
@@ -210,8 +206,6 @@ export default function DiagramViewport({
   onCausalNodeSelect,
   activeNodeId = null,
   activeSemanticMessageId = null,
-  maximized = false,
-  onToggleMaximize,
   reviewMode = false,
   linkedTransform = null,
   onTransformChange,
@@ -228,6 +222,9 @@ export default function DiagramViewport({
   const [focusedParticipantId, setFocusedParticipantId] = useState<string | null>(null);
   const [messageEndpointsHint, setMessageEndpointsHint] = useState<MessageEndpointsHint | null>(null);
   const [paneSize, setPaneSize] = useState<Size>(() => measure(null));
+  const [paneMeasured, setPaneMeasured] = useState(false);
+  const paneSizeRef = useRef(paneSize);
+  paneSizeRef.current = paneSize;
   const [transform, setTransform] =
     useState<ViewportTransform>(IDENTITY_TRANSFORM);
   // Latest camera, readable synchronously so a burst of interactions in one
@@ -268,6 +265,7 @@ export default function DiagramViewport({
     const pane = paneRef.current;
     if (!pane) return;
     setPaneSize(measure(pane));
+    setPaneMeasured(true);
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => setPaneSize(measure(pane)));
     observer.observe(pane);
@@ -290,29 +288,23 @@ export default function DiagramViewport({
   }, [linkedTransform]);
 
   const fit = useCallback(() => {
-    updateTransform(fitTransform(size, paneSize));
+    updateTransform(fitTransform(size, paneSizeRef.current));
   }, [size, paneSize, updateTransform]);
 
   const resetTo100 = useCallback(() => {
     updateTransform(centeredTransform(size, paneSize));
   }, [size, paneSize, updateTransform]);
 
-  // Fit whenever a different diagram arrives (and once the pane is measured).
-  // Without this a diagram larger than the pane opens off-screen.
-  //
-  // Depend on the measured numbers, not the `size`/`paneSize` objects: callers
-  // routinely pass a fresh `{ width, height }` literal each render, which would
-  // otherwise change `fit`'s identity, re-run this effect, and — when the
-  // camera is linked — report a new camera to the parent on every render,
-  // looping forever.
+  // Fit on first measure or when the document/reset key changes. Resizing the
+  // shell must preserve the user's camera rather than silently fitting again.
   useEffect(() => {
-    updateTransform(fitTransform(size, paneSize));
+    if (!paneMeasured) return;
+    updateTransform(fitTransform(size, paneSizeRef.current));
   }, [
     size.width,
     size.height,
-    paneSize.width,
-    paneSize.height,
     resetKey,
+    paneMeasured,
     updateTransform,
   ]);
 
@@ -837,26 +829,6 @@ export default function DiagramViewport({
         >
           1:1
         </button>
-        {onToggleMaximize ? (
-          <button
-            type="button"
-            className="icon-button"
-            data-testid="preview-maximize"
-            aria-label={
-              maximized
-                ? "Restore workspace panels"
-                : "Maximize diagram preview"
-            }
-            title={
-              maximized
-                ? "Restore workspace panels"
-                : "Maximize diagram preview"
-            }
-            onClick={onToggleMaximize}
-          >
-            {maximized ? "⊡" : "⤢"}
-          </button>
-        ) : null}
         <button
           type="button"
           className="icon-button"

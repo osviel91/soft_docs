@@ -1042,6 +1042,27 @@ body {
   display: none;
 }
 
+.app__workspace--focus .app__pane--explorer,
+.app__workspace--focus .app__pane--editor,
+.app__workspace--focus .app__splitter,
+.app__workspace--focus .app__explorer-restore,
+.app__workspace--focus .editor-restore-button {
+  display: none;
+}
+
+.app__workspace--focus .app__pane--preview {
+  flex: 1 1 100%;
+  min-width: 0;
+  border-left: 0;
+}
+
+.viewer-focus-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 4px 8px;
+}
+
 .app__workspace--comparison-editor-hidden .app__pane--editor,
 .app__workspace--comparison-editor-hidden > .app__splitter--editor {
   display: none;

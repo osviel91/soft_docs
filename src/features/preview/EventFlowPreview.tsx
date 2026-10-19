@@ -39,10 +39,6 @@ export interface EventFlowPreviewProps {
   /** The node to highlight, following the editor's caret. */
   activeNodeId?: string | null;
   activeSemanticMessageId?: string | null;
-  /** Whether the preview is the only visible app pane. */
-  maximized?: boolean;
-  /** Toggles the preview-only app layout. */
-  onToggleMaximize?: () => void;
   flow?: EventFlow | null;
   view?: EventFlowView;
   onViewChange?: (view: EventFlowView) => void;
@@ -63,8 +59,6 @@ export default function EventFlowPreview({
   onSemanticOccurrenceSelect,
   activeNodeId = null,
   activeSemanticMessageId = null,
-  maximized = false,
-  onToggleMaximize,
   flow: providedFlow,
   view = "flow",
   onViewChange,
@@ -315,8 +309,6 @@ export default function EventFlowPreview({
                 onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
                 activeNodeId={activeNodeId}
                 activeSemanticMessageId={activeSemanticMessageId}
-                maximized={maximized}
-                onToggleMaximize={onToggleMaximize}
                 reviewMode={reviewMode}
                 linkedTransform={linkedTransform}
                 onTransformChange={onTransformChange}
@@ -458,8 +450,6 @@ export default function EventFlowPreview({
         onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
         activeNodeId={activeNodeId}
         activeSemanticMessageId={activeSemanticMessageId}
-        maximized={maximized}
-        onToggleMaximize={onToggleMaximize}
         reviewMode={reviewMode}
         linkedTransform={linkedTransform}
         onTransformChange={onTransformChange}
