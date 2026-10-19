@@ -2628,7 +2628,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const overviewButton = page.getByRole("button", { name: "Show full graph overview" });
       await overviewButton.focus();
       check("overview action has keyboard focus", await overviewButton.evaluate((button) => document.activeElement === button));
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("Space");
       await page.waitForFunction(() => {
         const transform = getComputedStyle(document.querySelector(".causal-flow .react-flow__viewport")).transform;
         return transform !== "none" && new DOMMatrix(transform).a < 0.8;
