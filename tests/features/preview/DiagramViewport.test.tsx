@@ -312,7 +312,7 @@ describe("DiagramViewport", () => {
     expect(screen.getByLabelText("Zoom out")).toBeInTheDocument();
     expect(screen.getByLabelText("Fit diagram to view")).toBeInTheDocument();
     expect(screen.getByLabelText("Reset zoom to 100%")).toBeInTheDocument();
-    expect(screen.getByLabelText("Present fullscreen")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-fullscreen")).not.toBeInTheDocument();
   });
 
   it("does not duplicate the shell focus control inside the canvas toolbar", () => {

@@ -498,23 +498,6 @@ export default function DiagramViewport({
   const zoomOut = () =>
     updateTransform((current) => zoomAtCenter(current, 1 / ZOOM_STEP, paneSize));
 
-  const [fullscreen, setFullscreen] = useState(false);
-  useEffect(() => {
-    const onFullscreenChange = () =>
-      setFullscreen(document.fullscreenElement === viewportRef.current);
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () =>
-      document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, []);
-
-  const toggleFullscreen = () => {
-    if (document.fullscreenElement === viewportRef.current) {
-      void document.exitFullscreen().catch(() => {});
-    } else {
-      void viewportRef.current?.requestFullscreen?.().catch(() => {});
-    }
-  };
-
   // Note bullets are part of the injected SVG, so activation is delegated: find
   // the nearest element carrying `data-note-index` and report it. This keeps the
   // viewport agnostic about what a note is.
@@ -850,20 +833,6 @@ export default function DiagramViewport({
           onClick={resetTo100}
         >
           1:1
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          data-testid="preview-fullscreen"
-          aria-label={
-            fullscreen ? "Exit presentation fullscreen" : "Present fullscreen"
-          }
-          title={
-            fullscreen ? "Exit presentation fullscreen" : "Present fullscreen"
-          }
-          onClick={toggleFullscreen}
-        >
-          {fullscreen ? "⊡" : "⛶"}
         </button>
       </div>
 

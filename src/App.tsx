@@ -662,6 +662,9 @@ export default function App() {
   const comparisonEditorHidden = uiPreferences.screens.comparison.editorHidden;
   const [focusMode, setFocusMode] = useState(false);
   const focusOrigin = useRef<HTMLElement | null>(null);
+  const previewPaneRef = useRef<HTMLElement | null>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState(false);
   const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
@@ -675,6 +678,30 @@ export default function App() {
     focusOrigin.current = origin ?? document.querySelector<HTMLElement>(".viewer-focus-toggle");
     setFocusMode(true);
   }, [focusMode]);
+  useEffect(() => {
+    const syncFullscreen = () => setPreviewFullscreen(document.fullscreenElement === previewPaneRef.current);
+    const onFullscreenError = () => setFullscreenError(true);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("fullscreenerror", onFullscreenError);
+    syncFullscreen();
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("fullscreenerror", onFullscreenError);
+    };
+  }, []);
+  const togglePreviewFullscreen = async () => {
+    setFullscreenError(false);
+    try {
+      if (document.fullscreenElement === previewPaneRef.current) await document.exitFullscreen();
+      else {
+        const requestFullscreen = previewPaneRef.current?.requestFullscreen;
+        if (!requestFullscreen) throw new Error("Fullscreen API unavailable");
+        await requestFullscreen.call(previewPaneRef.current);
+      }
+    } catch {
+      setFullscreenError(true);
+    }
+  };
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
   const [resizing, setResizing] = useState<"explorer" | "editor" | null>(null);
@@ -2878,7 +2905,7 @@ export default function App() {
         pendingProposalWithdrawal || menu || exportDiagramOpen || shareProjectId,
       );
       if (event.defaultPrevented || keyboardOverlayOpen) return;
-      if (event.key === "Escape" && focusMode) {
+      if (event.key === "Escape" && focusMode && document.fullscreenElement !== previewPaneRef.current) {
         setFocusMode(false);
         if (focusOrigin.current?.isConnected) focusOrigin.current.focus();
         event.preventDefault();
@@ -4234,6 +4261,7 @@ export default function App() {
                 />
 
                 <section
+                  ref={previewPaneRef}
                   className="app__pane app__pane--preview"
                   aria-label={
                     noteMode
@@ -4254,6 +4282,17 @@ export default function App() {
                         onClick={(event) => toggleFocusMode(event.currentTarget)}
                       >
                         {focusMode ? "Exit focus" : "Focus viewer"} <kbd>{bindingLabel(FOCUS_MODE_BINDING)}</kbd>
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        data-testid="viewer-fullscreen-toggle"
+                        aria-pressed={previewFullscreen}
+                        aria-label={previewFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                        title={fullscreenError ? "Fullscreen unavailable; Focus remains available" : previewFullscreen ? "Exit fullscreen (Escape)" : "Enter fullscreen"}
+                        onClick={() => void togglePreviewFullscreen()}
+                      >
+                        {previewFullscreen ? "Exit fullscreen" : "Fullscreen"}
                       </button>
                     </div>
                   ) : null}

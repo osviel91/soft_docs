@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./app-harness";
 import ComparisonView, { RevisionDiffSummary, type ComparisonOption, type RevisionComparisonResource } from "../src/features/preview/ComparisonView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
@@ -11,6 +11,9 @@ import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "..
 
 afterEach(() => {
   cleanup();
+  delete (document as unknown as Record<string, unknown>).fullscreenElement;
+  delete (document as unknown as Record<string, unknown>).exitFullscreen;
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>).requestFullscreen;
   localStorage.removeItem(UI_PREFERENCES_KEY);
 });
 
@@ -80,6 +83,62 @@ function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conce
 }
 
 describe("App — dual viewer foundation", () => {
+  it("tracks fullscreen, keeps Focus during Escape dispatch, then restores Focus on exit", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
+    const pane = document.querySelector(".app__pane--preview") as HTMLElement;
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreenElement });
+    Object.defineProperty(pane, "requestFullscreen", { configurable: true, value: vi.fn(async () => {
+      fullscreenElement = pane;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    }) });
+    Object.defineProperty(document, "exitFullscreen", { configurable: true, value: vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    }) });
+
+    fireEvent.click(screen.getByTestId("viewer-fullscreen-toggle"));
+    expect(await screen.findByRole("button", { name: "Exit fullscreen" })).toHaveAttribute("aria-pressed", "true");
+    fullscreenElement = null;
+    document.dispatchEvent(new Event("fullscreenchange"));
+    expect(await screen.findByRole("button", { name: "Enter fullscreen" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByTestId("viewer-fullscreen-toggle"));
+    expect(await screen.findByRole("button", { name: "Exit fullscreen" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("viewer-focus-toggle"));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--focus");
+    fireEvent.click(screen.getByTestId("viewer-fullscreen-toggle"));
+    expect(await screen.findByRole("button", { name: "Enter fullscreen" })).toHaveAttribute("aria-pressed", "false");
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--focus");
+    fullscreenElement = document.createElement("div");
+    document.dispatchEvent(new Event("fullscreenchange"));
+    expect(screen.getByTestId("viewer-fullscreen-toggle")).toHaveAttribute("aria-pressed", "false");
+    fullscreenElement = null;
+    document.dispatchEvent(new Event("fullscreenchange"));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--focus");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
+  it("does not mark fullscreen active when the API is unavailable or rejects", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    const button = screen.getByTestId("viewer-fullscreen-toggle");
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(button).toHaveAttribute("title", expect.stringContaining("unavailable"));
+
+    const pane = document.querySelector(".app__pane--preview") as HTMLElement;
+    Object.defineProperty(pane, "requestFullscreen", { configurable: true, value: vi.fn().mockRejectedValue(new Error("denied")) });
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toHaveAttribute("title", expect.stringContaining("unavailable")));
+    expect(button).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("focuses the mounted viewer with the two-key chord and restores camera and focus after Escape", async () => {
     const saved = defaultUiPreferences();
     saved.shell.explorerWidth = 342;
