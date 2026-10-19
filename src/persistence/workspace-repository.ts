@@ -61,15 +61,17 @@ export function createWorkspaceRepository(
       return result.rows.map(toServerWorkspace);
     },
 
-    async listAll(userId) {
+    async listForPlatformAdmin() {
       const result = await client.query(
-        `SELECT w.*, m.role
-           FROM workspaces w
-           LEFT JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = $1
-          ORDER BY w.created_at ASC, w.id ASC`,
-        [userId],
+        `SELECT id, name, allow_author_self_review
+           FROM workspaces
+          ORDER BY created_at ASC, id ASC`,
       );
-      return result.rows.map((row) => toServerWorkspace({ ...row, role: row.role ?? "VIEWER" }));
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        allowAuthorSelfReview: row.allow_author_self_review === true || row.allow_author_self_review === "true",
+      }));
     },
 
     async authorSelfReviewAllowed(workspaceId) {

@@ -1069,6 +1069,18 @@ describe("the remote MCP service over Streamable HTTP", () => {
     expect(structured(projects).workspace).toMatchObject({ id: second.id, name: "Second workspace" });
     expect(structured(projects).projects).toEqual([expect.objectContaining({ name: "In second", workspaceId: second.id, workspaceName: "Second workspace" })]);
     await client.close();
+
+    const stranger = await harness.aUser("Workspace outsider");
+    const strangerToken = (await harness.aToken(stranger, ["project:read"])).token;
+    const strangerClient = await connect(strangerToken);
+    const strangerWorkspaces = await strangerClient.callTool({ name: "list_workspaces", arguments: {} });
+    expect(structured(strangerWorkspaces).workspaces).toEqual([
+      expect.objectContaining({ name: "Workspace outsider Workspace", role: "ADMIN" }),
+    ]);
+    const deniedProjects = await strangerClient.callTool({ name: "list_projects", arguments: { workspaceId: second.id } });
+    expect(deniedProjects.isError).toBe(true);
+    expect(JSON.stringify(deniedProjects)).not.toContain("Second workspace");
+    await strangerClient.close();
   });
 
   it("lists projects and reports the caller's role", async () => {

@@ -23,7 +23,7 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -2189,6 +2189,89 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     name: "E2E Viewer",
     email: "viewer@e2e.test",
   };
+
+  await scenario("ServerSettings separates administrative and member workspace catalogs", async () => {
+    const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const outsiderContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const ownerPage = await ownerContext.newPage();
+    const adminPage = await adminContext.newPage();
+    const outsiderPage = await outsiderContext.newPage();
+    let workspaceId = null;
+    try {
+      await ownerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(ownerPage);
+      await signIn(ownerPage, idp, owner);
+      const createdWorkspace = await apiRequest(ownerPage, "/api/workspaces", {
+        method: "POST", body: JSON.stringify({ name: "SEC-UX-1 Private Workspace" }),
+      });
+      if (createdWorkspace.status !== 201) throw new Error(`Private workspace creation failed: ${createdWorkspace.status}`);
+      workspaceId = createdWorkspace.json.workspace.id;
+      const createdProject = await apiRequest(ownerPage, "/api/projects", {
+        method: "POST", body: JSON.stringify({ name: "Private Project", workspaceId }),
+      });
+      if (createdProject.status !== 201) throw new Error(`Private project creation failed: ${createdProject.status}`);
+
+      await adminPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(adminPage);
+      await signIn(adminPage, idp, platformAdmin);
+      const adminMemberCatalog = await apiRequest(adminPage, "/api/workspaces");
+      check("platform admin's ordinary workspace catalog excludes the private workspace", adminMemberCatalog.status === 200 && !adminMemberCatalog.json.workspaces.some((entry) => entry.id === workspaceId));
+      const adminWorkspaceOptions = await adminPage.getByTestId("workspace-server-workspace-select").locator("option").allTextContents();
+      check("global workspace selector excludes the private workspace", !adminWorkspaceOptions.some((name) => name.includes("SEC-UX-1 Private Workspace")), adminWorkspaceOptions.join(", "));
+      const inaccessibleProjects = await apiRequest(adminPage, `/api/projects?workspaceId=${workspaceId}`);
+      check("platform admin without membership receives 404 for private projects", inaccessibleProjects.status === 404);
+
+      await adminPage.getByTestId("workspace-settings").click();
+      await adminPage.getByTestId("workspace-settings-page").waitFor({ state: "visible" });
+      const adminWorkspaceRail = await adminPage.locator(".settings-workspace-rail").innerText();
+      check("workspace navigation in settings excludes the private workspace", !adminWorkspaceRail.includes("SEC-UX-1 Private Workspace"), adminWorkspaceRail);
+      if (process.env.E2E_SCREENSHOT_DIR) {
+        await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+        await adminPage.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "sec-ux-1-admin-member-catalog.png"), fullPage: true });
+      }
+
+      await adminPage.getByTestId("settings-scope-platform").click();
+      const policyLabel = "Allow authors to approve proposals in SEC-UX-1 Private Workspace";
+      const policyControl = adminPage.getByLabel(policyLabel);
+      await policyControl.waitFor({ state: "visible" });
+      check("private workspace appears only in platform policy controls", await adminPage.locator(".settings-platform").innerText().then((text) => text.includes("SEC-UX-1 Private Workspace")) && !(await adminPage.locator(".settings-platform").innerText()).includes("VIEWER"));
+      const policyRects = await adminPage.locator(".settings-user").evaluateAll((rows) => rows.map((row) => {
+        const name = row.querySelector("strong")?.getBoundingClientRect();
+        const control = row.querySelector("input")?.getBoundingClientRect();
+        return { name: name && { right: name.right, top: name.top, bottom: name.bottom }, control: control && { left: control.left, top: control.top, bottom: control.bottom } };
+      }));
+      check("policy labels and controls do not overlap", policyRects.every(({ name, control }) => !name || !control || name.right <= control.left || name.bottom <= control.top || control.bottom <= name.top), JSON.stringify(policyRects));
+      if (process.env.E2E_SCREENSHOT_DIR) await adminPage.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "sec-ux-1-admin-policy-catalog.png"), fullPage: true });
+      const wasChecked = await policyControl.isChecked();
+      const policyPatch = adminPage.waitForResponse((response) => response.url().includes(`/api/admin/workspaces/${workspaceId}/self-review`) && response.request().method() === "PATCH");
+      await policyControl.click();
+      check("platform administrator can update policy without workspace membership", (await policyPatch).status() === 204);
+      const policyCatalog = await apiRequest(adminPage, "/api/admin/workspaces");
+      const privatePolicy = policyCatalog.json.workspaces.find((entry) => entry.id === workspaceId);
+      check("administrative catalog contains only minimal policy fields", JSON.stringify(Object.keys(privatePolicy ?? {}).sort()) === JSON.stringify(["allowAuthorSelfReview", "id", "name"]));
+      check("policy update is reflected by the administrative catalog", privatePolicy?.allowAuthorSelfReview === !wasChecked);
+      if (process.env.E2E_SCREENSHOT_DIR) await adminPage.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "sec-ux-1-admin-policy-updated.png"), fullPage: true });
+
+      await outsiderPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(outsiderPage);
+      await signIn(outsiderPage, idp, viewer);
+      await outsiderPage.getByTestId("workspace-settings").click();
+      await outsiderPage.getByTestId("workspace-settings-page").waitFor({ state: "visible" });
+      const outsiderCatalog = await apiRequest(outsiderPage, "/api/workspaces");
+      check("non-admin ordinary catalog contains only the outsider's memberships", outsiderCatalog.status === 200 && outsiderCatalog.json.workspaces.every((entry) => entry.id !== workspaceId));
+      const outsiderWorkspaceOptions = await outsiderPage.getByTestId("workspace-server-workspace-select").locator("option").allTextContents();
+      check("non-admin global selector contains only member workspaces", !outsiderWorkspaceOptions.some((name) => name.includes("SEC-UX-1 Private Workspace")), outsiderWorkspaceOptions.join(", "));
+      check("non-admin cannot access administrative catalog", (await apiRequest(outsiderPage, "/api/admin/workspaces")).status === 403);
+      check("non-admin settings expose no platform controls or foreign workspace", !(await outsiderPage.getByTestId("settings-scope-platform").count()) && !(await outsiderPage.locator(".settings-workspace-rail").innerText()).includes("SEC-UX-1 Private Workspace"));
+      if (process.env.E2E_SCREENSHOT_DIR) await outsiderPage.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "sec-ux-1-nonadmin-member-catalog.png"), fullPage: true });
+    } finally {
+      if (workspaceId) await apiRequest(ownerPage, `/api/workspaces/${workspaceId}`, { method: "DELETE" });
+      await ownerContext.close();
+      await adminContext.close();
+      await outsiderContext.close();
+    }
+  });
 
   await scenario("Workspace invitations preserve authentication and membership boundaries", async () => {
     const ownerContext = await browser.newContext();

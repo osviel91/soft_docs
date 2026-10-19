@@ -90,6 +90,55 @@ async function signIn(): Promise<{ cookie: string; userId: string }> {
 }
 
 describe("workspace lifecycle API", () => {
+  it("separates member workspaces from the platform policy catalog", async () => {
+    const router = createRouter(dependencies);
+    const owner = await signIn();
+    const memberAdmin = await signIn();
+    const editor = await signIn();
+    const viewer = await signIn();
+    const platformAdmin = await signIn();
+    const workspaceResponse = await router.handle(request("POST", "/api/workspaces", owner.cookie, { name: "Private workspace" }));
+    const workspaceId = JSON.parse(workspaceResponse.body).workspace.id as string;
+
+    for (const [user, role] of [[memberAdmin, "ADMIN"], [editor, "EDITOR"], [viewer, "VIEWER"]] as const) {
+      expect((await router.handle(request("PUT", `/api/workspaces/${workspaceId}/members/${user.userId}`, owner.cookie, { role }))).status).toBe(200);
+    }
+    await dependencies.sql.query("UPDATE users SET platform_admin = true WHERE id = $1", [platformAdmin.userId]);
+
+    for (const [user, role] of [[owner, "ADMIN"], [memberAdmin, "ADMIN"], [editor, "EDITOR"], [viewer, "VIEWER"]] as const) {
+      const listed = await router.handle(request("GET", "/api/workspaces", user.cookie));
+      const workspaces = JSON.parse(listed.body).workspaces as Array<{ id: string; role: string }>;
+      expect(workspaces.find((workspace) => workspace.id === workspaceId)?.role).toBe(role);
+    }
+
+    const platformList = await router.handle(request("GET", "/api/workspaces", platformAdmin.cookie));
+    expect(JSON.parse(platformList.body).workspaces.map((workspace: { id: string }) => workspace.id)).not.toContain(workspaceId);
+
+    const deniedAdminCatalog = await router.handle(request("GET", "/api/admin/workspaces", owner.cookie));
+    expect(deniedAdminCatalog.status).toBe(403);
+    const adminCatalog = await router.handle(request("GET", "/api/admin/workspaces", platformAdmin.cookie));
+    expect(adminCatalog.status).toBe(200);
+    const adminWorkspace = JSON.parse(adminCatalog.body).workspaces.find((workspace: { id: string }) => workspace.id === workspaceId);
+    expect(adminWorkspace).toEqual({ id: workspaceId, name: "Private workspace", allowAuthorSelfReview: false });
+
+    const hiddenProjects = await router.handle(request("GET", `/api/projects?workspaceId=${workspaceId}`, platformAdmin.cookie));
+    expect(hiddenProjects.status).toBe(404);
+    expect(JSON.parse(hiddenProjects.body).error.code).toBe("not_found");
+    const policyUpdate = await router.handle(request("PATCH", `/api/admin/workspaces/${workspaceId}/self-review`, platformAdmin.cookie, { allowed: true }));
+    expect(policyUpdate.status).toBe(204);
+    expect(await dependencies.workspaces.authorSelfReviewAllowed(workspaceId)).toBe(true);
+
+    expect((await router.handle(request("DELETE", `/api/workspaces/${workspaceId}/members/${viewer.userId}`, owner.cookie))).status).toBe(204);
+    const afterRevocation = await router.handle(request("GET", "/api/workspaces", viewer.cookie));
+    expect(JSON.parse(afterRevocation.body).workspaces.map((workspace: { id: string }) => workspace.id)).not.toContain(workspaceId);
+    expect((await router.handle(request("GET", `/api/projects?workspaceId=${workspaceId}`, viewer.cookie))).status).toBe(404);
+
+    const platformJoined = await router.handle(request("PUT", `/api/workspaces/${workspaceId}/members/${platformAdmin.userId}`, owner.cookie, { role: "VIEWER" }));
+    expect(platformJoined.status).toBe(200);
+    const platformMemberList = await router.handle(request("GET", "/api/workspaces", platformAdmin.cookie));
+    expect(JSON.parse(platformMemberList.body).workspaces.find((workspace: { id: string }) => workspace.id === workspaceId)).toMatchObject({ id: workspaceId, role: "VIEWER" });
+  });
+
   it("creates, previews, and accepts a single-use workspace link via sessions", async () => {
     const router = createRouter(dependencies);
     const owner = await signIn();

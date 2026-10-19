@@ -47,6 +47,7 @@ import WorkspaceSwitcher, {
 } from "./features/explorer/WorkspaceSwitcher";
 import type {
   ServerAdminUser,
+  ServerAdminWorkspacePolicy,
   ServerProject,
   ServerWorkspace,
   ServerWorkspaceMember,
@@ -400,6 +401,9 @@ export default function App() {
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspace[]>(
     [],
   );
+  const [adminWorkspaces, setAdminWorkspaces] = useState<ServerAdminWorkspacePolicy[]>([]);
+  const [adminWorkspacesError, setAdminWorkspacesError] = useState<string | null>(null);
+  const [adminWorkspacesLoading, setAdminWorkspacesLoading] = useState(true);
   const [serverWorkspacesLoaded, setServerWorkspacesLoaded] = useState(false);
   const [workspaceMembersByWorkspaceId, setWorkspaceMembersByWorkspaceId] =
     useState<Record<string, ServerWorkspaceMember[]>>({});
@@ -444,19 +448,37 @@ export default function App() {
         setSelectedServerWorkspaceId(null);
       });
   }, [apiClient]);
+  const refreshAdminWorkspaces = useCallback(async () => {
+    setAdminWorkspacesLoading(true);
+    setAdminWorkspacesError(null);
+    try {
+      setAdminWorkspaces(await apiClient.listAdminWorkspaces());
+    } catch {
+      setAdminWorkspacesError("Could not load platform workspace policies. Please try again.");
+    } finally {
+      setAdminWorkspacesLoading(false);
+    }
+  }, [apiClient]);
   useEffect(() => {
     if (auth.user?.platformAdmin !== true) {
       setAdminUsers([]);
+      setAdminWorkspaces([]);
+      setAdminWorkspacesError(null);
+      setAdminWorkspacesLoading(false);
       return;
     }
     void apiClient
       .listAdminUsers()
       .then(setAdminUsers)
       .catch(() => setAdminUsers([]));
-  }, [apiClient, auth.user?.platformAdmin]);
+    void refreshAdminWorkspaces();
+  }, [apiClient, auth.user?.platformAdmin, refreshAdminWorkspaces]);
   useEffect(() => {
     if (auth.status !== "authenticated") {
       setServerWorkspaces([]);
+      setAdminWorkspaces([]);
+      setAdminWorkspacesError(null);
+      setAdminWorkspacesLoading(false);
       setServerWorkspacesLoaded(false);
       setWorkspaceMembersByWorkspaceId({});
       setSelectedServerWorkspaceId(null);
@@ -545,6 +567,9 @@ export default function App() {
     (workspaceId: string, allowed: boolean) => {
       void apiClient.setWorkspaceAuthorSelfReview(workspaceId, allowed).then(() => {
         setServerWorkspaces((workspaces) => workspaces.map((workspace) =>
+          workspace.id === workspaceId ? { ...workspace, allowAuthorSelfReview: allowed } : workspace,
+        ));
+        setAdminWorkspaces((workspaces) => workspaces.map((workspace) =>
           workspace.id === workspaceId ? { ...workspace, allowAuthorSelfReview: allowed } : workspace,
         ));
       });
@@ -3673,6 +3698,10 @@ export default function App() {
             />
           ) : undefined}
           adminUsers={adminUsers}
+          adminWorkspaces={adminWorkspaces}
+          adminWorkspacesError={adminWorkspacesError}
+          adminWorkspacesLoading={adminWorkspacesLoading}
+          onRetryAdminWorkspaces={() => void refreshAdminWorkspaces()}
           onSetUserStatus={setAdminUserStatus}
           onCreatePasswordRecovery={createAdminPasswordRecovery}
           workspaces={serverWorkspaces}

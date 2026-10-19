@@ -71,6 +71,8 @@ function fakeApi(
       updatedAt: new Date(0).toISOString(),
     },
   ],
+  inaccessibleWorkspaceId?: string,
+  workspaceFailureStatus = 404,
 ) {
   const calls: string[] = [];
   const bodies: { path: string; body: unknown }[] = [];
@@ -78,7 +80,7 @@ function fakeApi(
   const fetch = async (input: string, init?: RequestInit) => {
     const url = new URL(input, "http://app.test");
     const method = (init?.method ?? "GET").toUpperCase();
-    calls.push(`${method} ${url.pathname}`);
+    calls.push(`${method} ${url.pathname}${url.search}`);
     if (typeof init?.body === "string") {
       bodies.push({ path: url.pathname, body: JSON.parse(init.body) });
     }
@@ -151,6 +153,9 @@ function fakeApi(
       return reply(200, { agent: AGENT });
     }
     if (url.pathname === "/api/projects") {
+      if (url.searchParams.get("workspaceId") === inaccessibleWorkspaceId) {
+        return reply(workspaceFailureStatus, { error: { code: workspaceFailureStatus === 404 ? "not_found" : "internal", message: "Workspace project listing failed." } });
+      }
       return reply(200, { projects });
     }
     if (url.pathname === "/api/workspaces") {
@@ -165,6 +170,15 @@ function fakeApi(
             createdAt: new Date(0).toISOString(),
             updatedAt: new Date(0).toISOString(),
           },
+          ...(inaccessibleWorkspaceId ? [{
+            id: inaccessibleWorkspaceId,
+            ownerId: "other",
+            name: "No longer accessible",
+            isDefault: false,
+            role: "VIEWER",
+            createdAt: new Date(0).toISOString(),
+            updatedAt: new Date(0).toISOString(),
+          }] : []),
         ],
       });
     }
@@ -222,6 +236,26 @@ describe("agents screen", () => {
     await userEvent.click(screen.getByTestId("agents-signin"));
     expect(auth.signIn).toHaveBeenCalled();
     expect(api.calls).toEqual([]);
+  });
+
+  it("retains accessible projects when another workspace listing is denied", async () => {
+    const api = fakeApi(undefined, "w2");
+    setup(api);
+    await expandAgent();
+    await screen.findByTestId("credential-project-p1");
+    expect(api.calls).toContain("GET /api/projects?workspaceId=w2");
+    expect(screen.getByTestId("agents-error")).toHaveTextContent("Some workspaces are no longer accessible");
+    expect(screen.getByTestId("credential-project-p1")).toBeInTheDocument();
+  });
+
+  it("retains accessible projects and reports a general workspace listing failure", async () => {
+    const api = fakeApi(undefined, "w2", 503);
+    setup(api);
+    await expandAgent();
+    await screen.findByTestId("credential-project-p1");
+    expect(api.calls).toContain("GET /api/projects?workspaceId=w2");
+    expect(screen.getByTestId("agents-error")).toHaveTextContent("Could not load projects for every accessible workspace");
+    expect(screen.getByTestId("credential-project-p1")).toBeInTheDocument();
   });
 
   it("lists agents with their status and credential counts", async () => {
