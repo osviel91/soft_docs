@@ -37,6 +37,7 @@ import {
 } from "./features/editor/snippets";
 import Preview from "./features/preview/Preview";
 import { activeNodeScopeKey } from "./features/preview/active-node-scope";
+import { focusShortcutTargetIsInteractive, hasKeyboardOwningOverlay } from "./features/preview/focus-mode";
 import SemanticMessageInspector from "./features/preview/SemanticMessageInspector";
 import AnalysisSurface from "./features/preview/AnalysisSurface";
 import TraceSurface from "./features/preview/TraceSurface";
@@ -657,11 +658,21 @@ export default function App() {
   const editorWidth = shellLayout.editorWidth;
   const explorerCollapsed = shellLayout.explorerCollapsed;
   const comparisonEditorHidden = uiPreferences.screens.comparison.editorHidden;
-  const [previewMaximized, setPreviewMaximized] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const focusOrigin = useRef<HTMLElement | null>(null);
   const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
+  const toggleFocusMode = useCallback((origin?: HTMLElement): void => {
+    if (focusMode) {
+      setFocusMode(false);
+      if (focusOrigin.current?.isConnected) focusOrigin.current.focus();
+      return;
+    }
+    focusOrigin.current = origin ?? document.querySelector<HTMLElement>(".viewer-focus-toggle");
+    setFocusMode(true);
+  }, [focusMode]);
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
   const [resizing, setResizing] = useState<"explorer" | "editor" | null>(null);
@@ -884,16 +895,19 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!previewMaximized && !comparisonMaximized && !comparisonMaximizedPane) return;
+    if (!comparisonMaximized && !comparisonMaximizedPane) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      setPreviewMaximized(false);
       setComparisonMaximized(false);
       setComparisonMaximizedPane(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [comparisonMaximized, comparisonMaximizedPane, previewMaximized]);
+  }, [comparisonMaximized, comparisonMaximizedPane]);
+
+  useEffect(() => {
+    if (page !== "workspace" || comparisonOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) setFocusMode(false);
+  }, [architecturalProposalId, comparisonOpen, page, presentationActive, proposalReviewOpen, revisionProposalId]);
 
   /**
    * Open a local folder (replacing the active repository) or, when a folder is
@@ -2855,6 +2869,30 @@ export default function App() {
   // workspace + tab state. `runCommand` runs the selected command through the
   // registry (single choke point) and dismisses the palette.
   const { isOpen, open, close } = useCommandPalette();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const keyboardOverlayOpen = hasKeyboardOwningOverlay() || Boolean(
+        isOpen || quickOpenOpen || searchOpen || prompt || pendingDelete || pendingTabCloseId ||
+        pendingProposalWithdrawal || menu || exportDiagramOpen || shareProjectId,
+      );
+      if (event.defaultPrevented || keyboardOverlayOpen) return;
+      if (event.key === "Escape" && focusMode) {
+        setFocusMode(false);
+        if (focusOrigin.current?.isConnected) focusOrigin.current.focus();
+        event.preventDefault();
+        return;
+      }
+      if (event.key.toLowerCase() !== "f" || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || focusShortcutTargetIsInteractive(event.target)) return;
+      if (page !== "workspace" || comparisonOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) return;
+      const toggle = document.querySelector<HTMLElement>(".viewer-focus-toggle");
+      if (!toggle) return;
+      focusOrigin.current = toggle;
+      setFocusMode((current) => !current);
+      event.preventDefault();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [architecturalProposalId, comparisonOpen, exportDiagramOpen, focusMode, isOpen, menu, page, pendingDelete, pendingProposalWithdrawal, pendingTabCloseId, presentationActive, prompt, proposalReviewOpen, quickOpenOpen, revisionProposalId, searchOpen, shareProjectId]);
   /**
    * Return to the workspace and show one of the editor pane's panels.
    *
@@ -3724,7 +3762,7 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${previewMaximized || comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
           >
             {explorerCollapsed ? (
               <button
@@ -4203,6 +4241,19 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
+                  {!comparisonOpen && !proposalReviewOpen && !architecturalProposalId && !revisionProposalId && !noDocumentsOpen && (selectedDiagram || selectedNote) ? (
+                    <div className="viewer-focus-toolbar">
+                      <button
+                        type="button"
+                        className="button button--ghost button--small viewer-focus-toggle"
+                        data-testid="viewer-focus-toggle"
+                        aria-pressed={focusMode}
+                        onClick={(event) => toggleFocusMode(event.currentTarget)}
+                      >
+                        {focusMode ? "Exit focus" : "Focus viewer"} <kbd>F</kbd>
+                      </button>
+                    </div>
+                  ) : null}
                    {comparisonEditorHidden || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {revisionProposalId && server.active?.contextId ? (
                     revisionComparisonResource ? <ProposalResourceComparison resource={revisionComparisonResource} mode={revisionComparisonMode} onModeChange={setRevisionComparisonMode} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" inspectorLabel="REVISION COMPARISON" headingLabel="EDITING" /> : <section className="proposal-inspector" aria-label="Revision comparison"><p className="governance-eyebrow">REVISION COMPARISON</p><p>Select a proposal artifact tab to compare MY WORK with the submitted version.</p></section>
@@ -4273,8 +4324,6 @@ export default function App() {
                       onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
                       activeNodeId={activeNodeId}
                       activeSemanticMessageId={activeSemanticMessageId}
-                      maximized={previewMaximized}
-                      onToggleMaximize={() => setPreviewMaximized((value) => !value)}
                     />
                   ) : (
                     <Preview
@@ -4287,8 +4336,7 @@ export default function App() {
                       onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
                       activeNodeId={activeNodeId}
                       activeSemanticMessageId={activeSemanticMessageId}
-                      maximized={previewMaximized}
-                      onToggleMaximize={() => setPreviewMaximized((value) => !value)}
+                      resetKey={selectedDiagram?.id ?? ""}
                     />
                   )}
                   {((!comparisonOpen && hasActiveSemanticOccurrence) || (traceStart && index && (isSequence || isEventFlow)) || (workspaceMode === "server" && server.active && bindingEntities.length > 0)) ? <AnalysisSurface

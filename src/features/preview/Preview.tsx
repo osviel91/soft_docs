@@ -36,6 +36,8 @@ export interface PreviewProps {
   onRender?: () => void;
   /** True when the source changed since the last render while paused. */
   isStale?: boolean;
+  /** Stable identity used to fit a newly selected resource, not a resized pane. */
+  resetKey?: string;
   /** Called with a node id when the user clicks the element it represents. */
   onNodeSelect?: (nodeId: string | null) => void;
   onSemanticMessageSelect?: (messageId: string, nodeId: string | null) => void;
@@ -43,10 +45,6 @@ export interface PreviewProps {
   /** The node to highlight, following the editor's caret. */
   activeNodeId?: string | null;
   activeSemanticMessageId?: string | null;
-  /** Whether the preview is the only visible app pane. */
-  maximized?: boolean;
-  /** Toggles the preview-only app layout. */
-  onToggleMaximize?: () => void;
   reviewChanges?: SemanticChange[];
   reviewMode?: boolean;
   linkedTransform?: DiagramViewportTransform | null;
@@ -62,13 +60,12 @@ export default function Preview({
   autoUpdate = true,
   onRender,
   isStale = false,
+  resetKey = "",
   onNodeSelect,
   onSemanticMessageSelect,
   onSemanticOccurrenceSelect,
   activeNodeId = null,
   activeSemanticMessageId = null,
-  maximized = false,
-  onToggleMaximize,
   reviewChanges = [],
   reviewMode = false,
   linkedTransform = null,
@@ -155,6 +152,7 @@ export default function Preview({
             svg={reviewSvg}
             size={{ width: document.width, height: document.height }}
             svgTestId="preview-svg"
+            resetKey={resetKey}
             onNoteToggle={toggleNote}
             onNodeSelect={onNodeSelect}
             onSemanticMessageSelect={onSemanticMessageSelect}
@@ -162,8 +160,6 @@ export default function Preview({
             participantAssist
             activeNodeId={activeNodeId}
             activeSemanticMessageId={activeSemanticMessageId}
-            maximized={maximized}
-            onToggleMaximize={onToggleMaximize}
             reviewMode={reviewMode}
             linkedTransform={linkedTransform}
             onTransformChange={onTransformChange}

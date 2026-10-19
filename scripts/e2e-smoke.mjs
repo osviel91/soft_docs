@@ -2190,6 +2190,150 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     email: "viewer@e2e.test",
   };
 
+  await scenario("Universal focus mode preserves viewer state across representations", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    let projectId = null;
+    let workId = null;
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const workspaces = await apiRequest(page, "/api/workspaces");
+      if (workspaces.status !== 200 || !workspaces.json.workspaces.length) throw new Error("No accessible workspace for viewer fixture.");
+      const created = await apiRequest(page, "/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "UX-2A Focus Viewer Fixture", workspaceId: workspaces.json.workspaces[0].id }),
+      });
+      if (created.status !== 201) throw new Error(`Fixture project creation failed: ${created.status}`);
+      projectId = created.json.project.id;
+      const work = await apiRequest(page, `/api/projects/${projectId}/private-work`, {
+        method: "POST",
+        body: JSON.stringify({ name: "UX-2A focus fixture" }),
+      });
+      if (work.status !== 201) throw new Error(`Fixture MY WORK context creation failed: ${work.status} ${work.text}`);
+      workId = work.json.context.id;
+      const causalFocusSource = [
+        'title "Focus Event Flow"',
+        ...Array.from({ length: 9 }, (_, index) => `event Step${index + 1}`),
+        ...Array.from({ length: 8 }, (_, index) => `handler Handler${index + 1}`),
+        ...Array.from({ length: 8 }, (_, index) => `effect persist-${index + 1} on Handler${index + 1}: persist step ${index + 1}`),
+        "producer OrderService", "consumer BillingService", "topic orders",
+        "OrderService publishes Step1 to orders", "BillingService consumes Step1 from orders",
+        ...Array.from({ length: 8 }, (_, index) => [`Step${index + 1} handled by Handler${index + 1}`, `Handler${index + 1} causes Step${index + 2}`]).flat(),
+      ].join("\n");
+      const resources = [
+        { path: "focus-sequence.seq", type: "sequence-diagram", content: 'title "Focus Sequence"\nparticipant Browser\nparticipant API\nBrowser ->> API: request' },
+        { path: "focus-event-flow.eventseq", type: "event-flow", content: causalFocusSource },
+        { path: "focus-concept.concept", type: "conceptual", content: 'concept account "Account"\nconcept invoice "Invoice"\nrelation owns account -> invoice "owns"' },
+        { path: "focus-schema.dbschema", type: "database", content: 'table accounts - "Accounts"\ncolumn accounts account_id "id" {uuid} not-null\nprimary-key accounts_pk accounts (account_id)' },
+        { path: "focus-reading.md", type: "markdown-document", content: "# Focus reading\n\nA readable note." },
+      ];
+      for (const resource of resources) {
+        const response = await apiRequest(page, `/api/projects/${projectId}/resources`, { method: "POST", body: JSON.stringify({ ...resource, contextId: workId }) });
+        if (response.status !== 201) throw new Error(`Fixture resource ${resource.path} failed: ${response.status} ${response.text}`);
+      }
+
+      await page.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: "UX-2A Focus Viewer Fixture" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId(`explorer-private-context-open-${workId}`).click();
+      const myWorkToggle = page.getByTestId("explorer-my-work-toggle");
+      if (await myWorkToggle.getAttribute("aria-expanded") !== "true") await myWorkToggle.click();
+
+      const representations = [
+        { path: "focus-sequence.seq", label: "Focus Sequence", view: "Sequence", svg: "preview-svg" },
+        { path: "focus-event-flow.eventseq", label: "Focus Event Flow", view: "Event Flow Flow", svg: "preview-svg" },
+      ];
+      for (const [index, representation] of representations.entries()) {
+        const row = page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"], [data-testid="explorer-my-work-section"] [data-testid="explorer-note"]').filter({ hasText: representation.label });
+        await row.getByTestId("select-diagram-button").click();
+        await row.waitFor({ state: "visible" });
+        await page.waitForFunction(({ label }) => {
+          const selected = document.querySelector('[data-testid="explorer-my-work-section"] .explorer__resource--selected');
+          return selected?.textContent?.includes(label) ?? false;
+        }, { label: representation.label });
+        if (representation.view === "Event Flow Flow") {
+          await page.getByTestId("event-flow-preview").getByRole("button", { name: "Flow", exact: true }).click();
+        }
+        if (representation.svg) {
+          await page.getByTestId(representation.svg).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+          const marker = representation.view === "Sequence" ? "Focus Sequence" : "Focus Event Flow";
+          if (representation.view === "Sequence" || representation.view.startsWith("Event Flow")) {
+            await page.waitForFunction(({ testId, marker }) => {
+              const surface = document.querySelector(`[data-testid="${testId}"]`);
+              return surface?.textContent?.includes(marker) ?? false;
+            }, { testId: representation.svg, marker });
+          }
+        }
+        if (representation.view === "Sequence") {
+          const prefsBefore = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
+          const focusButton = page.getByTestId("viewer-focus-toggle");
+          await focusButton.focus();
+          await page.keyboard.press("f");
+          check("F is ignored while a button owns focus", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
+          await page.getByTestId("command-palette-button").click();
+          await page.getByTestId("palette-input").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+          await page.keyboard.press("f");
+          check("F is ignored in an editable palette field and active overlay", !(await page.locator(".app__workspace").evaluate((element) => element.classList.contains("app__workspace--focus"))));
+          await page.keyboard.press("Escape");
+          await page.locator(".viewport__pane").click({ position: { x: 300, y: 250 } });
+          await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+          await page.keyboard.press("f");
+          await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+          check("F activates focus from non-interactive viewer context", true);
+          await page.keyboard.press("Escape");
+          await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+          check("Escape restores focus to the available origin control", await focusButton.evaluate((button) => document.activeElement === button));
+          check("F and Escape leave persisted UI preferences untouched", await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences")) === prefsBefore);
+        }
+        const focus = page.getByTestId("viewer-focus-toggle");
+        check(`${representation.view} exposes one shared viewer expansion control`, await focus.count() === 1 && await page.getByTestId("preview-maximize").count() === 0);
+
+        let camera = null;
+        let renderedNode = null;
+        if (representation.svg) {
+          const canvas = page.getByTestId(representation.svg);
+          renderedNode = await canvas.elementHandle();
+          if (!renderedNode) {
+            const previewState = await page.locator(".app__pane--preview").innerText();
+            throw new Error(`${representation.view} selected but ${representation.svg} is absent; preview text: ${previewState}`);
+          }
+          const zoom = page.getByTestId("zoom-in");
+          if (await zoom.count()) await zoom.click();
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          camera = await renderedNode.getAttribute("style");
+        }
+        if (index === 0 && process.env.E2E_SCREENSHOT_DIR) {
+          await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-focus-normal.png"), fullPage: true });
+        }
+        await focus.click();
+        await page.locator('[data-testid="app-shell"] .app__workspace--focus').waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+        check(`${representation.view} renderer remains mounted in focus mode`, !renderedNode || await renderedNode.evaluate((element) => element.isConnected));
+        if (representation.svg) check(`${representation.view} camera is unchanged by focus`, await renderedNode.getAttribute("style") === camera);
+        check(`${representation.view} exit control remains available`, await page.getByRole("button", { name: /Exit focus/ }).isVisible());
+        if (index === 0 && process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-focus-mode.png"), fullPage: true });
+        await page.keyboard.press("Escape");
+        await page.locator('[data-testid="app-shell"] .app__workspace:not(.app__workspace--focus)').waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+        check(`${representation.view} restores shell panels`, await page.getByTestId("viewer-focus-toggle").isVisible() && await page.locator('[data-testid="explorer-my-work-section"]').isVisible());
+
+        if (representation.view === "Event Flow Flow") {
+          for (const subview of ["Topology", "Causal", "Flow"]) {
+            await page.getByRole("button", { name: subview, exact: true }).click();
+            if (subview === "Causal") await page.locator(".react-flow__viewport").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+            await page.getByTestId("viewer-focus-toggle").click();
+            await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+            await page.keyboard.press("Escape");
+            await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+          }
+        }
+      }
+    } finally {
+      if (projectId) await apiRequest(page, `/api/projects/${projectId}`, { method: "DELETE" });
+      await context.close();
+    }
+  });
+
   await scenario("ServerSettings separates administrative and member workspace catalogs", async () => {
     const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -2455,7 +2599,6 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Load diagram Programmed Recharge" }).click();
       await page.getByTestId("event-flow-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("event-flow-preview").getByRole("button", { name: "Flow", exact: true }).click();
-      await page.getByRole("button", { name: "Maximize diagram preview" }).click();
       await page.getByTestId("event-flow-preview").getByRole("button", { name: "Causal", exact: true }).click();
       await page.locator(".causal-flow .react-flow__node").first().waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.waitForFunction(() => {
@@ -2465,6 +2608,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       let initial = await measure();
       check("Programmed Recharge starts at a legible scale without fitting the full wide graph", initial.zoom >= 0.8 && initial.apparentFontSize >= 10 && initial.graph.right - initial.graph.left > initial.width, `viewport=${initial.width}x${initial.height}; zoom=${initial.zoom}; label=${initial.apparentFontSize.toFixed(2)}px; graphWidth=${(initial.graph.right - initial.graph.left).toFixed(1)}px`);
+      if (process.env.E2E_SCREENSHOT_DIR) {
+        await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-causal-normal.png"), fullPage: true });
+      }
       await capture("programmed-initial");
 
       const flowBounds = await page.locator(".causal-flow .react-flow").boundingBox();
@@ -2517,8 +2664,29 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("selecting a causal node does not move the viewport", selected.zoom === reading.zoom && selected.x === reading.x && selected.y === reading.y, `before=${reading.zoom}/${reading.x}/${reading.y}; after=${selected.zoom}/${selected.x}/${selected.y}`);
       await capture("programmed-selected");
 
+      const causalViewport = page.locator(".causal-flow .react-flow__viewport");
+      const causalViewportNode = await causalViewport.elementHandle();
+      if (!causalViewportNode) throw new Error("Causal React Flow viewport was detached before focus mode.");
+      const causalCameraBeforeFocus = await causalViewportNode.getAttribute("style");
+      const focusButton = page.getByTestId("viewer-focus-toggle");
+      await focusButton.click();
+      await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      const selectedBeforeFocus = await page.locator(".causal-flow .react-flow__node.selected").count();
+      check("causal React Flow remains the same mounted instance in focus mode", await causalViewportNode.evaluate((element) => element.isConnected));
+      if (process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-causal-focus.png"), fullPage: true });
+
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.waitForFunction((style) => document.querySelector(".causal-flow .react-flow__viewport")?.getAttribute("style") === style, causalCameraBeforeFocus);
+      check("causal React Flow resize does not trigger implicit fitView", await causalViewportNode.getAttribute("style") === causalCameraBeforeFocus);
+      check("causal node selection survives focus and resize", selectedBeforeFocus === 1 && await page.locator(".causal-flow .react-flow__node.selected").count() === 1);
       await page.keyboard.press("Escape");
-      await page.waitForFunction(() => !document.querySelector(".app__workspace")?.classList.contains("app__workspace--preview-maximized"));
+      await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      const restoredCausal = await measure();
+      check("causal zoom and pan survive focus exit", restoredCausal.zoom === selected.zoom && restoredCausal.x === selected.x && restoredCausal.y === selected.y);
+      check("causal focus exit restores keyboard focus to its control", await focusButton.evaluate((button) => document.activeElement === button));
+      check("causal focus exit restores the workspace panels", await page.locator('[data-testid="explorer-shared-section"]').isVisible());
+
+      await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
       let afterEscape = await measure();
       check("Escape restores workspace panels without resetting the causal viewport", afterEscape.zoom === selected.zoom && afterEscape.x === selected.x && afterEscape.y === selected.y);
       await page.locator(".causal-flow .react-flow__pane").click({ position: { x: 400, y: Math.max(20, afterEscape.height - 20) } });

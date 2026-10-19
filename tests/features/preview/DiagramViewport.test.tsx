@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import DiagramViewport, {
   noteIndexFromTarget,
   participantDragName,
@@ -250,6 +250,26 @@ describe("DiagramViewport", () => {
     expect(screen.getByTestId("zoom-level").textContent).toBe("18%");
   });
 
+  it("preserves the diagram camera when the pane is resized", () => {
+    let resize = () => {};
+    class TestResizeObserver {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    let width = 800;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => ({
+      width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect));
+    render(<DiagramViewport svg={SVG} size={SIZE} />);
+    fireEvent.click(screen.getByTestId("zoom-in"));
+    const camera = transformOf();
+    width = 1100;
+    act(() => resize());
+    expect(transformOf()).toBe(camera);
+  });
+
   it("pans with the arrow keys", () => {
     render(<DiagramViewport svg={SVG} size={SIZE} />);
     const before = transformOf();
@@ -295,19 +315,9 @@ describe("DiagramViewport", () => {
     expect(screen.getByLabelText("Present fullscreen")).toBeInTheDocument();
   });
 
-  it("toggles the preview-only layout when the caller provides it", () => {
-    const onToggleMaximize = vi.fn();
-    render(
-      <DiagramViewport
-        svg={SVG}
-        size={SIZE}
-        onToggleMaximize={onToggleMaximize}
-      />,
-    );
-
-    fireEvent.click(screen.getByLabelText("Maximize diagram preview"));
-
-    expect(onToggleMaximize).toHaveBeenCalledTimes(1);
+  it("does not duplicate the shell focus control inside the canvas toolbar", () => {
+    render(<DiagramViewport svg={SVG} size={SIZE} />);
+    expect(screen.queryByTestId("viewer-focus-toggle")).not.toBeInTheDocument();
   });
 
   describe("note bullets", () => {
