@@ -38,6 +38,7 @@ export interface PreviewProps {
   isStale?: boolean;
   /** Stable identity used to fit a newly selected resource, not a resized pane. */
   resetKey?: string;
+  focusMode?: boolean;
   /** Called with a node id when the user clicks the element it represents. */
   onNodeSelect?: (nodeId: string | null) => void;
   onSemanticMessageSelect?: (messageId: string, nodeId: string | null) => void;
@@ -61,6 +62,7 @@ export default function Preview({
   onRender,
   isStale = false,
   resetKey = "",
+  focusMode = false,
   onNodeSelect,
   onSemanticMessageSelect,
   onSemanticOccurrenceSelect,
@@ -153,6 +155,7 @@ export default function Preview({
             size={{ width: document.width, height: document.height }}
             svgTestId="preview-svg"
             resetKey={resetKey}
+            focusMode={focusMode}
             onNoteToggle={toggleNote}
             onNodeSelect={onNodeSelect}
             onSemanticMessageSelect={onSemanticMessageSelect}

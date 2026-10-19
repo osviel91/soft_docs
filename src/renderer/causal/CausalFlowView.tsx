@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BaseEdge, Background, ControlButton, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type EdgeProps, type NodeProps } from "@xyflow/react";
+import { BaseEdge, Background, ControlButton, Controls, getViewportForBounds, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type EdgeProps, type NodeProps } from "@xyflow/react";
 import { type CausalNodeId, type CausalViewModel } from "../../domain/eventflow/causal-projection";
 import { parseNodeId } from "../../domain/diagram/node-id";
 import { CAUSAL_PORT_SIZE, causalElkGraph, causalNodeSize, causalReachability, positionedCausalFlow, type CausalFlowEdge, type CausalFlowEdgeData, type CausalFlowGraph, type CausalFlowNode } from "./causal-flow-adapter";
@@ -19,9 +19,10 @@ export interface CausalFlowViewProps {
   onLayoutState?: (state: "loading" | "ready" | "error") => void;
   onLayoutError?: (message: string) => void;
   workerFactory?: CausalWorkerFactory;
+  focusMode?: boolean;
 }
 
-export default function CausalFlowView({ view, selectedNodeId = null, onNodeSelect, onSourceSelect, onLayoutState, onLayoutError, workerFactory }: CausalFlowViewProps) {
+export default function CausalFlowView({ view, selectedNodeId = null, onNodeSelect, onSourceSelect, onLayoutState, onLayoutError, workerFactory, focusMode = false }: CausalFlowViewProps) {
   const flowContainerRef = useRef<HTMLDivElement | null>(null);
   const [graph, setGraph] = useState<CausalFlowGraph | null>(null);
   const [selected, setSelected] = useState<CausalNodeId | null>(null);
@@ -87,6 +88,7 @@ export default function CausalFlowView({ view, selectedNodeId = null, onNodeSele
       <Controls aria-label="Causal graph navigation" showFitView={false}>
         <CausalViewportControls flowContainerRef={flowContainerRef} />
       </Controls>
+      <CausalFocusController flowContainerRef={flowContainerRef} focusMode={focusMode} />
       <MiniMap nodeColor={(node) => node.data.kind === "message" ? "#4f46e5" : node.data.kind === "handler" ? "#0f766e" : node.data.kind === "effect" ? "#b45309" : "#be123c"} />
     </ReactFlow></ReactFlowProvider>
   </div>;
@@ -116,6 +118,43 @@ function CausalViewportControls({ flowContainerRef }: { flowContainerRef: { curr
     <ControlButton className="causal-flow__view-control" aria-label="Show full graph overview" title="Show full graph overview" onClick={showOverview}>All</ControlButton>
     <ControlButton className="causal-flow__view-control" aria-label="Restore reading scale" title="Restore reading scale" onClick={restoreReadingScale}>Read</ControlButton>
   </>;
+}
+
+function CausalFocusController({ flowContainerRef, focusMode }: { flowContainerRef: { current: HTMLDivElement | null }; focusMode: boolean }) {
+  const { getNodes, getNodesBounds, getViewport, setViewport } = useReactFlow<CausalFlowNode, CausalFlowEdge>();
+  const previousViewport = useRef<ReturnType<typeof getViewport> | null>(null);
+  const focusModeRef = useRef(false);
+  const fitted = useRef(false);
+
+  useEffect(() => {
+    if (focusModeRef.current === focusMode) return;
+    focusModeRef.current = focusMode;
+    fitted.current = false;
+    if (focusMode) {
+      previousViewport.current = getViewport();
+      return;
+    }
+    const previous = previousViewport.current;
+    previousViewport.current = null;
+    if (previous) void setViewport(previous, { duration: 0 });
+  }, [focusMode, getViewport, setViewport]);
+
+  useEffect(() => {
+    if (!focusMode || fitted.current) return;
+    fitted.current = true;
+    let secondFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const bounds = flowContainerRef.current?.querySelector(".react-flow")?.getBoundingClientRect();
+        const nodes = getNodes();
+        if (!bounds || nodes.length === 0) return;
+        const viewport = getViewportForBounds(getNodesBounds(nodes), bounds.width, bounds.height, 0.1, READING_ZOOM, FIT_PADDING);
+        void setViewport(viewport, { duration: 0 });
+      });
+    });
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(secondFrame); };
+  }, [focusMode, flowContainerRef, getNodes, getNodesBounds, setViewport]);
+  return null;
 }
 
 function CausalNode({ data }: NodeProps<CausalFlowNode>) {

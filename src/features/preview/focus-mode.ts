@@ -11,9 +11,11 @@ const INTERACTIVE_TARGET = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-/** Plain F belongs to the focused editor or control, not the workspace shell. */
+/** Interactive controls and editors own their keys; the diagram canvas is exempt. */
 export function focusShortcutTargetIsInteractive(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest(INTERACTIVE_TARGET));
+  if (!(target instanceof Element)) return false;
+  if (target.closest(".viewport__pane")) return false;
+  return Boolean(target.closest(INTERACTIVE_TARGET));
 }
 
 /** Overlays and menus own Escape before the workspace focus mode does. */

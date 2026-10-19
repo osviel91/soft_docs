@@ -127,6 +127,8 @@ import { useCommands } from "./features/commands/use-commands";
 import { useShortcuts } from "./features/commands/use-shortcuts";
 import {
   COMMAND_PALETTE_BINDING,
+  FOCUS_MODE_BINDING,
+  bindingMatches,
   bindingLabel,
 } from "./features/commands/shortcuts";
 import CommandPalette from "./features/commands/CommandPalette";
@@ -2882,7 +2884,7 @@ export default function App() {
         event.preventDefault();
         return;
       }
-      if (event.key.toLowerCase() !== "f" || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || focusShortcutTargetIsInteractive(event.target)) return;
+      if (!bindingMatches(FOCUS_MODE_BINDING, event) || focusShortcutTargetIsInteractive(event.target)) return;
       if (page !== "workspace" || comparisonOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) return;
       const toggle = document.querySelector<HTMLElement>(".viewer-focus-toggle");
       if (!toggle) return;
@@ -4248,9 +4250,10 @@ export default function App() {
                         className="button button--ghost button--small viewer-focus-toggle"
                         data-testid="viewer-focus-toggle"
                         aria-pressed={focusMode}
+                        title={`${focusMode ? "Exit focus" : "Focus viewer"} (${bindingLabel(FOCUS_MODE_BINDING)})`}
                         onClick={(event) => toggleFocusMode(event.currentTarget)}
                       >
-                        {focusMode ? "Exit focus" : "Focus viewer"} <kbd>F</kbd>
+                        {focusMode ? "Exit focus" : "Focus viewer"} <kbd>{bindingLabel(FOCUS_MODE_BINDING)}</kbd>
                       </button>
                     </div>
                   ) : null}
@@ -4310,9 +4313,9 @@ export default function App() {
                       onOpenResourceLink={openResourceLink}
                     />
                   ) : isConceptual ? (
-                    <ConceptualPreview source={renderedSource || source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
+                    <ConceptualPreview source={renderedSource || source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} focusMode={focusMode} />
                   ) : isDatabase ? (
-                    <DatabasePreview source={source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} />
+                    <DatabasePreview source={source} onNodeSelect={onNodeSelect} activeNodeId={activeNodeId} focusMode={focusMode} />
                   ) : isEventFlow ? (
                     <EventFlowPreview
                       source={source}
@@ -4324,6 +4327,7 @@ export default function App() {
                       onSemanticOccurrenceSelect={onSemanticOccurrenceSelect}
                       activeNodeId={activeNodeId}
                       activeSemanticMessageId={activeSemanticMessageId}
+                      focusMode={focusMode}
                     />
                   ) : (
                     <Preview
@@ -4337,6 +4341,7 @@ export default function App() {
                       activeNodeId={activeNodeId}
                       activeSemanticMessageId={activeSemanticMessageId}
                       resetKey={selectedDiagram?.id ?? ""}
+                      focusMode={focusMode}
                     />
                   )}
                   {((!comparisonOpen && hasActiveSemanticOccurrence) || (traceStart && index && (isSequence || isEventFlow)) || (workspaceMode === "server" && server.active && bindingEntities.length > 0)) ? <AnalysisSurface
