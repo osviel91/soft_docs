@@ -1063,6 +1063,12 @@ body {
   padding: 4px 8px;
 }
 
+.app__pane--preview:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+}
+
 .app__workspace--comparison-editor-hidden .app__pane--editor,
 .app__workspace--comparison-editor-hidden > .app__splitter--editor {
   display: none;

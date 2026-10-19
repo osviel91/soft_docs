@@ -2298,6 +2298,41 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         }
         const focus = page.getByTestId("viewer-focus-toggle");
         check(`${representation.view} exposes one shared viewer expansion control`, await focus.count() === 1 && await page.getByTestId("preview-maximize").count() === 0);
+        const fullscreen = page.getByTestId("viewer-fullscreen-toggle");
+        check(`${representation.view} exposes shared native fullscreen`, await fullscreen.count() === 1);
+        const previewPane = page.locator(".app__pane--preview");
+        let fullscreenCamera = null;
+        if (index === 0 && process.env.E2E_SCREENSHOT_DIR) {
+          await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2b-fullscreen-before.png"), fullPage: true });
+        }
+        await fullscreen.click();
+        await page.waitForFunction((pane) => document.fullscreenElement === pane, await previewPane.elementHandle());
+        check(`${representation.view} enters browser fullscreen from normal view`, true);
+        if (index === 0 && representation.svg) {
+          const fullscreenCanvas = page.getByTestId(representation.svg);
+          const beforeGesture = await fullscreenCanvas.getAttribute("style");
+          await page.getByTestId("viewport-pane").hover();
+          await page.mouse.wheel(0, -120);
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          const afterZoom = await fullscreenCanvas.getAttribute("style");
+          check("Manual zoom during fullscreen changes the SVG camera", afterZoom !== beforeGesture);
+          const canvasBox = await page.getByTestId("viewport-pane").boundingBox();
+          if (canvasBox) {
+            await page.mouse.move(canvasBox.x + 50, canvasBox.y + 50);
+            await page.mouse.down();
+            await page.mouse.move(canvasBox.x + 75, canvasBox.y + 65);
+            await page.mouse.up();
+          }
+          check("Manual pan during fullscreen preserves the adjusted SVG camera", await fullscreenCanvas.getAttribute("style") !== afterZoom);
+          fullscreenCamera = await fullscreenCanvas.getAttribute("style");
+        }
+        if (index === 0 && process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2b-fullscreen-active.png"), fullPage: true });
+        await fullscreen.click();
+        await page.waitForFunction(() => document.fullscreenElement === null);
+        await page.waitForFunction(() => document.querySelector('[data-testid="viewer-fullscreen-toggle"]')?.getAttribute("aria-pressed") === "false");
+        check(`${representation.view} exits native fullscreen with its preview visible`, await previewPane.isVisible());
+        if (fullscreenCamera !== null && representation.svg) check("Fullscreen exit preserves the manually adjusted SVG camera", await page.getByTestId(representation.svg).getAttribute("style") === fullscreenCamera);
 
         let camera = null;
         let renderedNode = null;
@@ -2342,6 +2377,15 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           const manuallyAdjustedCamera = await renderedNode.getAttribute("style");
           await page.waitForTimeout(120);
           check(`${representation.view} manual zoom is not refitted in focus`, manuallyAdjustedCamera !== fittedCamera && await renderedNode.getAttribute("style") === manuallyAdjustedCamera);
+        }
+        if (index === 0) {
+          await fullscreen.click();
+          await page.waitForFunction((pane) => document.fullscreenElement === pane, await previewPane.elementHandle());
+          await fullscreen.click();
+          await page.waitForFunction(() => document.fullscreenElement === null);
+          await page.waitForFunction(() => document.querySelector('[data-testid="viewer-fullscreen-toggle"]')?.getAttribute("aria-pressed") === "false");
+          check("Fullscreen control exits from Focus without leaving Focus", await page.locator(".app__workspace--focus").count() === 1);
+          if (process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2b-fullscreen-restored.png"), fullPage: true });
         }
         check(`${representation.view} exit control remains available`, await page.getByRole("button", { name: /Exit focus/ }).isVisible());
         if (index === 0 && process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-focus-mode.png"), fullPage: true });
@@ -2396,6 +2440,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             await page.keyboard.press("Escape");
             await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
             if (subview === "Causal") check("Causal camera restores after focus", await page.locator(".react-flow__viewport").getAttribute("style") === causalCamera);
+            if (subview === "Causal") {
+              const flowViewport = page.locator(".react-flow__viewport");
+              const cameraBeforeFullscreen = await flowViewport.getAttribute("style");
+              await page.getByTestId("viewer-fullscreen-toggle").click();
+              await page.waitForFunction((pane) => document.fullscreenElement === pane, await page.locator(".app__pane--preview").elementHandle());
+              check("Causal React Flow enters native fullscreen without remounting", await flowViewport.count() === 1);
+              await page.getByTestId("viewer-fullscreen-toggle").click();
+              await page.waitForFunction(() => document.fullscreenElement === null);
+              await page.waitForFunction(() => document.querySelector('[data-testid="viewer-fullscreen-toggle"]')?.getAttribute("aria-pressed") === "false");
+              check("Causal React Flow fullscreen preserves its camera", await flowViewport.getAttribute("style") === cameraBeforeFullscreen);
+            }
           }
         }
       }
@@ -2408,6 +2463,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("viewer-focus-toggle").click();
       await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
       check("Markdown preserves reading scroll in focus", await markdownScroller.evaluate((element) => element.scrollTop) === markdownScroll);
+      await page.getByTestId("viewer-fullscreen-toggle").click();
+      await page.waitForFunction((pane) => document.fullscreenElement === pane, await page.locator(".app__pane--preview").elementHandle());
+      check("Markdown enters native fullscreen without resetting reading scroll", await markdownScroller.evaluate((element) => element.scrollTop) === markdownScroll);
+      await page.getByTestId("viewer-fullscreen-toggle").click();
+      await page.waitForFunction(() => document.fullscreenElement === null);
+      check("Markdown fullscreen exit preserves Focus and scroll", await page.locator(".app__workspace--focus").count() === 1 && await markdownScroller.evaluate((element) => element.scrollTop) === markdownScroll);
       await page.keyboard.press("Escape");
       await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
     } finally {
