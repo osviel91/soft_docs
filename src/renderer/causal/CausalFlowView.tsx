@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BaseEdge, Background, ControlButton, Controls, getViewportForBounds, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type EdgeProps, type NodeProps } from "@xyflow/react";
 import { type CausalNodeId, type CausalViewModel } from "../../domain/eventflow/causal-projection";
 import { parseNodeId } from "../../domain/diagram/node-id";
@@ -10,6 +10,10 @@ import "./causal-flow.css";
 const READING_ZOOM = 1;
 const INITIAL_MIN_ZOOM = 0.8;
 const FIT_PADDING = 0.18;
+
+const stopSpacePanFromControl = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+  if (event.key === " ") event.stopPropagation();
+};
 
 export interface CausalFlowViewProps {
   view: CausalViewModel;
@@ -113,10 +117,16 @@ function CausalViewportControls({ flowContainerRef }: { flowContainerRef: { curr
     if (!center) return;
     void setCenter(center.x, center.y, { zoom: READING_ZOOM, duration: 180 });
   };
+  const activateSpace = (action: () => void) => (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    action();
+  };
 
   return <>
-    <ControlButton className="causal-flow__view-control" aria-label="Show full graph overview" title="Show full graph overview" onClick={showOverview}>All</ControlButton>
-    <ControlButton className="causal-flow__view-control" aria-label="Restore reading scale" title="Restore reading scale" onClick={restoreReadingScale}>Read</ControlButton>
+    <ControlButton className="causal-flow__view-control" aria-label="Show full graph overview" title="Show full graph overview" onKeyDown={stopSpacePanFromControl} onKeyUp={activateSpace(showOverview)} onClick={showOverview}>All</ControlButton>
+    <ControlButton className="causal-flow__view-control" aria-label="Restore reading scale" title="Restore reading scale" onKeyDown={stopSpacePanFromControl} onKeyUp={activateSpace(restoreReadingScale)} onClick={restoreReadingScale}>Read</ControlButton>
   </>;
 }
 
