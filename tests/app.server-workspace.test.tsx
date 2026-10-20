@@ -13,6 +13,7 @@
  */
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -55,6 +56,7 @@ interface FakeResource {
 /** What the fake API should answer with, per test. */
 interface FakeState {
   signedIn: boolean;
+  platformAdmin: boolean;
   multipleProjects: boolean;
   crossWorkspace: boolean;
   denyProjectOpen: string | null;
@@ -73,6 +75,7 @@ interface FakeState {
 
 const state: FakeState = {
   signedIn: false,
+  platformAdmin: false,
   multipleProjects: false,
   crossWorkspace: false,
   denyProjectOpen: null,
@@ -140,6 +143,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
               email: "ada@example.test",
               authType: "session",
               scopes: [],
+              platformAdmin: state.platformAdmin,
             }
           : null,
       }),
@@ -157,6 +161,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
       }),
     );
   }
+  if (path === "/api/projects/p1" && method === "DELETE") return Promise.resolve(reply(204));
   if (path === "/api/workspaces") {
     return Promise.resolve(
       reply(200, {
@@ -328,6 +333,7 @@ function fakeFetch(input: string, init?: RequestInit): Promise<Response> {
 beforeEach(() => {
   window.history.replaceState({}, "", "/");
   state.signedIn = false;
+  state.platformAdmin = false;
   state.multipleProjects = false;
   state.crossWorkspace = false;
   state.denyProjectOpen = null;
@@ -373,6 +379,22 @@ describe("App — anonymous browser", () => {
 });
 
 describe("App — authenticated browser", () => {
+  it("offers server project deletion only to a platform administrator", async () => {
+    await openServerProject("title Checkout", false);
+    await act(async () => fireEvent.click(screen.getByTestId("workspace-project-menu")));
+    expect(screen.queryByRole("menuitem", { name: "Delete project" })).toBeNull();
+
+    cleanup();
+    window.history.replaceState({}, "", "/");
+    state.platformAdmin = true;
+    await openServerProject("title Checkout", false);
+    await act(async () => fireEvent.click(screen.getByTestId("workspace-project-menu")));
+    await act(async () => fireEvent.click(screen.getByRole("menuitem", { name: "Delete project" })));
+    expect(screen.getByRole("heading", { name: "Delete server project “Payments”?" })).toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Delete server project" })));
+    await waitFor(() => expect(state.calls.some((call) => call.method === "DELETE" && call.path === "/api/projects/p1")).toBe(true));
+  });
+
   it("hydrates a reloaded proposal deep link in another workspace before reading the proposal", async () => {
     state.signedIn = true;
     state.crossWorkspace = true;

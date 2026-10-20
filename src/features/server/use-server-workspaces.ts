@@ -306,6 +306,7 @@ export function useServerWorkspaces(
     repositoryGeneration.current += 1;
     privateWorkRequest.current += 1;
     projectReadModelGeneration.current += 1;
+    activeRef.current = null;
     setActive(null);
     setOpenError(null);
     setPrivateWorkContexts([]);

@@ -87,15 +87,12 @@ describe("authorize", () => {
     }
   });
 
-  it("never allows an administrative permission to a viewer or an editor", () => {
-    for (const role of ["VIEWER", "EDITOR"] as const) {
+  it("never grants project deletion to a project role", () => {
+    for (const role of ALL_PROJECT_ROLES) {
       expect(authorize({ role, required: "project:delete" }).allowed).toBe(
         false,
       );
     }
-    expect(
-      authorize({ role: "OWNER", required: "project:delete" }).allowed,
-    ).toBe(true);
   });
 
   it("keeps a viewer read-only", () => {

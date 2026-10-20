@@ -265,6 +265,7 @@ type AppPage = "workspace" | "docs" | "settings" | "inbox";
  */
 type PendingDelete =
   | { kind: "project"; id: string; name: string }
+  | { kind: "server-project"; id: string; name: string }
   | { kind: "diagram"; id: string; projectId: string; name: string }
   | { kind: "note"; id: string; projectId: string; name: string }
   | { kind: "private-work"; id: string; projectId: string; name: string };
@@ -3040,6 +3041,23 @@ export default function App() {
     async (scope: DeleteScope): Promise<void> => {
       const target = pendingDelete;
       if (!target) return;
+      if (target.kind === "server-project") {
+        try {
+          await apiClient.deleteProject(target.id);
+          for (const tab of tabs) {
+            if (tab.projectId === target.id) closeTab(tab.id);
+          }
+          server.close();
+          setBrowserLocation({ projectId: null, contextId: null, resourceId: null, proposalId: null }, true);
+          await server.refresh();
+          setTransferError(null);
+          setPendingDelete(null);
+        } catch (error) {
+          setPendingDelete(null);
+          setTransferError(error instanceof Error ? error.message : "Could not delete this server project.");
+        }
+        return;
+      }
       if (target.kind === "diagram") {
         await workspace.deleteDiagram(target.projectId, target.id, scope);
         closeTabAndFollow(target.id);
@@ -3074,7 +3092,7 @@ export default function App() {
       }
       setPendingDelete(null);
     },
-    [pendingDelete, workspace, tabs, closeTab, closeTabAndFollow, history, apiClient, server.active, server.openProject, server.refresh, setBrowserLocation],
+    [pendingDelete, workspace, tabs, closeTab, closeTabAndFollow, history, apiClient, server.active, server.close, server.openProject, server.refresh, setBrowserLocation],
   );
 
   const confirmProposalWithdrawal = useCallback(async (): Promise<void> => {
@@ -3261,7 +3279,12 @@ export default function App() {
       ];
     }
     if (menu.kind === "server-project") {
-      return [{ id: "copy-server-project-id", label: "Copy project ID", onSelect: () => copyId(menu.id, "project") }];
+      return [
+        { id: "copy-server-project-id", label: "Copy project ID", onSelect: () => copyId(menu.id, "project") },
+        ...(auth.user?.platformAdmin === true
+          ? [{ id: "delete-server-project", label: "Delete project", danger: true, onSelect: () => setPendingDelete({ kind: "server-project", id: menu.id, name: server.active?.project.name ?? menu.id }) }]
+          : []),
+      ];
     }
     if (menu.kind === "project-add") {
       const { project } = menu;
@@ -4638,10 +4661,10 @@ export default function App() {
 
       {pendingDelete && (
         <ConfirmDialog
-          title={pendingDelete.kind === "private-work" ? `Delete MY WORK “${pendingDelete.name}”?` : `Delete ${pendingDelete.kind} “${pendingDelete.name}”?`}
+          title={pendingDelete.kind === "private-work" ? `Delete MY WORK “${pendingDelete.name}”?` : pendingDelete.kind === "server-project" ? `Delete server project “${pendingDelete.name}”?` : `Delete ${pendingDelete.kind} “${pendingDelete.name}”?`}
           message={deleteMessage(pendingDelete.kind, folderOpen)}
-          confirmLabel={pendingDelete.kind === "private-work" ? "Delete MY WORK" : folderOpen ? "Delete from disk" : "Delete"}
-          alternativeLabel={folderOpen && pendingDelete.kind !== "private-work" ? "Remove from app" : undefined}
+          confirmLabel={pendingDelete.kind === "private-work" ? "Delete MY WORK" : pendingDelete.kind === "server-project" ? "Delete server project" : folderOpen ? "Delete from disk" : "Delete"}
+          alternativeLabel={folderOpen && pendingDelete.kind !== "private-work" && pendingDelete.kind !== "server-project" ? "Remove from app" : undefined}
           onAlternative={() => {
             void confirmDelete("app");
           }}
@@ -4751,8 +4774,11 @@ function deleteMessage(
         ? "note"
         : kind === "private-work"
           ? "MY WORK context and all of its private resources"
+          : kind === "server-project"
+            ? "server project and all of its resources and project data"
         : "project and its diagrams and notes";
   if (kind === "private-work") return "This permanently removes the private context and its resources. The server refuses deletion while any submitted proposal references this context.";
+  if (kind === "server-project") return "This permanently deletes the server project and its project data for every member. This cannot be undone.";
   if (folderOpen) {
     return `Remove the ${thing} from the app but keep the file on disk, or delete it from disk for good. Deleting from disk cannot be undone.`;
   }
