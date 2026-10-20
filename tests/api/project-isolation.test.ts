@@ -667,7 +667,6 @@ describe("two owners, two projects: neither can reach the other's", () => {
     for (const { member, other } of directions()) {
       const attempts: Array<[string, string, unknown]> = [
         ["PATCH", `/api/projects/${other.projectId}`, { name: "Taken over" }],
-        ["DELETE", `/api/projects/${other.projectId}`, undefined],
         // Self-escalation is the sharpest case: adding yourself as OWNER must be
         // exactly as impossible as reading the project, or isolation is one
         // request away from being gone.
@@ -688,6 +687,9 @@ describe("two owners, two projects: neither can reach the other's", () => {
         expect(response.status).toBe(404);
         expect(response.body.error.code).toBe("not_found");
       }
+      const deleteAttempt = await call("DELETE", `/api/projects/${other.projectId}`, { cookie: member.cookie });
+      expect(deleteAttempt.status).toBe(403);
+      expect(deleteAttempt.body.error.code).toBe("forbidden");
 
       // The direct use cases refuse the same escalation through the catalog.
       for (const work of [
@@ -696,10 +698,6 @@ describe("two owners, two projects: neither can reach the other's", () => {
           other.projectId,
           member.userId,
           "OWNER",
-        ),
-        dependencies.catalog.deleteProject(
-          contextFor(member.userId),
-          other.projectId,
         ),
         dependencies.catalog.updateProject(
           contextFor(member.userId),
@@ -716,6 +714,9 @@ describe("two owners, two projects: neither can reach the other's", () => {
         expect(failure.code).toBe("not_found");
         expect(failure.status).toBe(404);
       }
+      const deleteFailure = await failureOf(dependencies.catalog.deleteProject(contextFor(member.userId), other.projectId));
+      expect(deleteFailure.code).toBe("forbidden");
+      expect(deleteFailure.status).toBe(403);
 
       // The failed escalation changed nothing: the project still exists, the
       // owner still owns it, and the intruder is still a non-member.
@@ -822,13 +823,15 @@ describe("the guarantee does not depend on the HTTP wiring", () => {
             "OWNER",
           ),
         ),
-        failureOf(dependencies.catalog.deleteProject(context, other.projectId)),
       ]);
       for (const failure of failures) {
         expect(failure).toBeInstanceOf(ApplicationError);
         expect(failure.code).toBe("not_found");
         expect(failure.status).toBe(404);
       }
+      const deleteFailure = await failureOf(dependencies.catalog.deleteProject(context, other.projectId));
+      expect(deleteFailure.code).toBe("forbidden");
+      expect(deleteFailure.status).toBe(403);
 
       // The advisory question agrees with the enforced answer, so a UI built on
       // it cannot talk a caller into an operation the catalog will refuse.

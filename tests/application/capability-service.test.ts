@@ -111,6 +111,16 @@ describe("capability service", () => {
     expect(readOnlyPat["project.delete"]).toMatchObject({ allowed: false, reason: "scope" });
   });
 
+  it("grants project deletion capability only to a platform administrator", async () => {
+    const owner = await service("OWNER").project(context("owner"), "p1");
+    const administrator = await service("VIEWER").project({
+      ...context("admin"),
+      principal: { ...context("admin").principal, platformAdmin: true },
+    }, "p1");
+    expect(owner["project.delete"]).toMatchObject({ allowed: false, reason: "forbidden" });
+    expect(administrator["project.delete"]).toMatchObject({ allowed: true });
+  });
+
   it("is advisory when authoritative state changes", async () => {
     const capabilities = service("OWNER", "owner", "active", true);
     const first = await capabilities.proposal(context("owner"), "p1", "proposal");

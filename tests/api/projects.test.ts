@@ -229,7 +229,7 @@ describe("project routes", () => {
     expect(seen.body.error.code).toBe("not_found");
   });
 
-  it("renames and deletes a project for its owner", async () => {
+  it("lets only a platform administrator delete a project", async () => {
     const { cookie, projectId } = await aProject("Before");
     const patched = await call("PATCH", `/api/projects/${projectId}`, {
       cookie,
@@ -238,9 +238,12 @@ describe("project routes", () => {
     expect(patched.status).toBe(200);
     expect(patched.body.project.name).toBe("After");
 
-    const removed = await call("DELETE", `/api/projects/${projectId}`, {
-      cookie,
-    });
+    const ownerDelete = await call("DELETE", `/api/projects/${projectId}`, { cookie });
+    expect(ownerDelete.status).toBe(403);
+
+    const administrator = await signIn();
+    await dependencies.sql.query("UPDATE users SET platform_admin = TRUE WHERE id = $1", [administrator.userId]);
+    const removed = await call("DELETE", `/api/projects/${projectId}`, { cookie: administrator.cookie });
     expect(removed.status).toBe(204);
     const gone = await call("GET", `/api/projects/${projectId}`, { cookie });
     expect(gone.status).toBe(404);
@@ -693,7 +696,7 @@ describe("the access endpoint", () => {
     );
     expect(access.status).toBe(200);
     expect(access.body.role).toBe("OWNER");
-    expect(access.body.permissions).toContain("project:delete");
+    expect(access.body.permissions).not.toContain("project:delete");
   });
 
   it("tells a viewer exactly what it cannot do", async () => {

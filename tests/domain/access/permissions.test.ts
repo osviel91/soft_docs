@@ -53,12 +53,12 @@ describe("role permissions", () => {
     expect(editor).not.toContain("credential:manage");
   });
 
-  it("reserves the administrative capabilities for an owner", () => {
+  it("reserves project deletion for platform administrators", () => {
     for (const permission of ADMIN_PERMISSIONS) {
       const holders = ALL_PROJECT_ROLES.filter((role) =>
         PERMISSIONS_BY_ROLE[role].includes(permission),
       );
-      expect(holders).toEqual(["OWNER"]);
+      expect(holders).toEqual(permission === "project:delete" ? [] : ["OWNER"]);
     }
   });
 

@@ -668,7 +668,15 @@ export function createProjectCatalog(
     },
 
     async deleteProject(context, projectId) {
-      await requirePermission(context, projectId, "project:delete");
+      if (
+        context.principal.platformAdmin !== true ||
+        context.principal.actor.kind !== "user"
+      ) {
+        throw forbidden("Only a platform administrator may delete a project.");
+      }
+      if (!(await projects.findById(projectId))) {
+        throw notFound(`No project with id ${projectId}.`);
+      }
       // The database cascades members and resource rows; the files are removed
       // explicitly, because a volume is not part of a transaction.
       const store = storage(projectId);

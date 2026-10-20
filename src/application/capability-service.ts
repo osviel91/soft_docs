@@ -92,7 +92,19 @@ export function createCapabilityService(options: {
         ["privateWork.create", "project:read"],
         ["project.delete", "project:delete"],
         ["project.members.manage", "project:members:write"],
-      ] as const) capabilities[capability] = await permission(context, projectId, capability, requiredPermission);
+      ] as const) {
+        if (capability === "project.delete") {
+          const isPlatformAdministrator = context.principal.platformAdmin === true && context.principal.actor.kind === "user";
+          const decision = await permission(context, projectId, capability, requiredPermission);
+          capabilities[capability] = isPlatformAdministrator
+            ? { capability, allowed: true, requiredPermission }
+            : decision.reason === "scope"
+              ? decision
+              : { capability, allowed: false, reason: "forbidden", requiredPermission };
+        } else {
+          capabilities[capability] = await permission(context, projectId, capability, requiredPermission);
+        }
+      }
       return capabilities;
     },
 

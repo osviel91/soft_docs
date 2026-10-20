@@ -141,7 +141,6 @@ export const PERMISSIONS_BY_ROLE: Readonly<
     ...READ_PERMISSIONS,
     "project:create",
     "project:update",
-    "project:delete",
     "project:members:write",
     ...RESOURCE_WRITE_PERMISSIONS,
     "agent:manage",

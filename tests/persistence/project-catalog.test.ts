@@ -198,7 +198,7 @@ describe("project lifecycle", () => {
       type: "sequence-diagram",
       content: "participant A",
     });
-    await catalog.deleteProject(context, project.id);
+    await catalog.deleteProject(contextFor(context.principal.subjectUserId, { platformAdmin: true }), project.id);
     const failure = await failureOf(catalog.getProject(context, project.id));
     expect(failure.code).toBe("not_found");
   });
@@ -330,11 +330,33 @@ describe("authorization by role", () => {
         type: "sequence-diagram",
         content: "x",
       }),
-      catalog.deleteProject(other, project.id),
     ]) {
       const failure = await failureOf(work);
       expect(failure.code).toBe("not_found");
     }
+
+    const deletionFailure = await failureOf(catalog.deleteProject(other, project.id));
+    expect(deletionFailure.code).toBe("forbidden");
+  });
+
+  it("lets a platform administrator delete a project without project membership", async () => {
+    const { context: owner, project } = await aProject("Admin cleanup");
+    const administrator = contextFor(await aUser("Platform administrator"), {
+      platformAdmin: true,
+    });
+
+    await catalog.deleteProject(administrator, project.id);
+
+    const failure = await failureOf(catalog.getProject(owner, project.id));
+    expect(failure.code).toBe("not_found");
+  });
+
+  it("does not let a project owner delete a server project", async () => {
+    const { context, project } = await aProject("Owner cannot delete");
+
+    const failure = await failureOf(catalog.deleteProject(context, project.id));
+
+    expect(failure.code).toBe("forbidden");
   });
 
   it("stops a project-restricted credential from reaching another project", async () => {
