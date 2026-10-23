@@ -146,7 +146,11 @@ export function createArchitecturalProposalService(options: {
 }): ArchitecturalProposalService {
   const policy = options.policy ?? createAuthorizationPolicy<ServerProject>(options.projects);
   const requireRead = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "project:read");
-  const requireSubmit = (context: ApplicationContext, projectId: string) => policy.requirePermission(context, projectId, "resource:update");
+  const requireSubmit = async (context: ApplicationContext, projectId: string) => {
+    await policy.requirePermission(context, projectId, "resource:update");
+    const project = await options.projects.findById(projectId);
+    if (project?.deletionPendingAt) throw conflict("This project is pending deletion and cannot accept proposals.");
+  };
   const validateSelectedBindings = async (projectId: string, contextId: string, selections: import("./ports/architectural-proposal-repository").ProposalSemanticBindingSelection[], selectedIds: Set<string>) => {
     if (selections.length && !options.semanticBindings) throw invalid("Semantic binding selection is unavailable.");
     const resources = [...await options.projects.listResources(projectId, null), ...await options.projects.listResources(projectId, contextId).then((rows) => rows.filter((row) => selectedIds.has(row.id)))];
