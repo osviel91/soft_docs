@@ -2287,6 +2287,24 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("compare-mode-button").click();
       const dualView = page.getByTestId("dual-view");
       await dualView.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const editorShell = page.locator(".app__pane--editor");
+      check("Dual View hides but keeps the editor mounted and leaves Explorer visible", await editorShell.count() === 1 && !(await editorShell.isVisible()) && await page.locator(".app__pane--explorer").isVisible());
+      check("Dual View shell fills the preview area without using the comparison preference", await page.locator(".app__workspace--dual-view").count() === 1 && await page.locator(".app__workspace--dual-view").evaluate((el) => getComputedStyle(el.querySelector(".app__pane--editor")).display === "none"));
+      const dualFocus = dualView.getByRole("button", { name: "Focus" });
+      await dualFocus.click();
+      await page.locator(".app--dual-focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      check("Dual View Focus hides Explorer and retains both viewers plus essential controls", !(await page.locator(".app__pane--explorer").isVisible()) && await page.getByTestId("dual-pane-a").isVisible() && await page.getByTestId("dual-pane-b").isVisible() && await dualView.getByRole("button", { name: "Close Dual View" }).isVisible());
+      await page.keyboard.press("Escape");
+      await page.locator(".app--dual-focus").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      await dualView.getByRole("button", { name: "Focus" }).click();
+      await dualView.getByRole("button", { name: "Fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
+      check("Dual View Fullscreen targets the complete dual-view root", await page.evaluate(() => document.fullscreenElement?.getAttribute("data-testid") === "dual-view"));
+      await dualView.getByRole("button", { name: "Exit fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Explicit Fullscreen exit retains Dual View and Focus state", await page.getByTestId("dual-view").isVisible() && await page.locator(".app--dual-focus").count() === 1);
+      await page.keyboard.press("Escape");
+      await page.locator(".app--dual-focus").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
       const viewerA = page.getByRole("combobox", { name: "Dual View A resource" });
       const viewerB = page.getByRole("combobox", { name: "Dual View B resource" });
       const alphaId = `my-work:${workId}:${createdResources.get("alpha.seq")}`;
@@ -2315,12 +2333,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         initial.map(({ title, nodes, zoom }) => `${title}: ${nodes} nodes at ${zoom}`).join("; "),
       );
 
+      await panes[0].getByTestId("viewport-pane").focus();
+      await page.keyboard.press("ArrowRight");
+      const pannedA = await paneState();
+      check("Panning A changes its actual SVG transform without changing B", pannedA[0].transform !== initial[0].transform && pannedA[1].transform === initial[1].transform,
+        `A ${initial[0].transform} → ${pannedA[0].transform}; B unchanged ${pannedA[1].transform}`);
       await panes[0].getByTestId("zoom-in").click();
       const zoomedA = await paneState();
       check(
         "Zooming A leaves B camera and SVG transform unchanged",
-        zoomedA[0].zoom !== initial[0].zoom && zoomedA[1].zoom === initial[1].zoom && zoomedA[1].transform === initial[1].transform,
-        `A ${initial[0].zoom} → ${zoomedA[0].zoom}; B ${initial[1].zoom} → ${zoomedA[1].zoom}`,
+        zoomedA[0].zoom !== pannedA[0].zoom && zoomedA[0].transform !== pannedA[0].transform && zoomedA[1].zoom === pannedA[1].zoom && zoomedA[1].transform === pannedA[1].transform,
+        `A ${pannedA[0].zoom} ${pannedA[0].transform} → ${zoomedA[0].zoom} ${zoomedA[0].transform}; B unchanged ${zoomedA[1].transform}`,
       );
       await panes[0].locator("g.participant[data-node-id]").first().click();
       await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-a"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
@@ -2356,7 +2379,33 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         `${beforeSwap[0].activeNode}, ${beforeSwap[1].activeNode} → ${afterSwap[0].activeNode}, ${afterSwap[1].activeNode}`,
       );
 
+      const beforeFocus = await paneState();
+      await page.getByRole("button", { name: "Focus" }).click();
+      await page.locator(".app--dual-focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      const inFocus = await paneState();
+      check("Focus preserves both actual SVG camera transforms and distinct selected nodes", inFocus.every((pane, index) => pane.transform === beforeFocus[index].transform && pane.activeNode === beforeFocus[index].activeNode) && inFocus[0].activeNode !== inFocus[1].activeNode,
+        `before ${beforeFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → focus ${inFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+      await page.getByRole("button", { name: "Fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
+      const inFullscreen = await paneState();
+      check("Fullscreen preserves both actual SVG camera transforms and node selections", inFullscreen.every((pane, index) => pane.transform === inFocus[index].transform && pane.activeNode === inFocus[index].activeNode),
+        `focus ${inFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → fullscreen ${inFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+      await page.getByRole("button", { name: "Exit fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+      const afterFullscreen = await paneState();
+      check("Exiting Fullscreen retains Focus and both cameras/selections", await page.locator(".app--dual-focus").count() === 1 && afterFullscreen.every((pane, index) => pane.transform === inFullscreen[index].transform && pane.activeNode === inFullscreen[index].activeNode),
+        `fullscreen ${inFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+      await page.getByRole("button", { name: "Exit Focus" }).click();
+      await page.locator(".app--dual-focus").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+      const afterFocus = await paneState();
+      check("Exiting Focus retains both actual SVG camera transforms and node selections", afterFocus.every((pane, index) => pane.transform === afterFullscreen[index].transform && pane.activeNode === afterFullscreen[index].activeNode),
+        `focus ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+
+      await page.getByRole("button", { name: "Fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
       await page.getByRole("button", { name: "Close Dual View" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Closing Dual View from native Fullscreen exits the browser mode and restores the workspace", await page.getByTestId("dual-view").count() === 0 && await page.locator(".app__workspace--dual-view").count() === 0);
       await page.getByTestId("compare-mode-button").click();
       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const dualA = page.getByRole("combobox", { name: "Dual View A resource" });

@@ -610,6 +610,33 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Dirty");
   });
 
+  it("keeps the editor mounted and restores its buffer, scroll, selection, and preferences around Dual View", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    const textarea = screen.getByTestId("dsl-textarea") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: Array.from({ length: 80 }, (_, i) => `participant P${i}`).join("\n") } });
+    textarea.scrollTop = 240;
+    textarea.setSelectionRange(12, 19);
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByTestId("dsl-textarea")).toBeInTheDocument();
+    expect(screen.getByTestId("dual-pane-a")).toBeInTheDocument();
+    expect(screen.getByTestId("dual-pane-b")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Project explorer" })).toBeInTheDocument();
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--dual-view");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+    fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
+    const restored = screen.getByTestId("dsl-textarea") as HTMLTextAreaElement;
+    expect(restored).toHaveValue(Array.from({ length: 80 }, (_, i) => `participant P${i}`).join("\n"));
+    expect(restored.scrollTop).toBe(240);
+    expect(restored.selectionStart).toBe(12);
+    expect(restored.selectionEnd).toBe(19);
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--dual-view");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
   it("switches both resources symmetrically and swaps their sessions", async () => {
     render(<App />);
     await project();

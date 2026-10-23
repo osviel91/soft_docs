@@ -38,11 +38,17 @@ function DualPane({ session, pane }: { session: Session; pane: "a" | "b" }) {
   </section>;
 }
 
-export default function DualView({ options, initialOptionId, projectId, onExit }: {
+export default function DualView({ options, initialOptionId, projectId, onExit, focusMode = false, onToggleFocus = () => {}, fullscreen = false, onToggleFullscreen = () => {}, fullscreenError = false, rootRef }: {
   options: ComparisonOption[];
   initialOptionId?: string;
   projectId: string;
   onExit: () => void;
+  focusMode?: boolean;
+  onToggleFocus?: () => void;
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  fullscreenError?: boolean;
+  rootRef?: (node: HTMLDivElement | null) => void;
 }) {
   const first = options.find(option => option.id === initialOptionId) ?? options[0];
   const [ids, setIds] = useState<[string, string]>(() => [first?.id ?? "", options.find(option => option.id !== first?.id)?.id ?? ""]);
@@ -57,8 +63,10 @@ export default function DualView({ options, initialOptionId, projectId, onExit }
   const b = options.find(option => option.id === ids[1]);
   const swap = () => setIds(([left, right]) => [right, left]);
   const select = (pane: 0 | 1, id: string) => setIds(current => pane === 0 ? [id, current[1]] : [current[0], id]);
-  return <div className="comparison dual-view" data-testid="dual-view">
+  return <div ref={rootRef} className={`comparison dual-view${focusMode ? " dual-view--focus" : ""}`} data-testid="dual-view" aria-hidden={false}>
     <header className="comparison__toolbar"><strong>Dual View · {projectId}</strong>
+      <button type="button" className="button button--ghost button--small" aria-pressed={focusMode} onClick={onToggleFocus}>{focusMode ? "Exit Focus" : "Focus"}</button>
+      <button type="button" className="button button--ghost button--small" aria-pressed={fullscreen} title={fullscreenError ? "Fullscreen unavailable" : undefined} onClick={onToggleFullscreen}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button>
       <label>Viewer A <select aria-label="Dual View A resource" value={a?.id ?? ""} onChange={event => select(0, event.target.value)}>{options.filter(option => option.id !== b?.id).map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
       <label>Viewer B <select aria-label="Dual View B resource" value={b?.id ?? ""} onChange={event => select(1, event.target.value)}><option value="">Select a resource</option>{options.filter(option => option.id !== a?.id).map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
       <button type="button" className="icon-button" aria-label="Swap dual viewers" onClick={swap} disabled={!a || !b}>⇄</button>
