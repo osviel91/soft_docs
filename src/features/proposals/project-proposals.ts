@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ServerApiClient,
   ServerChangeProposal,
@@ -90,10 +90,17 @@ export function useResourceProposalCount(
   contextId: string | null,
   refreshKey = 0,
 ): number | null {
-  const key = projectId && resourcePath && contextId === null
-    ? `${projectId}:${resourcePath}`
+  const key = projectId && resourcePath
+    ? `${projectId}:${resourcePath}:${contextId ?? "shared"}`
     : null;
-  const [result, setResult] = useState<{ key: string; count: number } | null>(null);
+  const generation = useRef(0);
+  const previousKey = useRef(key);
+  if (previousKey.current !== key) {
+    previousKey.current = key;
+    generation.current += 1;
+  }
+  const [result, setResult] = useState<{ generation: number; count: number } | null>(null);
+  const requestGeneration = generation.current;
   useEffect(() => {
     if (!projectId || !resourcePath || contextId !== null) return;
     let active = true;
@@ -104,14 +111,16 @@ export function useResourceProposalCount(
       const resource = matches[0];
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resource.id)) return;
       const items = await client.listChangeProposals(projectId, resource.id);
-      if (active) setResult({ key: `${projectId}:${resourcePath}`, count: items.filter((item) => item.status === "open").length });
+      if (active && generation.current === requestGeneration) {
+        setResult({ generation: requestGeneration, count: items.filter((item) => item.status === "open").length });
+      }
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
   }, [client, projectId, resourcePath, contextId, refreshKey]);
-  return key && result?.key === key ? result.count : null;
+  return key && contextId === null && result?.generation === requestGeneration ? result.count : null;
 }
 
 export function useProjectResourceProposalCounts(

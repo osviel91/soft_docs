@@ -52,4 +52,21 @@ describe("useResourceProposalCount", () => {
     await act(async () => resolveProposals([{ status: "open" }]));
     expect(result.current).toBeNull();
   });
+
+  it("does not reuse an old SHARED count after leaving and returning to the same selection", async () => {
+    const api = client();
+    let resolveReload!: (value: { status: string }[]) => void;
+    api.listChangeProposals
+      .mockResolvedValueOnce([{ status: "open" }])
+      .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve; }));
+    const { result, rerender } = renderHook(({ context }) => useResourceProposalCount(api, context === null ? "project" : null, "alpha.seq", context), { initialProps: { context: null as string | null } });
+    await waitFor(() => expect(result.current).toBe(1));
+    rerender({ context: "work" });
+    expect(result.current).toBeNull();
+    rerender({ context: null });
+    expect(result.current).toBeNull();
+    await waitFor(() => expect(api.listChangeProposals).toHaveBeenCalledTimes(2));
+    await act(async () => resolveReload([{ status: "open" }, { status: "open" }]));
+    expect(result.current).toBe(2);
+  });
 });
