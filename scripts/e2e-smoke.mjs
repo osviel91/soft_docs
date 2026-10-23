@@ -2934,12 +2934,34 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const contextParam = new URL(ownerPage.url()).searchParams.get("context");
       const headerCount = await editorHeader.count();
       const headerVisible = headerCount === 1 && await editorHeader.isVisible();
-      const presentButton = editorHeader.getByRole("button", { name: "Present", exact: true });
+      const toolbarRepresentations = [
+        ["Sequence", ownerPage.getByRole("button", { name: "Load diagram Shared architecture" })],
+        ["Conceptual", ownerPage.getByRole("button", { name: "Load diagram Customer model" })],
+        ["Database", ownerPage.getByRole("button", { name: "Load diagram Internal schema" })],
+        ["Markdown", ownerPage.getByRole("button", { name: "Open note Shared overview" })],
+      ];
+      for (const [representation, resourceButton] of toolbarRepresentations) {
+        await resourceButton.click();
+        const sharedToolbarPresent = ownerPage.getByTestId("viewer-present-toggle");
+        await sharedToolbarPresent.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        check(`${representation} exposes Present beside Focus and Fullscreen`, await sharedToolbarPresent.isVisible() && await ownerPage.getByTestId("viewer-focus-toggle").isVisible() && await ownerPage.getByTestId("viewer-fullscreen-toggle").isVisible());
+      }
+      await ownerPage.getByRole("button", { name: "Load diagram Programmed Recharge Lifecycle Causal Flow" }).click();
+      await ownerPage.getByTestId("event-flow-preview").getByRole("button", { name: "Causal", exact: true }).click();
+      const causalToolbarPresent = ownerPage.getByTestId("viewer-present-toggle");
+      await causalToolbarPresent.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Causal React Flow exposes Present beside Focus and Fullscreen", await causalToolbarPresent.isVisible() && await ownerPage.getByTestId("viewer-focus-toggle").isVisible() && await ownerPage.getByTestId("viewer-fullscreen-toggle").isVisible());
+      const presentButton = ownerPage.getByTestId("viewer-present-toggle");
       const presentButtonCount = await presentButton.count();
       check("authenticated Event Flow remains in SHARED context", contextParam === null, `context=${contextParam ?? "SHARED"}`);
       check("authenticated Event Flow resource header is visible", headerVisible, `headers=${headerCount}`);
       check("Present is available for the selected SHARED resource", presentButtonCount === 1, `buttons=${presentButtonCount}`);
+      check("Present is absent from the editor header", await editorHeader.getByRole("button", { name: "Present", exact: true }).count() === 0);
       if (presentButtonCount === 1) {
+        if (process.env.E2E_SCREENSHOT_DIR) {
+          await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+          await ownerPage.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2c-present-event-flow-toolbar.png"), fullPage: true });
+        }
         await presentButton.click();
         await ownerPage.getByTestId("presentation-mode").waitFor({ state: "visible" });
         const presentationCausalNode = ownerPage.locator(".causal-flow .react-flow__node").first();
@@ -3085,7 +3107,14 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await second.click();
       check("the clicked SHARED row becomes the selected artifact", (await second.locator("xpath=..").getAttribute("class"))?.includes("explorer__resource--selected") === true);
       await page.getByRole("button", { name: "Show editor" }).click();
-      await page.locator('[data-testid="resource-header"] button').filter({ hasText: "Present" }).click();
+      const presentButton = page.getByTestId("viewer-present-toggle");
+      check("Present shares the viewer toolbar with Focus and Fullscreen", await presentButton.isVisible() && await page.getByTestId("viewer-focus-toggle").isVisible() && await page.getByTestId("viewer-fullscreen-toggle").isVisible());
+      check("Present is absent from the editor header", await page.locator('[data-testid="resource-header"] button').filter({ hasText: "Present" }).count() === 0);
+      if (process.env.E2E_SCREENSHOT_DIR) {
+        await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2c-present-viewer-toolbar.png"), fullPage: true });
+      }
+      await presentButton.click();
       await page.getByTestId("presentation-mode").waitFor({ state: "visible" });
       check("authenticated presentation opens only from the authoritative SHARED selection", (await page.locator(".presentation__stage").getAttribute("aria-label"))?.startsWith("Second artifact") === true);
       await page.keyboard.press("Escape");
@@ -3655,6 +3684,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         check(
           "a viewer can open and read the project",
           read.includes(VIEWER_MARKER),
+        );
+        check(
+          "a read-only viewer retains Present in the SHARED viewer toolbar",
+          await viewerPage.getByTestId("viewer-present-toggle").isVisible() &&
+            await viewerPage.getByTestId("viewer-focus-toggle").isVisible() &&
+            await viewerPage.getByTestId("viewer-fullscreen-toggle").isVisible(),
         );
 
         // The viewer's edit is refused before it ever leaves the browser, and the
