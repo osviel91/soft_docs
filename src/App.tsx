@@ -4125,7 +4125,6 @@ export default function App() {
                         {selectedNote.name}
                       </span>
                       {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
-                      {canPresentShared ? <button type="button" className="button button--ghost button--small" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                     <ResourceMetadataEditor
                       metadata={selectedNote.metadata}
@@ -4187,7 +4186,6 @@ export default function App() {
                       </span>
                       <span className="resource-header__name">{selectedDiagram?.name}</span>
                       {!comparisonEditorHidden ? <button type="button" className="button button--ghost button--small" onClick={() => setComparisonEditorHidden(true)}>Hide editor</button> : null}
-                      {canPresentShared ? <button type="button" className="button button--ghost button--small" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                     <ResourceMetadataEditor
                       metadata={selectedDiagram?.metadata}
@@ -4317,6 +4315,7 @@ export default function App() {
                       >
                         {previewFullscreen ? "Exit fullscreen" : "Fullscreen"}
                       </button>
+                      {canPresentShared ? <button type="button" className="button button--ghost button--small" aria-label="Present" title="Present" data-testid="viewer-present-toggle" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                   ) : null}
                    {comparisonEditorHidden || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}

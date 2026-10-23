@@ -379,6 +379,31 @@ describe("App — anonymous browser", () => {
 });
 
 describe("App — authenticated browser", () => {
+  it("places Present in the viewer toolbar for SHARED and keeps it out of the editor header", async () => {
+    await openServerProject("title Checkout", false);
+
+    const toolbar = document.querySelector(".viewer-focus-toolbar");
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar as HTMLElement).getByRole("button", { name: "Present" })).toHaveAttribute("title", "Present");
+    expect(within(screen.getByTestId("resource-header")).queryByRole("button", { name: "Present" })).toBeNull();
+    expect(within(toolbar as HTMLElement).getByTestId("viewer-focus-toggle")).toBeInTheDocument();
+    expect(within(toolbar as HTMLElement).getByTestId("viewer-fullscreen-toggle")).toBeInTheDocument();
+
+    fireEvent.click(within(toolbar as HTMLElement).getByRole("button", { name: "Present" }));
+    expect(await screen.findByTestId("presentation-mode")).toBeInTheDocument();
+  });
+
+  it("keeps Present unavailable in MY WORK while retaining viewer controls", async () => {
+    await openServerProject("title Checkout", true);
+
+    const toolbar = document.querySelector(".viewer-focus-toolbar");
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar as HTMLElement).queryByRole("button", { name: "Present" })).toBeNull();
+    expect(within(toolbar as HTMLElement).getByTestId("viewer-focus-toggle")).toBeInTheDocument();
+    expect(within(toolbar as HTMLElement).getByTestId("viewer-fullscreen-toggle")).toBeInTheDocument();
+    expect(within(screen.getByTestId("resource-header")).queryByRole("button", { name: "Present" })).toBeNull();
+  });
+
   it("offers server project deletion only to a platform administrator", async () => {
     await openServerProject("title Checkout", false);
     await act(async () => fireEvent.click(screen.getByTestId("workspace-project-menu")));
