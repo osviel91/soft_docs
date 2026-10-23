@@ -1,10 +1,10 @@
 export default function ResourceActionBar({
-  proposalCount = 0,
+  proposalCount,
   onHistory,
   onChanges,
   onExport,
 }: {
-  proposalCount?: number;
+  proposalCount?: number | null;
   onHistory: () => void;
   onChanges?: () => void;
   onExport?: () => void;
@@ -19,7 +19,7 @@ export default function ResourceActionBar({
       >
         <span aria-hidden="true">⟲</span> History
       </button>
-      {onChanges && proposalCount > 0 && (
+      {onChanges && proposalCount != null && proposalCount > 0 && (
         <button
           type="button"
           className="resource-action-bar__action"

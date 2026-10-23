@@ -149,6 +149,7 @@ import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
 import { parseDatabaseSyntax } from "./language/database/parser";
 import ComparisonView, { type ComparisonOption, type ComparisonResource, type RevisionComparisonResource } from "./features/preview/ComparisonView";
+import DualView from "./features/preview/DualView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
 import { renderEventFlowTopologyDocument } from "./renderer/pipeline/eventflow-to-topology-svg";
@@ -668,6 +669,7 @@ export default function App() {
   const [fullscreenError, setFullscreenError] = useState(false);
   const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [dualViewOpen, setDualViewOpen] = useState(false);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const toggleFocusMode = useCallback((origin?: HTMLElement): void => {
@@ -936,8 +938,8 @@ export default function App() {
   }, [comparisonMaximized, comparisonMaximizedPane]);
 
   useEffect(() => {
-    if (page !== "workspace" || comparisonOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) setFocusMode(false);
-  }, [architecturalProposalId, comparisonOpen, page, presentationActive, proposalReviewOpen, revisionProposalId]);
+    if (page !== "workspace" || comparisonOpen || dualViewOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) setFocusMode(false);
+  }, [architecturalProposalId, comparisonOpen, dualViewOpen, page, presentationActive, proposalReviewOpen, revisionProposalId]);
 
   /**
    * Open a local folder (replacing the active repository) or, when a folder is
@@ -1546,6 +1548,10 @@ export default function App() {
         }),
       ]
     : [];
+  const dualViewOptions: ComparisonOption[] = comparisonOptions.length ? comparisonOptions : [...allDiagrams, ...allNotes].map((resource) => {
+        const resourceId = resourceIdForFile(resource) ?? resource.id;
+        return { id: resource.id, resource, resourceId, representation: resourceRepresentationOfName(resource.name), source: "markdown" in resource ? resource.markdown : resource.source, context: { projectId: resource.projectId, knowledgeContext: server.active ? { kind: "shared" as const, id: `shared:${resource.projectId}`, projectId: resource.projectId } : { kind: "local" as const, id: `local:${resource.projectId}`, projectId: resource.projectId }, index: index ?? sharedIndex ?? { projectId: resource.projectId, resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] }, resourceId }, label: `${server.active ? "SHARED" : "LOCAL"} · ${resource.name}` };
+      });
   const comparisonPrimaryOptionId = selectedComparisonResource
     ? server.active?.contextId
       ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
@@ -2090,8 +2096,9 @@ export default function App() {
   );
   const resourceProposalCount = useResourceProposalCount(
     apiClient,
-    canReviewProposals ? selectedProjectId : null,
-    canReviewProposals ? activeResourceId : null,
+    canReviewProposals && server.active?.contextId === null ? selectedProjectId : null,
+    canReviewProposals ? selectedDiagram?.name ?? selectedNote?.name ?? null : null,
+    server.active?.contextId ?? null,
     proposalRefreshKey,
   );
 
@@ -2913,7 +2920,7 @@ export default function App() {
         return;
       }
       if (!bindingMatches(FOCUS_MODE_BINDING, event) || focusShortcutTargetIsInteractive(event.target)) return;
-      if (page !== "workspace" || comparisonOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) return;
+      if (page !== "workspace" || comparisonOpen || dualViewOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) return;
       const toggle = document.querySelector<HTMLElement>(".viewer-focus-toggle");
       if (!toggle) return;
       focusOrigin.current = toggle;
@@ -2922,7 +2929,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [architecturalProposalId, comparisonOpen, exportDiagramOpen, focusMode, isOpen, menu, page, pendingDelete, pendingProposalWithdrawal, pendingTabCloseId, presentationActive, prompt, proposalReviewOpen, quickOpenOpen, revisionProposalId, searchOpen, shareProjectId]);
+  }, [architecturalProposalId, comparisonOpen, dualViewOpen, exportDiagramOpen, focusMode, isOpen, menu, page, pendingDelete, pendingProposalWithdrawal, pendingTabCloseId, presentationActive, prompt, proposalReviewOpen, quickOpenOpen, revisionProposalId, searchOpen, shareProjectId]);
   /**
    * Return to the workspace and show one of the editor pane's panels.
    *
@@ -3700,20 +3707,8 @@ export default function App() {
               </span>
               <span className="switch__label">Auto-update</span>
             </label>
-            <button
-              type="button"
-              className="button"
-              data-testid="compare-mode-button"
-              aria-label="Compare current resource with another resource"
-              disabled={!selectedComparisonResource}
-              onClick={() => {
-                setComparisonOpen(true);
-                setComparisonMaximizedPane(null);
-                setComparisonMaximized(false);
-              }}
-            >
-              Compare
-            </button>
+            <button type="button" className="button" data-testid="compare-mode-button" aria-label="Open Dual View" disabled={!selectedComparisonResource} onClick={() => setDualViewOpen(true)}>Dual View</button>
+            <button type="button" className="button" data-testid="analysis-mode-button" aria-label="Open Analysis" disabled={!selectedComparisonResource} onClick={() => { setComparisonOpen(true); setComparisonMaximizedPane(null); setComparisonMaximized(false); }}>Analysis</button>
           </>
         ) : (
           <span className="app__page-title" data-testid={page === "inbox" ? "inbox-page-title" : "docs-page-title"}>
@@ -4292,7 +4287,7 @@ export default function App() {
                         : "Diagram preview"
                   }
                 >
-                  {!comparisonOpen && !proposalReviewOpen && !architecturalProposalId && !revisionProposalId && !noDocumentsOpen && (selectedDiagram || selectedNote) ? (
+                  {!comparisonOpen && !dualViewOpen && !proposalReviewOpen && !architecturalProposalId && !revisionProposalId && !noDocumentsOpen && (selectedDiagram || selectedNote) ? (
                     <div className="viewer-focus-toolbar">
                       <button
                         type="button"
@@ -4331,6 +4326,8 @@ export default function App() {
                     <section className="workspace-empty-preview" data-testid="empty-document-preview" aria-label="Document preview empty">
                       <p>No document is open. Choose one from the Explorer or use Open a document.</p>
                     </section>
+                  ) : dualViewOpen ? (
+                    <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} onExit={() => setDualViewOpen(false)} />
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
                       primary={selectedComparisonResource}
