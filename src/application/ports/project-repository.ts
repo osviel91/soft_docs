@@ -93,6 +93,15 @@ export interface ProjectRepository {
   /** Delete a project; its members and resource rows go with it. */
   delete(id: string): Promise<void>;
 
+  /** Mark deletion as pending before external storage cleanup starts. */
+  markDeletionPending(id: string): Promise<void>;
+
+  /** Private storage directories belonging to the project. */
+  listPrivateContextIds(id: string): Promise<string[]>;
+
+  /** Remove proposal evidence that carries restrictive foreign keys. */
+  deleteProposalRecords(id: string): Promise<void>;
+
   /** Transfer ownership to an active member of the same workspace; null if ineligible. */
   transferOwnership(projectId: string, userId: string): Promise<ServerProject | null>;
 

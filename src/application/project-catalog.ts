@@ -677,14 +677,33 @@ export function createProjectCatalog(
       if (!(await projects.findById(projectId))) {
         throw notFound(`No project with id ${projectId}.`);
       }
-      // The database cascades members and resource rows; the files are removed
-      // explicitly, because a volume is not part of a transaction.
-      const store = storage(projectId);
-      const listed = await store.list();
-      if (listed.ok) {
-        for (const resource of listed.value) await store.remove(resource.path);
+      await projects.markDeletionPending(projectId);
+      const removeStorage = async (contextId: string | null, stage: string) => {
+        try {
+          const store = storage(projectId, contextId);
+          const listed = await store.list();
+          if (!listed.ok) throw listed.error;
+          for (const resource of listed.value) {
+            const removed = await store.remove(resource.path);
+            if (!removed.ok) throw removed.error;
+          }
+        } catch {
+          throw new ApplicationError("internal", `Project deletion is pending: failed during ${stage}. Retry deletion to continue.`, { projectId, stage });
+        }
+      };
+      try {
+        await projects.deleteProposalRecords(projectId);
+      } catch {
+        throw new ApplicationError("internal", "Project deletion is pending: failed while removing proposal records. Retry deletion to continue.", { projectId, stage: "proposals" });
       }
-      await projects.delete(projectId);
+      const privateContextIds = await projects.listPrivateContextIds(projectId);
+      for (const contextId of privateContextIds) await removeStorage(contextId, "MY WORK cleanup");
+      await removeStorage(null, "SHARED cleanup");
+      try {
+        await projects.delete(projectId);
+      } catch {
+        throw new ApplicationError("internal", "Project deletion is pending: failed while removing project records. Retry deletion to continue.", { projectId, stage: "project records" });
+      }
       await writeAudit(context, {
         action: "project.deleted",
         projectId: projectId,
@@ -765,6 +784,8 @@ export function createProjectCatalog(
     async createPrivateWorkContext(context, projectId, input) {
       await requirePermission(context, projectId, "project:read");
       if (!knowledgeContexts) throw new ApplicationError("internal", "Private work contexts are unavailable.");
+      const project = await projects.findById(projectId);
+      if (!project || project.deletionPendingAt) throw new ApplicationError("conflict", "This project is pending deletion and cannot accept new MY WORK contexts.");
       const created = await knowledgeContexts.createPrivate({ projectId, ownerUserId: context.principal.subjectUserId, ...input });
       await storage(projectId, created.id).list();
       return created;

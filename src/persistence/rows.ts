@@ -85,6 +85,7 @@ export function toServerProject(row: SqlRow): ServerProject {
     ownerId: text(row, "owner_id"),
     name: text(row, "name"),
     slug: text(row, "slug"),
+    deletionPendingAt: row.deletion_pending_at == null ? null : timestamp(row, "deletion_pending_at"),
     createdAt: timestamp(row, "created_at"),
     updatedAt: timestamp(row, "updated_at"),
   };

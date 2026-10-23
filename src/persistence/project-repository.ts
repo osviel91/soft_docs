@@ -271,6 +271,25 @@ export function createProjectRepository(
       await client.query("DELETE FROM projects WHERE id = $1", [id]);
     },
 
+    async markDeletionPending(id) {
+      await client.query("UPDATE projects SET deletion_pending_at = COALESCE(deletion_pending_at, now()) WHERE id = $1", [id]);
+    },
+
+    async listPrivateContextIds(id) {
+      const result = await client.query("SELECT id FROM knowledge_contexts WHERE project_id = $1 ORDER BY id", [id]);
+      return result.rows.map((row) => String(row.id));
+    },
+
+    async deleteProposalRecords(id) {
+      await client.transaction(async (tx) => {
+        await tx.query("UPDATE architectural_proposals SET supersedes_proposal_id = NULL WHERE project_id = $1", [id]);
+        await tx.query("DELETE FROM promotion_entries WHERE promotion_id IN (SELECT id FROM promotions WHERE project_id = $1)", [id]);
+        await tx.query("DELETE FROM promotion_relationship_changes WHERE promotion_id IN (SELECT id FROM promotions WHERE project_id = $1)", [id]);
+        await tx.query("DELETE FROM promotions WHERE project_id = $1", [id]);
+        await tx.query("DELETE FROM architectural_proposals WHERE project_id = $1", [id]);
+      });
+    },
+
     async transferOwnership(projectId, userId) {
       return client.transaction(async (tx) => {
         const found = await tx.query(

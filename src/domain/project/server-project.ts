@@ -35,6 +35,7 @@ export interface ServerProject {
    * membership.
    */
   slug: string;
+  deletionPendingAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
