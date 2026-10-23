@@ -665,11 +665,13 @@ export default function App() {
   const [focusMode, setFocusMode] = useState(false);
   const focusOrigin = useRef<HTMLElement | null>(null);
   const previewPaneRef = useRef<HTMLElement | null>(null);
+  const dualViewRef = useRef<HTMLDivElement | null>(null);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState(false);
   const [presentationActive, setPresentationActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [dualViewOpen, setDualViewOpen] = useState(false);
+  const [dualFocusMode, setDualFocusMode] = useState(false);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const toggleFocusMode = useCallback((origin?: HTMLElement): void => {
@@ -682,7 +684,7 @@ export default function App() {
     setFocusMode(true);
   }, [focusMode]);
   useEffect(() => {
-    const syncFullscreen = () => setPreviewFullscreen(document.fullscreenElement === previewPaneRef.current);
+    const syncFullscreen = () => setPreviewFullscreen(Boolean(document.fullscreenElement && (document.fullscreenElement === previewPaneRef.current || document.fullscreenElement === dualViewRef.current)));
     const onFullscreenError = () => setFullscreenError(true);
     document.addEventListener("fullscreenchange", syncFullscreen);
     document.addEventListener("fullscreenerror", onFullscreenError);
@@ -704,6 +706,28 @@ export default function App() {
     } catch {
       setFullscreenError(true);
     }
+  };
+  const toggleDualFullscreen = async () => {
+    setFullscreenError(false);
+    try {
+      if (document.fullscreenElement === dualViewRef.current) await document.exitFullscreen();
+      else {
+        const requestFullscreen = dualViewRef.current?.requestFullscreen;
+        if (!requestFullscreen) throw new Error("Fullscreen API unavailable");
+        await requestFullscreen.call(dualViewRef.current);
+      }
+    } catch { setFullscreenError(true); }
+  };
+  const closeDualView = () => {
+    if (dualViewRef.current && document.fullscreenElement === dualViewRef.current) {
+      try {
+        void Promise.resolve(document.exitFullscreen()).catch(() => setFullscreenError(true));
+      } catch {
+        setFullscreenError(true);
+      }
+    }
+    setDualFocusMode(false);
+    setDualViewOpen(false);
   };
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
@@ -2913,6 +2937,11 @@ export default function App() {
         pendingProposalWithdrawal || menu || exportDiagramOpen || shareProjectId,
       );
       if (event.defaultPrevented || keyboardOverlayOpen) return;
+      if (event.key === "Escape" && dualFocusMode && dualViewOpen && document.fullscreenElement !== dualViewRef.current) {
+        setDualFocusMode(false);
+        event.preventDefault();
+        return;
+      }
       if (event.key === "Escape" && focusMode && document.fullscreenElement !== previewPaneRef.current) {
         setFocusMode(false);
         if (focusOrigin.current?.isConnected) focusOrigin.current.focus();
@@ -2920,6 +2949,7 @@ export default function App() {
         return;
       }
       if (!bindingMatches(FOCUS_MODE_BINDING, event) || focusShortcutTargetIsInteractive(event.target)) return;
+      if (page === "workspace" && dualViewOpen) { setDualFocusMode((value) => !value); event.preventDefault(); return; }
       if (page !== "workspace" || comparisonOpen || dualViewOpen || proposalReviewOpen || architecturalProposalId || revisionProposalId || presentationActive) return;
       const toggle = document.querySelector<HTMLElement>(".viewer-focus-toggle");
       if (!toggle) return;
@@ -2929,7 +2959,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [architecturalProposalId, comparisonOpen, dualViewOpen, exportDiagramOpen, focusMode, isOpen, menu, page, pendingDelete, pendingProposalWithdrawal, pendingTabCloseId, presentationActive, prompt, proposalReviewOpen, quickOpenOpen, revisionProposalId, searchOpen, shareProjectId]);
+  }, [architecturalProposalId, comparisonOpen, dualFocusMode, dualViewOpen, exportDiagramOpen, focusMode, isOpen, menu, page, pendingDelete, pendingProposalWithdrawal, pendingTabCloseId, presentationActive, prompt, proposalReviewOpen, quickOpenOpen, revisionProposalId, searchOpen, shareProjectId]);
   /**
    * Return to the workspace and show one of the editor pane's panels.
    *
@@ -3598,7 +3628,7 @@ export default function App() {
   if (presentationActive && canPresentShared && server.active) return <PresentationMode projectName={server.active.project.name} resources={presentationResources} initialId={selectedDiagram?.id ?? selectedNote?.id ?? ""} initialView={eventFlowView} onRepresentationChange={changeEventFlowView} onExit={() => setPresentationActive(false)} />;
 
   return (
-    <div className="app" data-testid="app-shell">
+    <div className={`app${dualFocusMode && dualViewOpen ? " app--dual-focus" : ""}`} data-testid="app-shell">
       <header className="app__toolbar">
         <span className="app__brand">
           <span className="app__brand-mark" aria-hidden="true">
@@ -3809,7 +3839,7 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${dualViewOpen ? " app__workspace--dual-view" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
           >
             {explorerCollapsed ? (
               <button
@@ -4326,8 +4356,8 @@ export default function App() {
                     <section className="workspace-empty-preview" data-testid="empty-document-preview" aria-label="Document preview empty">
                       <p>No document is open. Choose one from the Explorer or use Open a document.</p>
                     </section>
-                  ) : dualViewOpen ? (
-                    <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} onExit={() => setDualViewOpen(false)} />
+                   ) : dualViewOpen ? (
+                     <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} onExit={closeDualView} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} />
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
                       primary={selectedComparisonResource}
