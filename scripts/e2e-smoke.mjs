@@ -2190,6 +2190,213 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     email: "viewer@e2e.test",
   };
 
+  await scenario("UX-3B.1 Dual View preserves independent visual sessions", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const page = await context.newPage();
+    const http500s = [];
+    let projectId = null;
+    let workId = null;
+    page.on("response", (response) => {
+      if (response.status() === 500) {
+        http500s.push(`${response.request().method()} ${new URL(response.url()).pathname} 500`);
+      }
+    });
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+
+      const projectName = `UX-3B.1 Dual View ${Date.now()}`;
+      await createServerProject(page, projectName);
+      const project = await serverProjectByName(page, projectName);
+      if (!project) throw new Error("Disposable Dual View project was not discoverable.");
+      projectId = project.id;
+
+      const workName = `dual-view-${Date.now()}`;
+      await page.getByTestId("explorer-my-work-create").click();
+      await page.getByRole("dialog", { name: "Create MY WORK draft" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByLabel("Draft name").fill(workName);
+      await page.getByRole("button", { name: "Create draft" }).click();
+      const workDeadline = Date.now() + UI_TIMEOUT_MS;
+      while (Date.now() < workDeadline) {
+        const contexts = await apiRequest(page, `/api/projects/${projectId}/private-work`);
+        workId = contexts.json?.contexts?.find((entry) => entry.name === workName)?.id ?? null;
+        if (workId) break;
+        await delay(100);
+      }
+      if (!workId) throw new Error("Disposable MY WORK context was not created.");
+
+      const resources = [
+        {
+          path: "alpha.seq",
+          type: "sequence-diagram",
+          content: [
+            "title Alpha",
+            "participant Browser",
+            "participant Gateway",
+            "participant Store",
+            "Browser -> Gateway: Request",
+            "Gateway -> Store: Read",
+            "Store --> Gateway: Result",
+            "Gateway --> Browser: Response",
+          ].join("\n"),
+        },
+        {
+          path: "beta.seq",
+          type: "sequence-diagram",
+          content: [
+            "title Beta",
+            "participant Client",
+            "participant API",
+            "participant Queue",
+            "Client -> API: Submit",
+            "API -> Queue: Publish",
+            "Queue --> API: Accepted",
+            "API --> Client: Done",
+          ].join("\n"),
+        },
+        {
+          path: "dual-view-note.md",
+          type: "markdown-document",
+          content: "# Parallel test note\n\nA disposable note for the Dual View smoke test.\n",
+        },
+      ];
+      const createdResources = new Map();
+      for (const resource of resources) {
+        const response = await apiRequest(page, `/api/projects/${projectId}/resources`, {
+          method: "POST",
+          body: JSON.stringify({ ...resource, contextId: workId }),
+        });
+        if (response.status !== 201 || !response.json?.resource?.id) {
+          throw new Error(`Disposable ${resource.path} creation failed: ${response.status} ${response.text}`);
+        }
+        createdResources.set(resource.path, response.json.resource.id);
+      }
+
+      await page.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await openMyWorkContext(page, workId);
+      const privateTree = page.locator('[data-testid="explorer-my-work-section"]');
+      const alphaButton = privateTree.getByRole("button", { name: "Load diagram Alpha" });
+      const betaButton = privateTree.getByRole("button", { name: "Load diagram Beta" });
+      await alphaButton.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await betaButton.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await alphaButton.click();
+
+      await page.getByTestId("compare-mode-button").click();
+      const dualView = page.getByTestId("dual-view");
+      await dualView.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const viewerA = page.getByRole("combobox", { name: "Dual View A resource" });
+      const viewerB = page.getByRole("combobox", { name: "Dual View B resource" });
+      const alphaId = `my-work:${workId}:${createdResources.get("alpha.seq")}`;
+      const betaId = `my-work:${workId}:${createdResources.get("beta.seq")}`;
+      await viewerA.selectOption(alphaId);
+      await viewerB.selectOption(betaId);
+      check("Dual View selectors hold the two requested resource identities", await viewerA.inputValue() === alphaId && await viewerB.inputValue() === betaId);
+
+      const panes = [page.getByTestId("dual-pane-a"), page.getByTestId("dual-pane-b")];
+      for (const pane of panes) await pane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const paneState = () => page.evaluate(() => ["a", "b"].map((side) => {
+        const pane = document.querySelector(`[data-testid="dual-pane-${side}"]`);
+        return {
+          title: pane?.querySelector("h2")?.textContent ?? "",
+          svgText: pane?.querySelector('[data-testid="preview-svg"]')?.textContent ?? "",
+          nodes: pane?.querySelectorAll("[data-node-id]").length ?? 0,
+          zoom: pane?.querySelector('[data-testid="zoom-level"]')?.textContent ?? "",
+          transform: pane?.querySelector('[data-testid="preview-svg"]')?.getAttribute("style") ?? "",
+          activeNode: pane?.querySelector(".svg-node--active")?.getAttribute("data-node-id") ?? null,
+        };
+      }));
+      const initial = await paneState();
+      check(
+        "Dual View renders two distinct Sequence SVGs with nodes",
+        initial[0].title === "Alpha" && initial[1].title === "Beta" && initial.every((pane) => pane.nodes > 0 && pane.svgText.length > 0),
+        initial.map(({ title, nodes, zoom }) => `${title}: ${nodes} nodes at ${zoom}`).join("; "),
+      );
+
+      await panes[0].getByTestId("zoom-in").click();
+      const zoomedA = await paneState();
+      check(
+        "Zooming A leaves B camera and SVG transform unchanged",
+        zoomedA[0].zoom !== initial[0].zoom && zoomedA[1].zoom === initial[1].zoom && zoomedA[1].transform === initial[1].transform,
+        `A ${initial[0].zoom} → ${zoomedA[0].zoom}; B ${initial[1].zoom} → ${zoomedA[1].zoom}`,
+      );
+      await panes[0].locator("g.participant[data-node-id]").first().click();
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-a"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
+      const selectedA = await paneState();
+      check(
+        "Selecting a node in A leaves B unselected with its camera intact",
+        Boolean(selectedA[0].activeNode) && selectedA[1].activeNode === null && selectedA[1].transform === zoomedA[1].transform,
+        `A node ${selectedA[0].activeNode}; B node ${selectedA[1].activeNode}`,
+      );
+
+      await panes[1].getByTestId("zoom-in").click();
+      await panes[1].getByTestId("zoom-in").click();
+      await panes[1].locator("g.participant[data-node-id]").last().click();
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-b"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
+      const beforeSwap = await paneState();
+      check(
+        "Pre-swap states are distinct in camera and selected node",
+        beforeSwap[0].zoom !== beforeSwap[1].zoom && beforeSwap[0].activeNode !== beforeSwap[1].activeNode,
+        beforeSwap.map(({ title, zoom, activeNode }) => `${title}: ${zoom}, ${activeNode}`).join("; "),
+      );
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForFunction(() => document.querySelector('[data-testid="dual-pane-a"] h2')?.textContent === "Beta", undefined, { timeout: UI_TIMEOUT_MS });
+      const afterSwap = await paneState();
+      check(
+        "Swap preserves each artifact's actual rendered camera transform",
+        afterSwap[0].title === beforeSwap[1].title && afterSwap[0].zoom === beforeSwap[1].zoom && afterSwap[0].transform === beforeSwap[1].transform &&
+          afterSwap[1].title === beforeSwap[0].title && afterSwap[1].zoom === beforeSwap[0].zoom && afterSwap[1].transform === beforeSwap[0].transform,
+        afterSwap.map(({ title, zoom, transform }) => `${title}: ${zoom}, ${transform}`).join("; "),
+      );
+      check(
+        "Swap preserves each artifact's active SVG node",
+        afterSwap[0].activeNode === beforeSwap[1].activeNode && afterSwap[1].activeNode === beforeSwap[0].activeNode,
+        `${beforeSwap[0].activeNode}, ${beforeSwap[1].activeNode} → ${afterSwap[0].activeNode}, ${afterSwap[1].activeNode}`,
+      );
+
+      await page.getByRole("button", { name: "Close Dual View" }).click();
+      await page.getByTestId("compare-mode-button").click();
+      await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const dualA = page.getByRole("combobox", { name: "Dual View A resource" });
+      const dualB = page.getByRole("combobox", { name: "Dual View B resource" });
+      const noteId = `my-work:${workId}:${createdResources.get("dual-view-note.md")}`;
+      await dualA.selectOption(noteId);
+      await dualB.selectOption(alphaId);
+      const notePane = page.getByTestId("dual-pane-a");
+      const diagramPane = page.getByTestId("dual-pane-b");
+      await notePane.getByTestId("markdown-body").getByRole("heading", { name: "Parallel test note" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await diagramPane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Dual View renders a Markdown note beside a Sequence diagram", await notePane.getByTestId("markdown-body").isVisible() && await diagramPane.locator("[data-node-id]").count() > 0);
+
+      await page.getByRole("button", { name: "Close Dual View" }).click();
+      await page.getByTestId("analysis-mode-button").click();
+      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("semantic-comparison-summary").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Analysis retains semantic comparison summary", await page.getByTestId("semantic-comparison-summary").isVisible());
+      await page.getByRole("button", { name: "Close comparison" }).click();
+
+      const focus = page.getByTestId("viewer-focus-toggle");
+      await focus.click();
+      await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      check("Ordinary viewer Focus still enters focus mode", await page.locator(".app__workspace--focus").count() === 1);
+      await page.keyboard.press("Escape");
+      await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+
+      const fullscreen = page.getByTestId("viewer-fullscreen-toggle");
+      await fullscreen.click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector(".app__pane--preview"), undefined, { timeout: UI_TIMEOUT_MS });
+      check("Ordinary viewer Fullscreen still targets the preview pane", true);
+      await fullscreen.click();
+      await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+    } finally {
+      await context.close();
+    }
+
+    check("No HTTP 500 responses during Dual View E2E", http500s.length === 0, http500s.join(", "));
+  });
+
   await scenario("Universal focus mode preserves viewer state across representations", async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
@@ -5183,7 +5390,7 @@ async function main() {
     await mcp?.close().catch(() => {});
     await api?.close().catch(() => {});
     await idp.close().catch(() => {});
-    await rm(projectVolume, { recursive: true, force: true }).catch(() => {});
+    await rm(projectVolume, { recursive: true, force: true });
   }
 
   console.log("");

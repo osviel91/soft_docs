@@ -86,30 +86,32 @@ export function useProjectProposalCount(
 export function useResourceProposalCount(
   client: ServerApiClient,
   projectId: string | null,
-  resourceId: string | null,
+  resourcePath: string | null,
+  contextId: string | null,
   refreshKey = 0,
-): number {
-  const [count, setCount] = useState(0);
+): number | null {
+  const key = projectId && resourcePath && contextId === null
+    ? `${projectId}:${resourcePath}`
+    : null;
+  const [result, setResult] = useState<{ key: string; count: number } | null>(null);
   useEffect(() => {
-    if (!projectId || !resourceId) {
-      setCount(0);
-      return;
-    }
+    if (!projectId || !resourcePath || contextId !== null) return;
     let active = true;
-    void client
-      .listChangeProposals(projectId, resourceId)
-      .then((items) => {
-        if (active)
-          setCount(items.filter((item) => item.status === "open").length);
+    void client.listResources(projectId).then(async (resources) => {
+      if (!active) return;
+      const matches = resources.filter((item) => item.path === resourcePath);
+      if (matches.length !== 1) return;
+      const resource = matches[0];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resource.id)) return;
+      const items = await client.listChangeProposals(projectId, resource.id);
+      if (active) setResult({ key: `${projectId}:${resourcePath}`, count: items.filter((item) => item.status === "open").length });
       })
-      .catch(() => {
-        if (active) setCount(0);
-      });
+      .catch(() => undefined);
     return () => {
       active = false;
     };
-  }, [client, projectId, resourceId, refreshKey]);
-  return count;
+  }, [client, projectId, resourcePath, contextId, refreshKey]);
+  return key && result?.key === key ? result.count : null;
 }
 
 export function useProjectResourceProposalCounts(

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./app-harness";
 import ComparisonView, { RevisionDiffSummary, type ComparisonOption, type RevisionComparisonResource } from "../src/features/preview/ComparisonView";
+import DualView from "../src/features/preview/DualView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
 import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
 import type { ResourceDiff } from "../src/domain/diff/resource-diff";
@@ -83,6 +84,73 @@ function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conce
 }
 
 describe("App — dual viewer foundation", () => {
+  it("opens Dual View for independent note and diagram exploration without diff UI", async () => {
+    render(<App />);
+    const note: NoteFile = { id: "overview-note", name: "overview.md", projectId: "dual", markdown: "# Architecture\n\nIndependent note." };
+    const diagram: DiagramFile = { id: "domain-diagram", name: "domain.concept", projectId: "dual", source: 'concept account "Account"' };
+    await importResources({ id: "dual", name: "Dual", datasetIds: [diagram.id], noteIds: [note.id] }, [diagram], [note]);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+
+    expect(screen.getByTestId("dual-view")).toBeInTheDocument();
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("LOCAL");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("LOCAL");
+    expect(screen.getAllByTestId("dual-pane-a")).toHaveLength(1);
+    expect(screen.getByTestId("dual-view")).toHaveTextContent("overview.md");
+    expect(screen.getByTestId("dual-view")).toHaveTextContent("domain.concept");
+    expect(screen.queryByTestId("comparison-markdown-diff")).toBeNull();
+    expect(screen.queryByTestId("semantic-comparison-summary")).toBeNull();
+    expect(screen.queryByTestId("comparison-parallel-view-notice")).toBeNull();
+  });
+
+  it("changes only one Dual View resource and swaps the rendered sessions", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "a", name: "a.concept", projectId: "dual", source: 'concept alpha "Alpha"' },
+      { id: "b", name: "b.dbschema", projectId: "dual", source: 'table beta - "Beta"' },
+      { id: "c", name: "c.seq", projectId: "dual", source: "participant Gamma" },
+    ];
+    await importResources({ id: "dual", name: "Dual", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    const selectA = screen.getByRole("combobox", { name: "Dual View A resource" });
+    const selectB = screen.getByRole("combobox", { name: "Dual View B resource" });
+    const bBefore = (selectB as HTMLSelectElement).value;
+    const cId = Array.from((selectA as HTMLSelectElement).options).find(option => option.textContent?.includes("c.seq"))?.value;
+    expect(cId).toBeDefined();
+    fireEvent.change(selectA, { target: { value: cId } });
+    expect(selectA).toHaveValue(cId);
+    expect(selectB).toHaveValue(bBefore);
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("c.seq");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("b.dbschema");
+    fireEvent.click(screen.getByRole("button", { name: "Swap dual viewers" }));
+    expect(selectA).toHaveValue(bBefore);
+    expect(selectB).toHaveValue(cId);
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("b.dbschema");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("c.seq");
+  });
+
+  it("isolates camera state and carries it with its resource when panel positions are swapped", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "one", name: "one.concept", projectId: "dual", source: 'concept alpha "Alpha"' },
+      { id: "two", name: "two.concept", projectId: "dual", source: 'concept beta "Beta"' },
+    ];
+    await importResources({ id: "dual", name: "Dual", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    const paneA = screen.getByTestId("dual-pane-a");
+    await waitFor(() => expect(paneA.querySelector("[data-testid='conceptual-preview-svg']")).not.toBeNull());
+    const paneB = screen.getByTestId("dual-pane-b");
+    const svgA = paneA.querySelector("[data-testid='conceptual-preview-svg']") as HTMLElement;
+    const svgB = paneB.querySelector("[data-testid='conceptual-preview-svg']") as HTMLElement;
+    const cameraB = svgB.style.transform;
+    fireEvent.click(within(paneA).getByTestId("zoom-in"));
+    await waitFor(() => expect(svgA.style.transform).not.toBe("translate(0px, 0px) scale(1)"));
+    expect(svgB.style.transform).toBe(cameraB);
+    const cameraA = svgA.style.transform;
+    fireEvent.click(screen.getByRole("button", { name: "Swap dual viewers" }));
+    expect(screen.getByTestId("dual-pane-b").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toContain(cameraA);
+    expect(screen.getByTestId("dual-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toContain(cameraB);
+  });
+
   it("tracks fullscreen, keeps Focus during Escape dispatch, then restores Focus on exit", async () => {
     render(<App />);
     await project();
@@ -203,12 +271,28 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("comparison-pane-a")).toHaveTextContent("Shared");
   });
 
+  it("uses supplied context provenance and drops a pane when its authorized option disappears", async () => {
+    const shared: DiagramFile = { id: "shared-file", name: "checkout.seq", source: "participant Shared", projectId: "p" };
+    const work: DiagramFile = { id: "work-file", name: "checkout.seq", source: "participant Work", projectId: "p" };
+    const index = { projectId: "p", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
+    const options: ComparisonOption[] = [
+      { id: "shared:r1", resource: shared, resourceId: "r1", representation: "sequence", source: shared.source, label: "SHARED · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index, resourceId: "r1" } },
+      { id: "my-work:work1:r1", resource: work, resourceId: "r1", representation: "sequence", source: work.source, label: "MY WORK · Draft", context: { projectId: "p", knowledgeContext: { kind: "private-work", id: "work1", projectId: "p", ownerUserId: "u", name: "Draft", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index, resourceId: "r1" } },
+    ];
+    const view = render(<DualView options={options} initialOptionId="my-work:work1:r1" projectId="p" onExit={() => {}} />);
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("MY WORK · Draft");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("SHARED");
+    view.rerender(<DualView options={[options[0]!]} initialOptionId="my-work:work1:r1" projectId="p" onExit={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("SHARED"));
+    expect(screen.queryByText("participant Work")).toBeNull();
+  });
+
   it("enters and exits Sequence to Sequence comparison", async () => {
     render(<App />);
     await project();
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
     expect(screen.getByTestId("comparison-pane-a")).toBeInTheDocument();
@@ -234,7 +318,7 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(eventFlowButton!);
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: FLOW } });
     await waitFor(() => expect(screen.getByTestId("preview-svg")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     expect(screen.getByTestId("comparison-pane-a")).toHaveTextContent("Event Flow");
     expect(screen.getByTestId("comparison-pane-b")).toHaveTextContent("Sequence diagram");
@@ -254,8 +338,8 @@ describe("App — dual viewer foundation", () => {
     ];
     await importResources({ id: "notes", name: "Notes", datasetIds: [], noteIds: notes.map((note) => note.id) }, [], notes);
 
-    expect(screen.getByTestId("compare-mode-button")).toBeEnabled();
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByTestId("analysis-mode-button")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
     expect(screen.getByTestId("comparison-markdown-diff")).toBeInTheDocument();
     expect(within(screen.getByTestId("comparison-pane-a")).getByText("LOCAL")).toBeInTheDocument();
     expect(within(screen.getByTestId("comparison-pane-b")).getByText("LOCAL")).toBeInTheDocument();
@@ -272,7 +356,7 @@ describe("App — dual viewer foundation", () => {
       { id: "database", name: "schema.dbschema", projectId: "models", source: 'table customers - "Customers"\ncolumn customers id "id" {uuid} not-null' },
     ];
     await importResources({ id: "models", name: "Models", datasetIds: diagrams.map((diagram) => diagram.id), noteIds: [] }, diagrams);
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     await waitFor(() => expect(screen.getAllByTestId("conceptual-preview-svg")).toHaveLength(1));
     await waitFor(() => expect(screen.getAllByTestId("database-preview-svg")).toHaveLength(1));
@@ -470,7 +554,7 @@ describe("App — dual viewer foundation", () => {
     await project();
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
     fireEvent.click(screen.getByRole("button", { name: "Maximize Viewer A" }));
 
     expect(screen.getByTestId("comparison-pane-a")).toBeInTheDocument();
@@ -485,7 +569,7 @@ describe("App — dual viewer foundation", () => {
     await project();
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     fireEvent.click(screen.getByRole("button", { name: "Maximize comparison" }));
     expect(screen.getByRole("button", { name: "Restore comparison" })).toBeInTheDocument();
@@ -503,7 +587,7 @@ describe("App — dual viewer foundation", () => {
     await project();
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Shared: 0");
     expect(screen.getByTestId("semantic-comparison-summary")).toHaveTextContent("Unresolved: 0");
@@ -516,7 +600,7 @@ describe("App — dual viewer foundation", () => {
     await command("New Diagram");
     fireEvent.click(screen.getByRole("button", { name: "Show editor" }));
     fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: "participant Dirty" } });
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
 
     fireEvent.click(screen.getByRole("button", { name: "Hide editor" }));
     expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Dirty");
@@ -532,7 +616,7 @@ describe("App — dual viewer foundation", () => {
     await command("New Diagram");
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
     const viewerA = screen.getByRole("combobox", { name: "Viewer A resource" }) as HTMLSelectElement;
     const viewerB = screen.getByRole("combobox", { name: "Viewer B resource" }) as HTMLSelectElement;
     const switchedA = Array.from(viewerA.options).find((option) => option.value !== viewerA.value && option.value !== viewerB.value)?.value;
@@ -551,7 +635,7 @@ describe("App — dual viewer foundation", () => {
     await project();
     await command("New Diagram");
     await command("New Diagram");
-    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
     expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show editor" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Maximize Viewer A" })).toBeInTheDocument();
