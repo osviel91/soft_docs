@@ -21,12 +21,15 @@ export interface ConceptualPreviewProps {
   focusReviewChange?: string | null;
   comparisonMode?: boolean;
   focusMode?: boolean;
+  initialTransform?: DiagramViewportTransform | null;
+  onVisualTransformChange?: (transform: DiagramViewportTransform) => void;
+  validateRestoredNode?: boolean;
 }
 
 export default function ConceptualPreview({
   source, onNodeSelect, activeNodeId = null, reviewChanges = [], reviewSide = "proposed",
   reviewMode = false, linkedTransform = null, onTransformChange, activeReviewChange = null,
-  focusReviewChange = null, comparisonMode = false, focusMode = false,
+  focusReviewChange = null, comparisonMode = false, focusMode = false, initialTransform = null, onVisualTransformChange, validateRestoredNode = false,
 }: ConceptualPreviewProps) {
   const parsed = useMemo(() => parseConceptual(source), [source]);
   const projection = useMemo(() => parsed.model ? projectConceptual(parsed.model) : null, [parsed.model]);
@@ -67,6 +70,9 @@ export default function ConceptualPreview({
       activeReviewChange={activeReviewChange}
       focusReviewChange={focusReviewChange}
       focusMode={focusMode}
+      initialTransform={initialTransform}
+      onVisualTransformChange={onVisualTransformChange}
+      validateRestoredNode={validateRestoredNode}
     />
   </div>;
 }

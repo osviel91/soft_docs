@@ -46,6 +46,9 @@ export interface EventFlowPreviewProps {
   reviewMode?: boolean;
   linkedTransform?: DiagramViewportTransform | null;
   onTransformChange?: (transform: DiagramViewportTransform) => void;
+  initialTransform?: DiagramViewportTransform | null;
+  onVisualTransformChange?: (transform: DiagramViewportTransform) => void;
+  validateRestoredNode?: boolean;
   activeReviewChange?: string | null;
   focusReviewChange?: string | null;
   reviewSide?: "base" | "proposed";
@@ -67,6 +70,9 @@ export default function EventFlowPreview({
   reviewMode = false,
   linkedTransform = null,
   onTransformChange,
+  initialTransform = null,
+  onVisualTransformChange,
+  validateRestoredNode = false,
   activeReviewChange = null,
   focusReviewChange = null,
   reviewSide = "proposed",
@@ -314,6 +320,9 @@ export default function EventFlowPreview({
                 reviewMode={reviewMode}
                 linkedTransform={linkedTransform}
                 onTransformChange={onTransformChange}
+                initialTransform={initialTransform}
+                onVisualTransformChange={onVisualTransformChange}
+                validateRestoredNode={validateRestoredNode}
                 activeReviewChange={activeReviewChange}
                 focusReviewChange={focusReviewChange}
                 focusMode={focusMode}
@@ -456,6 +465,9 @@ export default function EventFlowPreview({
         reviewMode={reviewMode}
         linkedTransform={linkedTransform}
         onTransformChange={onTransformChange}
+        initialTransform={initialTransform}
+        onVisualTransformChange={onVisualTransformChange}
+        validateRestoredNode={validateRestoredNode}
         activeReviewChange={activeReviewChange}
         focusReviewChange={focusReviewChange}
         focusMode={focusMode}

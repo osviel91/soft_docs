@@ -46,6 +46,12 @@ export interface DiagramViewportProps {
   keyboardStep?: number;
   /** Bumping this value re-fits the diagram (e.g. when a new one loads). */
   resetKey?: string;
+  /** Initial camera snapshot for a newly mounted visual session. */
+  initialTransform?: DiagramViewportTransform | null;
+  /** Capture user-visible camera changes without linking this pane to another. */
+  onVisualTransformChange?: (transform: DiagramViewportTransform) => void;
+  /** Validate an externally restored selection against this rendered SVG. */
+  validateRestoredNode?: boolean;
   focusMode?: boolean;
   /** Test id for the element holding the SVG markup. */
   svgTestId?: string;
@@ -199,6 +205,9 @@ export default function DiagramViewport({
   size,
   keyboardStep = KEYBOARD_PAN_STEP,
   resetKey = "",
+  initialTransform = null,
+  onVisualTransformChange,
+  validateRestoredNode = false,
   focusMode = false,
   svgTestId = "viewport-content",
   onNoteToggle,
@@ -227,11 +236,15 @@ export default function DiagramViewport({
   const [paneMeasured, setPaneMeasured] = useState(false);
   const paneSizeRef = useRef(paneSize);
   paneSizeRef.current = paneSize;
-  const [transform, setTransform] =
-    useState<ViewportTransform>(IDENTITY_TRANSFORM);
+  const [transform, setTransform] = useState<ViewportTransform>(
+    () => initialTransform ?? IDENTITY_TRANSFORM,
+  );
   // Latest camera, readable synchronously so a burst of interactions in one
   // event batch accumulates instead of each computing from a stale render.
-  const transformRef = useRef<ViewportTransform>(IDENTITY_TRANSFORM);
+  const transformRef = useRef<ViewportTransform>(initialTransform ?? IDENTITY_TRANSFORM);
+  const visualTransformChangeRef = useRef(onVisualTransformChange);
+  visualTransformChangeRef.current = onVisualTransformChange;
+  const hasInitialTransform = useRef(initialTransform !== null);
   const preFocusTransform = useRef<ViewportTransform | null>(null);
   const focusModeRef = useRef(false);
   // Read the callback through a ref so `updateTransform` keeps one identity for
@@ -250,6 +263,7 @@ export default function DiagramViewport({
       transformRef.current = value;
       setTransform(value);
       onTransformChangeRef.current?.(value);
+      visualTransformChangeRef.current?.(value);
     },
     [],
   );
@@ -303,6 +317,10 @@ export default function DiagramViewport({
   // shell must preserve the user's camera rather than silently fitting again.
   useEffect(() => {
     if (!paneMeasured) return;
+    if (hasInitialTransform.current) {
+      hasInitialTransform.current = false;
+      return;
+    }
     updateTransform(fitTransform(size, paneSizeRef.current));
   }, [
     size.width,
@@ -311,6 +329,18 @@ export default function DiagramViewport({
     paneMeasured,
     updateTransform,
   ]);
+
+  // Reject a restored selection when the effective rendered source no longer
+  // contains its stable node id. This validates against renderer output rather
+  // than attempting to parse diagram source in the viewport.
+  useEffect(() => {
+    if (!validateRestoredNode || !activeNodeId) return;
+    const content = contentRef.current;
+    if (!content) return;
+    const found = [...content.querySelectorAll("[data-node-id]")]
+      .some((node) => node.getAttribute("data-node-id") === activeNodeId);
+    if (!found) onNodeSelect?.(null);
+  }, [activeNodeId, onNodeSelect, svg, validateRestoredNode]);
 
   useEffect(() => {
     const pane = paneRef.current;

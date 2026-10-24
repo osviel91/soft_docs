@@ -2452,6 +2452,46 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         `${beforeSwap[0].activeNode}, ${beforeSwap[1].activeNode} → ${afterSwap[0].activeNode}, ${afterSwap[1].activeNode}`,
       );
 
+      const noteForSessionRoundTrip = async (selector, resourceId, pane, before) => {
+        await selector.selectOption(noteId);
+        await page.getByTestId(`dual-pane-${pane}`).getByTestId("markdown-body").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await selector.selectOption(resourceId);
+        await page.getByTestId(`dual-pane-${pane}`).locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const restored = await paneState();
+        check(`Viewer ${pane.toUpperCase()} restores its SVG transform and selected node after X → Y → X`,
+          restored[pane === "a" ? 0 : 1].transform === before.transform && restored[pane === "a" ? 0 : 1].activeNode === before.activeNode,
+          `transform ${before.transform} → ${restored[pane === "a" ? 0 : 1].transform}; node ${before.activeNode} → ${restored[pane === "a" ? 0 : 1].activeNode}`);
+      };
+      await noteForSessionRoundTrip(viewerA, betaId, "a", afterSwap[0]);
+      await noteForSessionRoundTrip(viewerB, alphaId, "b", afterSwap[1]);
+
+      await viewerA.selectOption(alphaId);
+      await viewerB.selectOption(alphaId);
+      await panes[0].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await panes[0].getByTestId("zoom-in").click();
+      await panes[0].locator("g.participant[data-node-id]").first().click();
+      await panes[1].getByTestId("zoom-in").click();
+      await panes[1].getByTestId("zoom-in").click();
+      await panes[1].locator("g.participant[data-node-id]").last().click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid="dual-pane-a"] .svg-node--active').length === 1 && document.querySelectorAll('[data-testid="dual-pane-b"] .svg-node--active').length === 1, undefined, { timeout: UI_TIMEOUT_MS });
+      const duplicateBeforeSwap = await paneState();
+      check("The same artifact can occupy A and B with independent cameras and node selections",
+        duplicateBeforeSwap[0].title === "Alpha" && duplicateBeforeSwap[1].title === "Alpha" &&
+          duplicateBeforeSwap[0].transform !== duplicateBeforeSwap[1].transform && duplicateBeforeSwap[0].activeNode !== duplicateBeforeSwap[1].activeNode,
+        duplicateBeforeSwap.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | "));
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      const duplicateAfterSwap = await paneState();
+      check("Swapping duplicate artifacts swaps their independent visual session lineages",
+        duplicateAfterSwap[0].transform === duplicateBeforeSwap[1].transform && duplicateAfterSwap[0].activeNode === duplicateBeforeSwap[1].activeNode &&
+          duplicateAfterSwap[1].transform === duplicateBeforeSwap[0].transform && duplicateAfterSwap[1].activeNode === duplicateBeforeSwap[0].activeNode,
+        duplicateAfterSwap.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | "));
+
+      await viewerA.selectOption(betaId);
+      await viewerB.selectOption(alphaId);
+      await panes[0].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+
       const beforeFocus = await paneState();
       await page.getByRole("button", { name: "Focus" }).click();
       await page.locator(".app--dual-focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });

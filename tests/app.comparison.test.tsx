@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./app-harness";
 import ComparisonView, { RevisionDiffSummary, type ComparisonOption, type RevisionComparisonResource } from "../src/features/preview/ComparisonView";
-import DualView from "../src/features/preview/DualView";
+import DualView, { compatibleVisualSnapshot, fingerprintVisualSource, type VisualSessionSnapshot } from "../src/features/preview/DualView";
 import type { ProjectIndex } from "../src/domain/project/project-index";
 import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
 import type { ResourceDiff } from "../src/domain/diff/resource-diff";
@@ -202,6 +202,98 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Swap dual viewers" }));
     expect(screen.getByTestId("dual-pane-b").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toContain(cameraA);
     expect(screen.getByTestId("dual-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toContain(cameraB);
+  });
+
+  it("restores the actual camera and selected node after leaving and returning to a resource", async () => {
+    const option = (id: string, source: string): ComparisonOption => {
+      const resource: DiagramFile = { id, name: `${id}.concept`, projectId: "project", source };
+      return { id, resource, resourceId: id, representation: "conceptual", source, context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: id }, label: id };
+    };
+    const options = [option("one", 'concept alpha "Alpha"'), option("two", 'concept beta "Beta"'), option("three", 'concept gamma "Gamma"')];
+    render(<DualView options={options} initialOptionId="one" projectId="project" onExit={() => {}} />);
+    const paneA = () => screen.getByTestId("dual-pane-a");
+    const paneB = () => screen.getByTestId("dual-pane-b");
+    await waitFor(() => expect(paneA().querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    const svgA = () => paneA().querySelector("[data-testid='conceptual-preview-svg']") as HTMLElement;
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    fireEvent.click(paneA().querySelector('[data-concept-id="alpha"]')!);
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    const originalTransform = svgA().style.transform;
+    expect(originalTransform).not.toBe("");
+
+    const selectA = screen.getByRole("combobox", { name: "Dual View A resource" });
+    fireEvent.change(selectA, { target: { value: "three" } });
+    await waitFor(() => expect(paneA().querySelector("[data-concept-id='gamma']")).not.toBeNull());
+    fireEvent.change(selectA, { target: { value: "one" } });
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    expect(svgA().style.transform).toBe(originalTransform);
+    expect(paneB().querySelector("[data-concept-id='beta']")).not.toBeNull();
+  });
+
+  it("rejects cached camera and selection when the effective source changes", async () => {
+    const option = (id: string, source: string): ComparisonOption => {
+      const resource: DiagramFile = { id, name: `${id}.concept`, projectId: "project", source };
+      return { id, resource, resourceId: id, representation: "conceptual", source, context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: id }, label: id };
+    };
+    const first = option("stable-resource", 'concept alpha "Alpha"');
+    const second = option("other-resource", 'concept beta "Beta"');
+    const view = render(<DualView options={[first, second]} initialOptionId={first.id} projectId="project" onExit={() => {}} />);
+    const paneA = () => screen.getByTestId("dual-pane-a");
+    await waitFor(() => expect(paneA().querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    fireEvent.click(paneA().querySelector('[data-concept-id="alpha"]')!);
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    const oldTransform = paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style");
+    const priorSnapshot: VisualSessionSnapshot = { sourceFingerprint: fingerprintVisualSource(first.source), transform: { x: 23, y: -14, scale: 1.25 }, selectedNodeId: "alpha" };
+    expect(fingerprintVisualSource(first.source)).not.toBe(fingerprintVisualSource('concept beta "Beta"'));
+    expect(compatibleVisualSnapshot(priorSnapshot, 'concept beta "Beta"')).toBeNull();
+    view.rerender(<DualView options={[option("stable-resource", 'concept beta "Beta"'), second]} initialOptionId={first.id} projectId="project" onExit={() => {}} />);
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="beta"]')).not.toBeNull());
+    expect(paneA().querySelector('[data-concept-id="alpha"]')).toBeNull();
+    const invalidatedTransform = paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style");
+    expect(invalidatedTransform).not.toBe(oldTransform);
+    expect(paneA().querySelector(".svg-node--active")).toBeNull();
+    fireEvent.click(within(paneA()).getByRole("button", { name: "Fit diagram to view" }));
+    expect(paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style")).toBe(invalidatedTransform);
+    const selectA = screen.getByRole("combobox", { name: "Dual View A resource" });
+    fireEvent.change(selectA, { target: { value: "other-resource" } });
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="beta"]')).toBeNull());
+    fireEvent.change(selectA, { target: { value: "stable-resource" } });
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="beta"]')).not.toBeNull());
+    expect(paneA().querySelector(".svg-node--active")).toBeNull();
+    expect(paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style")).toBe(invalidatedTransform);
+  });
+
+  it("keeps independent visual sessions when the same resource occupies both viewers", async () => {
+    const context = { projectId: "project", knowledgeContext: { kind: "local" as const, id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: "same-resource" };
+    const source = 'concept alpha "Alpha"\nconcept beta "Beta"';
+    const resource: DiagramFile = { id: "same-resource", name: "same.concept", projectId: "project", source };
+    const same: ComparisonOption = { id: "same", resource, resourceId: "same-resource", representation: "conceptual", source, context, label: "same" };
+    const otherResource: DiagramFile = { id: "other", name: "other.concept", projectId: "project", source: 'concept other "Other"' };
+    const other: ComparisonOption = { id: "other", resource: otherResource, resourceId: "other", representation: "conceptual", source: otherResource.source, context: { ...context, resourceId: "other" }, label: "other" };
+    render(<DualView options={[same, other]} initialOptionId="same" projectId="project" onExit={() => {}} />);
+    const selectB = screen.getByRole("combobox", { name: "Dual View B resource" });
+    fireEvent.change(selectB, { target: { value: "same" } });
+    const paneA = () => screen.getByTestId("dual-pane-a");
+    const paneB = () => screen.getByTestId("dual-pane-b");
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).not.toBeNull());
+    await waitFor(() => expect(paneB().querySelector('[data-concept-id="alpha"]')).not.toBeNull());
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    fireEvent.click(paneA().querySelector('[data-concept-id="alpha"]')!);
+    fireEvent.click(within(paneB()).getByTestId("zoom-in"));
+    fireEvent.click(within(paneB()).getByTestId("zoom-in"));
+    fireEvent.click(paneB().querySelector('[data-concept-id="beta"]')!);
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    await waitFor(() => expect(paneB().querySelector('[data-concept-id="beta"]')).toHaveClass("svg-node--active"));
+    const transformA = paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style");
+    const transformB = paneB().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style");
+    expect(transformA).not.toBe(transformB);
+
+    fireEvent.click(screen.getByRole("button", { name: "Swap dual viewers" }));
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="beta"]')).toHaveClass("svg-node--active"));
+    expect(paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style")).toBe(transformB);
+    expect(paneB().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active");
+    expect(paneB().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style")).toBe(transformA);
   });
 
   it("tracks fullscreen, keeps Focus during Escape dispatch, then restores Focus on exit", async () => {
