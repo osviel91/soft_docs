@@ -627,7 +627,7 @@ export default function App() {
     const observer = new ResizeObserver(measure);
     observer.observe(workspace);
     return () => observer.disconnect();
-  }, [page]);
+  }, [auth.status, page]);
   const setExplorerWidth = useCallback((width: number) => updateUiPreferences((current) => ({
     ...current, shell: { ...current.shell, explorerWidth: width },
   })), [updateUiPreferences]);
@@ -788,6 +788,15 @@ export default function App() {
   const [reviewProposalId, setReviewProposalId] = useState<string | null>(null);
   const [reviewReadOnly, setReviewReadOnly] = useState(false);
   const [proposalRefreshKey, setProposalRefreshKey] = useState(0);
+  // These controls are disabled only when the editor they navigate is actually
+  // hidden by the active shell. Keep this derived from the same state that drives
+  // the workspace visibility classes below.
+  const editorHiddenByWorkspace = dualViewOpen || focusMode || comparisonEditorHidden || shellLayout.editorResponsiveHidden ||
+    (comparisonOpen && (comparisonMaximized || comparisonMaximizedPane !== null));
+  const proposalNavigationActive = Boolean(architecturalProposalId || revisionProposalId || proposalReviewOpen);
+  const editorViewTabsDisabled = !proposalNavigationActive &&
+    (dualViewOpen || (comparisonOpen && editorHiddenByWorkspace));
+  const explorerResourceOpenDisabled = comparisonOpen || dualViewOpen;
   const [browserLocationState, setBrowserLocationState] = useState<BrowserLocation>(() => browserLocation());
   const browserLocationHydrated = useRef(false);
   const browserLocationLoaded = useRef(false);
@@ -3651,6 +3660,7 @@ export default function App() {
                 className={`segmented__option${view === "code" ? " segmented__option--active" : ""}`}
                 data-testid="view-code"
                 aria-selected={view === "code"}
+                disabled={editorViewTabsDisabled}
                 onClick={() => { setProposalReviewOpen(false); if (architecturalProposalId) void openProposalArtifactInCode(); else setView("code"); }}
               >
                 <span aria-hidden="true">{"</>"}</span> Code
@@ -3661,6 +3671,7 @@ export default function App() {
                 className={`segmented__option${view === "outline" ? " segmented__option--active" : ""}`}
                 data-testid="view-outline"
                 aria-selected={view === "outline"}
+                disabled={editorViewTabsDisabled}
                 onClick={() => { setView("outline"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">≡</span> Outline
@@ -3671,6 +3682,7 @@ export default function App() {
                 className={`segmented__option${view === "problems" ? " segmented__option--active" : ""}`}
                 data-testid="view-problems"
                 aria-selected={view === "problems"}
+                disabled={editorViewTabsDisabled}
                 onClick={() => { setView("problems"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">⚠</span> Problems
@@ -3684,6 +3696,7 @@ export default function App() {
                 className={`segmented__option${view === "overview" ? " segmented__option--active" : ""}`}
                 data-testid="view-overview"
                 aria-selected={view === "overview"}
+                disabled={editorViewTabsDisabled}
                 onClick={() => { setView("overview"); setProposalReviewOpen(false); }}
               >
                 <span aria-hidden="true">◫</span> Overview
@@ -3694,6 +3707,7 @@ export default function App() {
                 className={`segmented__option${view === "history" ? " segmented__option--active" : ""}`}
                 data-testid="view-history"
                 aria-selected={view === "history"}
+                disabled={editorViewTabsDisabled}
                 onClick={() => {
                   setHistoryResourceScoped(false);
                   setView("history");
@@ -3709,6 +3723,7 @@ export default function App() {
                   className={`segmented__option${view === "changes" ? " segmented__option--active" : ""}`}
                   data-testid="view-changes"
                   aria-selected={view === "changes"}
+                  disabled={editorViewTabsDisabled}
                   onClick={() => {
                     setView("changes");
                     setProposalReviewOpen(false);
@@ -3839,7 +3854,12 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${dualViewOpen ? " app__workspace--dual-view" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${comparisonEditorHidden || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${dualViewOpen && !proposalNavigationActive ? " app__workspace--dual-view" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${(comparisonEditorHidden && !proposalNavigationActive) || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            data-editor-responsive-hidden={shellLayout.editorResponsiveHidden}
+            data-layout-width={workspaceSize.width}
+            data-editor-tabs-disabled={editorViewTabsDisabled}
+            data-analysis-open={comparisonOpen}
+            data-editor-hidden-preference={comparisonEditorHidden}
           >
             {explorerCollapsed ? (
               <button
@@ -3868,7 +3888,8 @@ export default function App() {
                    architecturalProposals={server.architecturalProposals}
                    selectedProposalId={architecturalProposalId}
                    revisingProposalId={revisionProposalId}
-                    onOpenArchitecturalProposal={openArchitecturalProposal}
+                     onOpenArchitecturalProposal={openArchitecturalProposal}
+                     resourceOpenDisabled={explorerResourceOpenDisabled}
                     onCreateMyWork={() => setPrompt({ kind: "create-private-work" })}
                     onMyWorkMenu={(work, position) => { if (server.active) setMenu({ kind: "private-work", work: { ...work, projectId: server.active.project.id }, ...position }); }}
                    onProposalMenu={(proposal, position) => setMenu({ kind: "proposal", proposal, ...position })}
@@ -4356,7 +4377,7 @@ export default function App() {
                     <section className="workspace-empty-preview" data-testid="empty-document-preview" aria-label="Document preview empty">
                       <p>No document is open. Choose one from the Explorer or use Open a document.</p>
                     </section>
-                   ) : dualViewOpen ? (
+                   ) : dualViewOpen && !proposalNavigationActive ? (
                      <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} onExit={closeDualView} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} />
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView

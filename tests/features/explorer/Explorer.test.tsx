@@ -74,6 +74,52 @@ describe("Explorer", () => {
     expect(screen.getByLabelText("Load diagram Welcome")).toBeInTheDocument();
   });
 
+  it("disables only artifact-opening controls when comparison owns resource navigation", () => {
+    const onLoadDiagram = vi.fn();
+    const onLoadNote = vi.fn();
+    const onDiagramMenu = vi.fn();
+    const onOpenArchitecturalProposal = vi.fn();
+    const proposal = {
+      id: "proposal-1",
+      title: "Reviewable proposal",
+      authorUserId: "author-1",
+      status: "open" as const,
+      baseSharedRevision: "r1",
+    };
+    render(<Explorer
+      projects={[project]}
+      diagrams={[diagram]}
+      sharedDiagrams={[diagram]}
+      notes={[note]}
+      sharedNotes={[note]}
+      selectedProjectId={project.id}
+      selectedDiagramId={diagram.id}
+      selectedNoteId={note.id}
+      isLoading={false}
+      onCreateProject={vi.fn()}
+      onLoadDiagram={onLoadDiagram}
+      onLoadNote={onLoadNote}
+      onDiagramMenu={onDiagramMenu}
+      resourceOpenDisabled
+      serverMode
+      architecturalProposals={[proposal]}
+      onOpenArchitecturalProposal={onOpenArchitecturalProposal}
+    />);
+
+    const openDiagram = screen.getByRole("button", { name: "Load diagram Welcome" });
+    expect(openDiagram).toBeDisabled();
+    fireEvent.click(openDiagram);
+    expect(onLoadDiagram).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Open note Intro" })).toBeDisabled();
+    expect(screen.getByTestId("diagram-menu-button")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("diagram-menu-button"));
+    expect(onDiagramMenu).toHaveBeenCalledOnce();
+    const proposalButton = screen.getByRole("button", { name: "Open proposal Reviewable proposal" });
+    expect(proposalButton).toBeEnabled();
+    fireEvent.click(proposalButton);
+    expect(onOpenArchitecturalProposal).toHaveBeenCalledWith(proposal.id);
+  });
+
   it("shows the project explorer instead of a project list when a server project is open", () => {
     const other: Project = { id: "proj-2", name: "Other", datasetIds: [] };
     render(

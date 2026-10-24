@@ -107,6 +107,8 @@ export interface ExplorerProps {
   onAddMenu?: (project: Project, position: MenuPosition) => void;
   /** Called when the user selects a diagram to load it into the editor. */
   onLoadDiagram: (diagram: DiagramFile) => void;
+  /** Prevent changing the active resource while a comparison owns navigation. */
+  resourceOpenDisabled?: boolean;
   onLoadSharedDiagram?: (diagram: DiagramFile) => void;
   /** Called when the user selects a note to load it into the editor. */
   onLoadNote?: (note: NoteFile) => void;
@@ -187,15 +189,16 @@ function ServerResourceTree({
   openProposalCounts,
   onLoadDiagram,
   onLoadNote,
+  resourceOpenDisabled = false,
   onDiagramMenu,
   onNoteMenu,
-}: Pick<ExplorerProps, "diagrams" | "notes" | "selectedDiagramId" | "selectedNoteId" | "openProposalCounts" | "onLoadDiagram" | "onLoadNote" | "onDiagramMenu" | "onNoteMenu">) {
+}: Pick<ExplorerProps, "diagrams" | "notes" | "selectedDiagramId" | "selectedNoteId" | "openProposalCounts" | "onLoadDiagram" | "onLoadNote" | "resourceOpenDisabled" | "onDiagramMenu" | "onNoteMenu">) {
   const safeNotes = notes ?? [];
   return (
     <ul className="explorer__resource-list" data-testid="explorer-resources">
       {diagrams.map((diagram) => (
         <li key={diagram.id} className={diagram.id === selectedDiagramId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-diagram" onContextMenu={(event) => { if (!onDiagramMenu) return; event.preventDefault(); onDiagramMenu(diagram, { x: event.clientX, y: event.clientY }); }}>
-          <button type="button" className="explorer__resource-button" data-testid="select-diagram-button" aria-label={`Load diagram ${diagramDisplayName(diagram.name, diagram.source)}`} onClick={() => onLoadDiagram(diagram)}>
+          <button type="button" className="explorer__resource-button" data-testid="select-diagram-button" aria-label={`Load diagram ${diagramDisplayName(diagram.name, diagram.source)}`} disabled={resourceOpenDisabled} onClick={() => { if (!resourceOpenDisabled) onLoadDiagram(diagram); }}>
             <ResourceIcon type={resourceTypeOfName(diagram.name)} />
             <span className="explorer__item-name">{diagramDisplayName(diagram.name, diagram.source)}</span>
             {(openProposalCounts?.[diagram.id] ?? 0) > 0 ? <span className="explorer__status-slot" title={`${openProposalCounts?.[diagram.id]} open changes`}>◆</span> : null}
@@ -205,7 +208,7 @@ function ServerResourceTree({
       ))}
       {safeNotes.map((note) => (
         <li key={note.id} className={note.id === selectedNoteId ? "explorer__resource explorer__resource--selected" : "explorer__resource"} data-testid="explorer-note" onContextMenu={(event) => { if (!onNoteMenu) return; event.preventDefault(); onNoteMenu(note, { x: event.clientX, y: event.clientY }); }}>
-          <button type="button" className="explorer__resource-button" data-testid="select-note-button" aria-label={`Open note ${noteDisplayName(note.name, note.markdown)}`} onClick={() => onLoadNote?.(note)}>
+          <button type="button" className="explorer__resource-button" data-testid="select-note-button" aria-label={`Open note ${noteDisplayName(note.name, note.markdown)}`} disabled={resourceOpenDisabled} onClick={() => { if (!resourceOpenDisabled) onLoadNote?.(note); }}>
             <ResourceIcon type="markdown-document" />
             <span className="explorer__item-name">{noteDisplayName(note.name, note.markdown)}</span>
           </button>
@@ -260,6 +263,7 @@ function ServerWorkspaceExplorer({
   onLoadSharedDiagram,
   onLoadNote,
   onLoadSharedNote,
+  resourceOpenDisabled = false,
   onDiagramMenu,
   onNoteMenu,
   switcher,
@@ -309,7 +313,7 @@ function ServerWorkspaceExplorer({
   const selectedProposalIsArchived = archivedProposals.some(({ proposal }) => proposal.id === selectedProposalId);
   const renderWorkContext = (work: NonNullable<ExplorerProps["privateWorkContexts"]>[number]) => <li key={work.id} data-testid="explorer-private-context" className={work.id === activeContextId ? "explorer__context-item--selected" : undefined}>
     <div className="explorer__context-row"><button type="button" data-testid={`explorer-private-context-open-${work.id}`} aria-current={work.id === activeContextId ? "true" : undefined} onClick={() => onOpenMyWork?.(work.id)}>{work.name}</button>{onMyWorkMenu ? <button type="button" className="explorer__context-menu" data-testid="explorer-private-context-menu" aria-label={`Actions for MY WORK ${work.name}`} onClick={(event) => onMyWorkMenu(work, positionBelow(event.currentTarget))}>⋯</button> : null}</div>
-    {work.id === activeContextId ? <div className="explorer__context-children"><p className="explorer__context-note">Private draft. Changes are not authoritative.</p>{!isLoading ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}</div> : null}
+     {work.id === activeContextId ? <div className="explorer__context-children"><p className="explorer__context-note">Private draft. Changes are not authoritative.</p>{!isLoading ? <ServerResourceTree diagrams={visibleDiagrams} notes={visibleNotes} selectedDiagramId={selectedDiagramId} selectedNoteId={selectedNoteId} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadDiagram} onLoadNote={onLoadNote} resourceOpenDisabled={resourceOpenDisabled} onDiagramMenu={onDiagramMenu} onNoteMenu={onNoteMenu} /> : null}</div> : null}
   </li>;
   const renderProposal = (proposal: NonNullable<ExplorerProps["architecturalProposals"]>[number], lifecycle: ReturnType<typeof proposalLifecycle>) => {
     const revising = proposal.status === "open" && !["PROMOTING", "PROMOTED"].includes(lifecycle) && proposal.id === revisingProposalId;
@@ -332,7 +336,7 @@ function ServerWorkspaceExplorer({
       <div className="explorer__provenance-tree" data-testid="explorer-provenance-tree">
          <section className="explorer__provenance-section" data-testid="explorer-shared-section">
           <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-shared-toggle" aria-expanded={sharedExpanded} onClick={() => setSection("shared", !sharedExpanded)}>SHARED <span className="explorer__section-meta">authoritative</span><span aria-hidden="true">{sharedExpanded ? "▾" : "▸"}</span></button></h2>
-          {sharedExpanded ? <ServerResourceTree diagrams={sharedDiagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery))} notes={sharedNotes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery))} selectedDiagramId={activeContextId === null ? selectedDiagramId : null} selectedNoteId={activeContextId === null ? selectedNoteId : null} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadSharedDiagram ?? onLoadDiagram} onLoadNote={onLoadSharedNote ?? onLoadNote} onDiagramMenu={activeContextId === null ? onDiagramMenu : undefined} onNoteMenu={activeContextId === null ? onNoteMenu : undefined} /> : null}
+           {sharedExpanded ? <ServerResourceTree diagrams={sharedDiagrams.filter((diagram) => `${diagramDisplayName(diagram.name, diagram.source)} ${diagram.name}`.toLowerCase().includes(resourceQuery))} notes={sharedNotes.filter((note) => `${noteDisplayName(note.name, note.markdown)} ${note.name}`.toLowerCase().includes(resourceQuery))} selectedDiagramId={activeContextId === null ? selectedDiagramId : null} selectedNoteId={activeContextId === null ? selectedNoteId : null} openProposalCounts={openProposalCounts} onLoadDiagram={onLoadSharedDiagram ?? onLoadDiagram} onLoadNote={onLoadSharedNote ?? onLoadNote} resourceOpenDisabled={resourceOpenDisabled} onDiagramMenu={activeContextId === null ? onDiagramMenu : undefined} onNoteMenu={activeContextId === null ? onNoteMenu : undefined} /> : null}
         </section>
            <section className="explorer__provenance-section" data-testid="explorer-my-work-section">
             <h2 className="explorer__section-title"><button type="button" className="explorer__section-toggle" data-testid="explorer-my-work-toggle" aria-expanded={myWorkExpanded} onClick={() => setSection("myWork", !myWorkExpanded)}>MY WORK <span className="explorer__section-meta">private · editable</span><span aria-hidden="true">{myWorkExpanded ? "▾" : "▸"}</span></button>{activeContextId !== null && activeProject && onAddMenu ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create artifact in MY WORK" title="Create artifact in MY WORK" onClick={(event) => onAddMenu(activeProject, positionBelow(event.currentTarget))}>+</button> : onCreateMyWork ? <button type="button" className="explorer__section-add" data-testid="explorer-my-work-create" aria-label="Create MY WORK draft" title="Create MY WORK draft" onClick={() => onCreateMyWork()}>+</button> : null}{activeContextId !== null && onMyWorkMenu ? <button type="button" className="explorer__section-add explorer__section-add--menu" data-testid="explorer-my-work-actions" aria-label="MY WORK actions" title="MY WORK actions" onClick={(event) => { const work = privateWorkContexts.find((entry) => entry.id === activeContextId); if (work) onMyWorkMenu(work, positionBelow(event.currentTarget)); }}>⋯</button> : null}</h2>
@@ -378,6 +382,7 @@ function LocalWorkspaceExplorer({
   onAddMenu,
   onLoadDiagram,
   onLoadNote,
+  resourceOpenDisabled = false,
   onDiagramMenu,
   onNoteMenu,
   onProjectMenu,
@@ -687,7 +692,8 @@ function LocalWorkspaceExplorer({
                             className="explorer__diagram-button"
                             data-testid="select-diagram-button"
                             aria-label={`Load diagram ${diagramName(diagram)}`}
-                            onClick={() => onLoadDiagram(diagram)}
+                            disabled={resourceOpenDisabled}
+                            onClick={() => { if (!resourceOpenDisabled) onLoadDiagram(diagram); }}
                           >
                             <ResourceIcon type={resourceTypeOfName(diagram.name)} />
                             <span className="explorer__item-name">
@@ -774,7 +780,8 @@ function LocalWorkspaceExplorer({
                             className="explorer__note-button"
                             data-testid="select-note-button"
                             aria-label={`Open note ${noteName(note)}`}
-                            onClick={() => onLoadNote?.(note)}
+                            disabled={resourceOpenDisabled}
+                            onClick={() => { if (!resourceOpenDisabled) onLoadNote?.(note); }}
                           >
                             <ResourceIcon type="markdown-document" />
                             <span className="explorer__item-name">

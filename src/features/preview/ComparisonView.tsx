@@ -433,6 +433,7 @@ export default function ComparisonView({
     <div ref={comparisonRef} className={`comparison${maximizedPane ? " comparison--maximized" : ""}`} data-testid="comparison-view">
       <header className="comparison__toolbar">
         <strong>{revisionMode ? "Compare revisions" : "Compare resources"}</strong>
+        {!revisionMode ? <span className="comparison__navigation-hint" role="status" data-testid="comparison-navigation-hint">Usa los selectores Viewer A/B para cambiar los recursos mientras comparas</span> : null}
         {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
           {serverWorkspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
         </select></label> : null}
