@@ -2274,9 +2274,51 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         createdResources.set(resource.path, response.json.resource.id);
       }
 
+      // Prepare an actual SHARED artifact only through the disposable project's
+      // proposal lifecycle; direct authoritative writes are intentionally refused.
+      const sharedSeedTitle = `Navigation SHARED seed ${Date.now()}`;
+      const sharedSeed = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, {
+        method: "POST",
+        body: JSON.stringify({ sourcePrivateContextId: workId, resourceIds: [createdResources.get("alpha.seq")], title: sharedSeedTitle, description: "Disposable E2E SHARED navigation fixture." }),
+      });
+      if (sharedSeed.status !== 201) throw new Error(`SHARED navigation fixture proposal failed: ${sharedSeed.status} ${sharedSeed.text}`);
+      const reviewerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+      const reviewerPage = await reviewerContext.newPage();
+      await reviewerPage.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(reviewerPage);
+      const dualReviewer = { sub: `e2e-dual-reviewer-${Date.now()}`, name: "Dual View Reviewer", email: `dual-reviewer-${Date.now()}@e2e.test` };
+      await signIn(reviewerPage, idp, dualReviewer);
+      const reviewerId = (await apiRequest(reviewerPage, "/api/me")).json.user.id;
+      const projectDetails = await apiRequest(page, `/api/projects/${projectId}`);
+      const reviewerWorkspaceMembership = await apiRequest(page, `/api/workspaces/${projectDetails.json.project.workspaceId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      const reviewerProjectMembership = await apiRequest(page, `/api/projects/${projectId}/members/${reviewerId}`, { method: "PUT", body: JSON.stringify({ role: "EDITOR" }) });
+      if (reviewerWorkspaceMembership.status !== 200 || reviewerProjectMembership.status !== 204) throw new Error(`Could not authorize disposable fixture reviewer: workspace=${reviewerWorkspaceMembership.status}, project=${reviewerProjectMembership.status}`);
+      await reviewerPage.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+      await reviewerPage.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const seedProposal = reviewerPage.locator('[data-testid="explorer-proposal"]').filter({ hasText: sharedSeedTitle }).getByTestId("explorer-proposal-open");
+      await seedProposal.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await seedProposal.click();
+      await reviewerPage.locator('section[aria-label="Architectural Proposal"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await reviewerPage.locator('section[aria-label="Proposal review"] textarea').fill("Disposable test fixture approval.");
+      await reviewerPage.locator('section[aria-label="Proposal review"] button').filter({ hasText: "Approve proposal" }).click();
+      await waitForText(reviewerPage.locator('section[aria-label="Proposal review"]'), text => text.includes("1 approvals"), "navigation fixture approval");
+      await page.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const ownerProposalToggle = page.locator('[data-testid="explorer-proposals-toggle"]');
+      if ((await ownerProposalToggle.getAttribute("aria-expanded")) !== "true") await ownerProposalToggle.click();
+      await page.locator('[data-testid="explorer-proposal"]').filter({ hasText: sharedSeedTitle }).getByTestId("explorer-proposal-open").click();
+      await page.locator('section[aria-label="Architectural Proposal"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Preview promotion" }).click();
+      await waitForText(page.locator('section[aria-label="Proposal promotion"]'), text => text.includes("Ready to promote"), "navigation fixture promotion preview");
+      await page.getByRole("button", { name: "Promote to SHARED" }).click();
+      await waitForText(page.locator('section[aria-label="Architectural Proposal"]'), text => text.includes("PROMOTED"), "navigation fixture promotion");
+      await reviewerContext.close();
+
       await page.goto(`${BASE_URL}/?project=${encodeURIComponent(projectId)}`, { waitUntil: "domcontentloaded" });
       await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await openMyWorkContext(page, workId);
+      const sharedToggle = page.locator('[data-testid="explorer-shared-toggle"]');
+      if ((await sharedToggle.getAttribute("aria-expanded")) !== "true") await sharedToggle.click();
       const privateTree = page.locator('[data-testid="explorer-my-work-section"]');
       const alphaButton = privateTree.getByRole("button", { name: "Load diagram Alpha" });
       const betaButton = privateTree.getByRole("button", { name: "Load diagram Beta" });
@@ -2287,6 +2329,31 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("compare-mode-button").click();
       const dualView = page.getByTestId("dual-view");
       await dualView.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const editorTabIds = ["view-code", "view-outline", "view-problems", "view-overview", "view-history", "view-changes"];
+      const checkEditorTabsDisabled = async () => {
+        const states = await Promise.all(editorTabIds.map(async (id) => {
+          const tab = page.getByTestId(id);
+          return (await tab.count()) === 0 || await tab.isDisabled();
+        }));
+        return states.every(Boolean);
+      };
+      const sharedTree = page.locator('[data-testid="explorer-shared-section"]');
+      const sharedResourceOpeners = sharedTree.getByTestId("select-diagram-button");
+      const myWorkResourceOpeners = privateTree.getByTestId("select-diagram-button");
+      check("Dual View uses native disabled on editor tabs", await checkEditorTabsDisabled());
+      check("Dual View disables SHARED and MY WORK artifact openers natively", await sharedResourceOpeners.count() > 0 && await myWorkResourceOpeners.count() > 0 &&
+        await sharedResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button instanceof HTMLButtonElement && button.disabled)) &&
+        await myWorkResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button instanceof HTMLButtonElement && button.disabled)));
+      const selectedWorkspaceResourceBeforeAttempt = await page.locator('[data-testid="explorer-diagram"].explorer__resource--selected, [data-testid="explorer-diagram"].explorer__diagram--selected').textContent();
+      const viewerBeforeAttempt = await page.getByTestId("dual-pane-a").locator("h2").textContent();
+      await myWorkResourceOpeners.first().evaluate((button) => button.click());
+      await page.keyboard.press("Tab");
+      check("Disabled artifact openers do not change Explorer selection or rendered viewer", await page.locator('[data-testid="explorer-diagram"].explorer__resource--selected, [data-testid="explorer-diagram"].explorer__diagram--selected').textContent() === selectedWorkspaceResourceBeforeAttempt && await page.getByTestId("dual-pane-a").locator("h2").textContent() === viewerBeforeAttempt);
+      const explorerDiagramMenu = privateTree.getByTestId("diagram-menu-button").first();
+      await explorerDiagramMenu.click();
+      check("Explorer context menu remains keyboard-accessible during Dual View", await page.getByRole("menuitem").count() > 0);
+      await page.keyboard.press("Escape");
+      check("Dual View shows the Viewer A/B navigation hint", await page.getByTestId("comparison-navigation-hint").textContent() === "Usa los selectores Viewer A/B para cambiar los recursos mientras comparas");
       const editorShell = page.locator(".app__pane--editor");
       check("Dual View hides but keeps the editor mounted and leaves Explorer visible", await editorShell.count() === 1 && !(await editorShell.isVisible()) && await page.locator(".app__pane--explorer").isVisible());
       check("Dual View shell fills the preview area without using the comparison preference", await page.locator(".app__workspace--dual-view").count() === 1 && await page.locator(".app__workspace--dual-view").evaluate((el) => getComputedStyle(el.querySelector(".app__pane--editor")).display === "none"));
@@ -2309,9 +2376,15 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const viewerB = page.getByRole("combobox", { name: "Dual View B resource" });
       const alphaId = `my-work:${workId}:${createdResources.get("alpha.seq")}`;
       const betaId = `my-work:${workId}:${createdResources.get("beta.seq")}`;
+      const noteId = `my-work:${workId}:${createdResources.get("dual-view-note.md")}`;
       await viewerA.selectOption(alphaId);
       await viewerB.selectOption(betaId);
       check("Dual View selectors hold the two requested resource identities", await viewerA.inputValue() === alphaId && await viewerB.inputValue() === betaId);
+      await viewerA.selectOption(noteId);
+      await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Parallel test note" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await viewerA.selectOption(alphaId);
+      await page.getByTestId("dual-pane-a").getByRole("heading", { name: "Alpha" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Viewer A selector changes the actual rendered artifact", await page.getByTestId("dual-pane-a").locator("h2").textContent() === "Alpha");
 
       const panes = [page.getByTestId("dual-pane-a"), page.getByTestId("dual-pane-b")];
       for (const pane of panes) await pane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2406,11 +2479,11 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Close Dual View" }).click();
       await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
       check("Closing Dual View from native Fullscreen exits the browser mode and restores the workspace", await page.getByTestId("dual-view").count() === 0 && await page.locator(".app__workspace--dual-view").count() === 0);
+      check("Closing Dual View restores editor tabs and artifact opening", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isEnabled());
       await page.getByTestId("compare-mode-button").click();
       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const dualA = page.getByRole("combobox", { name: "Dual View A resource" });
       const dualB = page.getByRole("combobox", { name: "Dual View B resource" });
-      const noteId = `my-work:${workId}:${createdResources.get("dual-view-note.md")}`;
       await dualA.selectOption(noteId);
       await dualB.selectOption(alphaId);
       const notePane = page.getByTestId("dual-pane-a");
@@ -2424,6 +2497,83 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("semantic-comparison-summary").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("Analysis retains semantic comparison summary", await page.getByTestId("semantic-comparison-summary").isVisible());
+      check("Analysis starts with tabs disabled when editor preference hides it", await checkEditorTabsDisabled());
+      check("Analysis disables SHARED and MY WORK artifact openers", await sharedResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button.disabled)) && await myWorkResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button.disabled)));
+      await showEditor(page);
+      check("Analysis enables tabs when the editor becomes visible", !(await page.getByTestId("view-code").isDisabled()));
+      await page.getByTestId("view-overview").click();
+      await page.getByTestId("overview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Analysis editor tab changes the visible editor content", await page.getByTestId("overview").isVisible());
+      await page.setViewportSize({ width: 480, height: 1000 });
+      await delay(500);
+      const responsiveLayoutEvidence = await page.evaluate(() => {
+        const workspace = document.querySelector(".app__workspace");
+        const editor = document.querySelector(".app__pane--editor");
+        const tabs = ["view-code", "view-outline", "view-problems", "view-overview", "view-history", "view-changes"]
+          .map((id) => ({ id, disabled: document.querySelector(`[data-testid="${id}"]`)?.disabled ?? null }));
+        const preferences = JSON.parse(localStorage.getItem("sequencediagrams.ui-preferences") ?? "null");
+        return {
+          viewport: window.innerWidth,
+          document: document.documentElement.clientWidth,
+          workspace: workspace?.clientWidth ?? -1,
+          reactMeasuredWorkspace: workspace?.getAttribute("data-layout-width"),
+          breakpointHidden: workspace?.getAttribute("data-editor-responsive-hidden"),
+          analysisOpen: workspace?.getAttribute("data-analysis-open"),
+          editorHiddenPreference: preferences?.screens?.comparison?.editorHidden ?? null,
+          editorTabsDisabledDerived: workspace?.getAttribute("data-editor-tabs-disabled"),
+          workspaceClasses: workspace?.className ?? "",
+          appClasses: document.querySelector("[data-testid='app-shell']")?.className ?? "",
+          editorDisplay: editor ? getComputedStyle(editor).display : "missing",
+          editorVisibility: editor ? getComputedStyle(editor).visibility : "missing",
+          tabs,
+        };
+      });
+      check("Analysis disables tabs when responsive layout hides the editor", await checkEditorTabsDisabled() && !(await editorShell.isVisible()), JSON.stringify(responsiveLayoutEvidence));
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await delay(500);
+      await page.waitForFunction(() => !document.querySelector(".app__workspace")?.classList.contains("app__workspace--comparison-editor-hidden"), undefined, { timeout: UI_TIMEOUT_MS });
+      check("Analysis restores enabled tabs when responsive editor returns", !(await page.getByTestId("view-code").isDisabled()));
+      await page.getByRole("button", { name: "Close comparison" }).click();
+      check("Closing Analysis restores ordinary resource opening", await myWorkResourceOpeners.first().isEnabled());
+
+      const proposalTitle = `Navigation return ${Date.now()}`;
+      const proposalResponse = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, {
+        method: "POST",
+        body: JSON.stringify({ sourcePrivateContextId: workId, resourceIds: [createdResources.get("alpha.seq")], title: proposalTitle, description: "Disposable navigation E2E proposal." }),
+      });
+      if (proposalResponse.status !== 201 || !proposalResponse.json?.proposal?.id) throw new Error(`Disposable proposal creation failed: ${proposalResponse.status} ${proposalResponse.text}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await openMyWorkContext(page, workId);
+      const proposalsToggle = page.locator('[data-testid="explorer-proposals-toggle"]');
+      if ((await proposalsToggle.getAttribute("aria-expanded")) !== "true") await proposalsToggle.click();
+      const proposalOpen = page.locator('[data-testid="explorer-proposal"]').filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open");
+      await proposalOpen.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Load diagram Alpha" }).click();
+      await page.getByTestId("compare-mode-button").click();
+      await proposalOpen.click();
+      const restoreProposalDetails = page.getByRole("button", { name: "Show proposal details" });
+      if (await restoreProposalDetails.isVisible()) await restoreProposalDetails.click();
+      await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await waitForText(page.getByRole("region", { name: "Architectural Proposal" }), text => text.includes(proposalTitle), "Dual View proposal title");
+      check("Proposal opened from Dual View is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
+      await page.goBack();
+      await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await openMyWorkContext(page, workId);
+      check("Returning from proposal restores Dual View and its disabled controls", await checkEditorTabsDisabled() && await myWorkResourceOpeners.first().isDisabled());
+      await page.getByRole("button", { name: "Close Dual View" }).click();
+      await page.getByTestId("analysis-mode-button").click();
+      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await proposalOpen.click();
+      const restoreAnalysisProposalDetails = page.getByRole("button", { name: "Show proposal details" });
+      if (await restoreAnalysisProposalDetails.isVisible()) await restoreAnalysisProposalDetails.click();
+      await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await waitForText(page.getByRole("region", { name: "Architectural Proposal" }), text => text.includes(proposalTitle), "Analysis proposal title");
+      check("Proposal opened from Analysis is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
+      await page.goBack();
+      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await openMyWorkContext(page, workId);
+      check("Returning from proposal restores Analysis and its controls for the visible editor", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isDisabled());
       await page.getByRole("button", { name: "Close comparison" }).click();
 
       const focus = page.getByTestId("viewer-focus-toggle");

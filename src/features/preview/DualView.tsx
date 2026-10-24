@@ -65,6 +65,7 @@ export default function DualView({ options, initialOptionId, projectId, onExit, 
   const select = (pane: 0 | 1, id: string) => setIds(current => pane === 0 ? [id, current[1]] : [current[0], id]);
   return <div ref={rootRef} className={`comparison dual-view${focusMode ? " dual-view--focus" : ""}`} data-testid="dual-view" aria-hidden={false}>
     <header className="comparison__toolbar"><strong>Dual View · {projectId}</strong>
+      <span className="comparison__navigation-hint" role="status" data-testid="comparison-navigation-hint">Usa los selectores Viewer A/B para cambiar los recursos mientras comparas</span>
       <button type="button" className="button button--ghost button--small" aria-pressed={focusMode} onClick={onToggleFocus}>{focusMode ? "Exit Focus" : "Focus"}</button>
       <button type="button" className="button button--ghost button--small" aria-pressed={fullscreen} title={fullscreenError ? "Fullscreen unavailable" : undefined} onClick={onToggleFullscreen}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button>
       <label>Viewer A <select aria-label="Dual View A resource" value={a?.id ?? ""} onChange={event => select(0, event.target.value)}>{options.filter(option => option.id !== b?.id).map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>

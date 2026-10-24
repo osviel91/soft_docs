@@ -128,6 +128,59 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("c.seq");
   });
 
+  it("disables editor tabs and Explorer artifact opening only while Dual View owns navigation", async () => {
+    render(<App />);
+    await project();
+    const diagrams: DiagramFile[] = [
+      { id: "one", name: "one.concept", projectId: "dual", source: 'concept one "One"' },
+      { id: "two", name: "two.concept", projectId: "dual", source: 'concept two "Two"' },
+    ];
+    await importResources({ id: "dual", name: "Dual", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    const editorTabs = ["view-code", "view-outline", "view-problems", "view-overview", "view-history"];
+    for (const testId of editorTabs) expect(screen.getByTestId(testId)).toBeEnabled();
+    const openers = screen.getAllByTestId("select-diagram-button");
+    const selectedBefore = document.querySelector(".explorer__diagram--selected")?.textContent;
+
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    for (const testId of editorTabs) expect(screen.getByTestId(testId)).toBeDisabled();
+    expect(screen.getByTestId("dual-view")).toHaveTextContent("Usa los selectores Viewer A/B para cambiar los recursos mientras comparas");
+    expect(screen.getByRole("combobox", { name: "Dual View A resource" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Dual View B resource" })).toBeEnabled();
+    for (const opener of openers) expect(opener).toBeDisabled();
+    fireEvent.click(openers.find(button => !button.closest(".explorer__diagram--selected"))!);
+    expect(document.querySelector(".explorer__diagram--selected")?.textContent).toBe(selectedBefore);
+    expect(screen.getByRole("combobox", { name: "Dual View A resource" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
+    for (const testId of editorTabs) expect(screen.getByTestId(testId)).toBeEnabled();
+    expect(screen.getAllByTestId("select-diagram-button").every(button => !(button as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it("keeps Analysis tabs active with a visible editor and disables them when the editor is hidden", async () => {
+    writeUiPreferences({ ...defaultUiPreferences(), screens: { ...defaultUiPreferences().screens, comparison: { ...defaultUiPreferences().screens.comparison, editorHidden: false } } });
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
+    expect(screen.getByTestId("view-overview")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("view-overview"));
+    expect(screen.getByTestId("overview")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
+    cleanup();
+    writeUiPreferences(defaultUiPreferences());
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    fireEvent.click(screen.getByTestId("analysis-mode-button"));
+    for (const testId of ["view-code", "view-outline", "view-problems", "view-overview", "view-history"]) {
+      expect(screen.getByTestId(testId)).toBeDisabled();
+    }
+    expect(screen.getByTestId("comparison-view")).toHaveTextContent("Usa los selectores Viewer A/B para cambiar los recursos mientras comparas");
+    fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
+    expect(screen.getByTestId("view-code")).toBeEnabled();
+    expect(screen.getAllByTestId("select-diagram-button").every(button => !(button as HTMLButtonElement).disabled)).toBe(true);
+  });
+
   it("isolates camera state and carries it with its resource when panel positions are swapped", async () => {
     render(<App />);
     const diagrams: DiagramFile[] = [

@@ -1204,6 +1204,7 @@ body {
 }
 
 .comparison__toolbar strong { margin-right: auto; }
+.comparison__navigation-hint { flex: 0 1 auto; min-width: 0; color: var(--text-muted); font-size: 11px; }
 .comparison__toolbar label { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .comparison__toolbar label { min-width: 0; flex: 0 1 auto; }
 .comparison__toolbar label select { width: 150px; max-width: 18vw; min-width: 0; }
@@ -1541,9 +1542,10 @@ body {
     color 120ms ease;
 }
 
-.segmented__option:hover {
+.segmented__option:hover:not(:disabled) {
   color: var(--text);
 }
+.segmented__option:disabled { color: var(--text-faint); opacity: .62; cursor: not-allowed; }
 
 .segmented__option--active {
   color: var(--text);
@@ -3337,10 +3339,13 @@ body {
   white-space: nowrap;
 }
 
-.explorer__diagram-button:hover {
+.explorer__diagram-button:hover:not(:disabled) {
   color: var(--text);
   background: var(--bg-hover);
 }
+.explorer__diagram-button:disabled,
+.explorer__note-button:disabled,
+.explorer__resource-button:disabled { color: var(--text-muted); opacity: .68; cursor: not-allowed; }
 
 .explorer__diagram--selected .explorer__diagram-button {
   color: var(--text);
@@ -3878,7 +3883,7 @@ body {
   white-space: nowrap;
 }
 
-.explorer__note-button:hover {
+.explorer__note-button:hover:not(:disabled) {
   color: var(--text);
   background: var(--bg-hover);
 }
@@ -4814,8 +4819,8 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.explorer__resource-button:hover,
-.explorer__resource-button:focus-visible { color: var(--text); background: var(--bg-hover); }
+.explorer__resource-button:hover:not(:disabled),
+.explorer__resource-button:focus-visible:not(:disabled) { color: var(--text); background: var(--bg-hover); }
 .explorer__resource--selected .explorer__resource-button { border-left-color: var(--accent); color: var(--text); }
 .explorer__resource-button .explorer__item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer__resource .explorer__diagram-menu,
