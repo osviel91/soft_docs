@@ -2196,6 +2196,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     const http500s = [];
     let projectId = null;
     let workId = null;
+    let isolationProjectId = null;
+    let isolationWorkId = null;
+    let isolationResourceId = null;
     page.on("response", (response) => {
       if (response.status() === 500) {
         http500s.push(`${response.request().method()} ${new URL(response.url()).pathname} 500`);
@@ -2273,6 +2276,24 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         }
         createdResources.set(resource.path, response.json.resource.id);
       }
+
+      const isolationProjectName = `UX-3B.2b session isolation ${Date.now()}`;
+      const isolationProjectResponse = await apiRequest(page, "/api/projects", {
+        method: "POST", body: JSON.stringify({ name: isolationProjectName, workspaceId: project.workspaceId }),
+      });
+      if (isolationProjectResponse.status !== 201 || !isolationProjectResponse.json?.project?.id) throw new Error(`Isolation project fixture failed: ${isolationProjectResponse.status} ${isolationProjectResponse.text}`);
+      isolationProjectId = isolationProjectResponse.json.project.id;
+      const isolationWork = await apiRequest(page, `/api/projects/${isolationProjectId}/private-work`, {
+        method: "POST", body: JSON.stringify({ name: "Dual View isolation fixture" }),
+      });
+      if (isolationWork.status !== 201 || !isolationWork.json?.context?.id) throw new Error(`Isolation MY WORK fixture failed: ${isolationWork.status} ${isolationWork.text}`);
+      isolationWorkId = isolationWork.json.context.id;
+      const isolationResource = await apiRequest(page, `/api/projects/${isolationProjectId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ path: "isolation.concept", type: "conceptual", content: 'concept isolated "P2 only"', contextId: isolationWorkId }),
+      });
+      if (isolationResource.status !== 201 || !isolationResource.json?.resource?.id) throw new Error(`Isolation resource fixture failed: ${isolationResource.status} ${isolationResource.text}`);
+      isolationResourceId = isolationResource.json.resource.id;
 
       // Prepare an actual SHARED artifact only through the disposable project's
       // proposal lifecycle; direct authoritative writes are intentionally refused.
@@ -2531,6 +2552,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await panes[0].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 
+      await panes[0].getByTestId("zoom-in").click();
+      await panes[0].locator("g.participant[data-node-id]").last().click();
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-a"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
       const beforeFocus = await paneState();
       await page.getByRole("button", { name: "Focus" }).click();
       await page.locator(".app--dual-focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
@@ -2547,28 +2571,72 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const afterFullscreen = await paneState();
       check("Exiting Fullscreen retains Focus and both cameras/selections", await page.locator(".app--dual-focus").count() === 1 && afterFullscreen.every((pane, index) => pane.transform === inFullscreen[index].transform && pane.activeNode === inFullscreen[index].activeNode),
         `fullscreen ${inFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
-      await page.getByRole("button", { name: "Exit Focus" }).click();
-      await page.locator(".app--dual-focus").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
-      const afterFocus = await paneState();
-       check("Exiting Focus retains both actual SVG camera transforms and node selections", afterFocus.every((pane, index) => pane.transform === afterFullscreen[index].transform && pane.activeNode === afterFullscreen[index].activeNode),
-         `focus ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+        const projectBeforeSwitch = await paneState();
+        const projectSelector = page.getByRole("combobox", { name: "Dual View project" });
+        await projectSelector.selectOption(isolationProjectId);
+        await page.waitForFunction((name) => document.querySelector(".comparison__toolbar strong")?.textContent?.includes(name), isolationProjectName, { timeout: UI_TIMEOUT_MS });
+        const projectContextSelector = page.getByRole("combobox", { name: "Dual View context" });
+        await projectContextSelector.selectOption(`my-work:${isolationWorkId}`);
+        await page.waitForFunction((value) => document.querySelector('[aria-label="Dual View context"]')?.value === value, `my-work:${isolationWorkId}`, { timeout: UI_TIMEOUT_MS });
+        const isolationOptionId = `my-work:${isolationWorkId}:${isolationResourceId}`;
+        await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(isolationOptionId);
+        await page.getByTestId("dual-pane-a").locator('[data-testid="conceptual-preview-svg"] [data-concept-id="isolated"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
+        await page.getByTestId("dual-pane-a").locator('[data-concept-id="isolated"]').click();
+        const project2VisualState = await paneState();
+        check("P1 → P2 project switch renders only P2's authorized fixture resources", project2VisualState[0].activeNode === "isolated");
+        await projectSelector.selectOption(projectId);
+        await page.waitForFunction((name) => document.querySelector(".comparison__toolbar strong")?.textContent?.includes(name), projectName, { timeout: UI_TIMEOUT_MS });
+        await page.getByRole("combobox", { name: "Dual View context" }).selectOption(`my-work:${workId}`);
+        await page.waitForFunction((value) => document.querySelector('[aria-label="Dual View context"]')?.value === value, `my-work:${workId}`, { timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const project1Returned = await paneState();
+        check("P2 → P1 does not resurrect P1's prior camera or node selection", project1Returned.every((pane, index) => pane.activeNode === null && pane.transform !== projectBeforeSwitch[index].transform),
+          `before P2 ${projectBeforeSwitch.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → returned P1 ${project1Returned.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
 
-       await page.getByRole("button", { name: "Switch to Analysis" }).click();
+        await viewerA.selectOption(alphaId);
+        await viewerB.selectOption(betaId);
+        await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
+        await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
+        await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
+        await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
+        await page.waitForFunction(() => document.querySelectorAll("[data-testid^='dual-pane-'] .svg-node--active").length === 2, undefined, { timeout: UI_TIMEOUT_MS });
+        const contextBeforeSwitch = await paneState();
+        const contextSelector = page.getByRole("combobox", { name: "Dual View context" });
+        await contextSelector.selectOption("shared");
+        await page.waitForFunction(() => document.querySelector('[aria-label="Dual View context"]')?.value === "shared", undefined, { timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("dual-pane-a").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await contextSelector.selectOption(`my-work:${workId}`);
+        await page.waitForFunction((value) => document.querySelector('[aria-label="Dual View context"]')?.value === value, `my-work:${workId}`, { timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const afterContextRoundTrip = await paneState();
+        check("SHARED ↔ MY WORK context changes discard the previous visual session", contextBeforeSwitch.every(pane => pane.activeNode !== null) && afterContextRoundTrip.every(pane => pane.activeNode === null && pane.transform !== contextBeforeSwitch[0].transform),
+          `before ${contextBeforeSwitch.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → after ${afterContextRoundTrip.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+        const beforeModeSuspendAfterContextChange = await paneState();
+        await page.getByRole("button", { name: "Switch to Analysis" }).click();
        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Suspending Dual View exits Focus and Fullscreen", await page.locator(".app--dual-focus").count() === 0 && await page.evaluate(() => document.fullscreenElement === null));
        await page.getByRole("button", { name: "Switch to Dual View" }).click();
        await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        const afterModeResume = await paneState();
-       check("Suspending Dual View for Analysis unmounts its in-memory sessions; resuming starts fresh", afterModeResume.some((pane, index) => pane.title !== afterFocus[index].title || pane.transform !== afterFocus[index].transform || pane.activeNode !== afterFocus[index].activeNode),
-         `before ${afterFocus.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → resumed ${afterModeResume.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+        check("Analysis suspension preserves A/B SVG transforms, selected nodes, and resource identities", afterModeResume.every((pane, index) => pane.title === beforeModeSuspendAfterContextChange[index].title && pane.transform === beforeModeSuspendAfterContextChange[index].transform && pane.activeNode === beforeModeSuspendAfterContextChange[index].activeNode),
+          `before ${beforeModeSuspendAfterContextChange.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → resumed ${afterModeResume.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+       check("Dual Focus and Fullscreen are not restored after resuming", await page.locator(".app--dual-focus").count() === 0 && await page.evaluate(() => document.fullscreenElement === null));
 
+       const beforeExplicitClose = await paneState();
        await page.getByRole("button", { name: "Fullscreen" }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
       await page.getByRole("button", { name: "Close Dual View" }).click();
       await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
       check("Closing Dual View from native Fullscreen exits the browser mode and restores the workspace", await page.getByTestId("dual-view").count() === 0 && await page.locator(".app__workspace--dual-view").count() === 0);
       check("Closing Dual View restores editor tabs and artifact opening", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isEnabled());
-      await page.getByTestId("compare-mode-button").click();
-      await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("compare-mode-button").click();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("dual-pane-b").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       const afterExplicitReopen = await paneState();
+       check("Explicit close and reopen starts clean instead of restoring the closed session", afterExplicitReopen.every(pane => pane.activeNode === null) && afterExplicitReopen.some((pane, index) => pane.transform !== beforeExplicitClose[index].transform),
+         `closed ${beforeExplicitClose.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → reopened ${afterExplicitReopen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
       const dualA = page.getByRole("combobox", { name: "Dual View A resource" });
       const dualB = page.getByRole("combobox", { name: "Dual View B resource" });
       await dualA.selectOption(noteId);
@@ -2644,17 +2712,27 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       if ((await proposalsToggle.getAttribute("aria-expanded")) !== "true") await proposalsToggle.click();
        const proposalOpen = page.locator('[data-testid="explorer-proposal"]').filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open");
        await proposalOpen.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       await privateTree.getByRole("button", { name: "Load diagram Alpha" }).click();
-       await page.getByTestId("compare-mode-button").click();
-       await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
+        await privateTree.getByRole("button", { name: "Load diagram Alpha" }).click();
+        await page.getByTestId("compare-mode-button").click();
+        await viewerA.selectOption(alphaId);
+        await viewerB.selectOption(betaId);
+        await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
+        await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
+        await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
+        await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
+        await page.waitForFunction(() => document.querySelectorAll("[data-testid^='dual-pane-'] .svg-node--active").length === 2, undefined, { timeout: UI_TIMEOUT_MS });
+        const beforeDualProposal = await paneState();
+        await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
       const restoreProposalDetails = page.getByRole("button", { name: "Show proposal details" });
       if (await restoreProposalDetails.isVisible()) await restoreProposalDetails.click();
       await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await waitForText(page.getByRole("region", { name: "Architectural Proposal" }), text => text.includes(proposalTitle), "Dual View proposal title");
       check("Proposal opened from Dual View is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
-       await page.goBack();
-       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       check("Returning from proposal restores the immersive Dual View and its disabled editor controls", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1);
+        await page.goBack();
+        await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const afterDualProposal = await paneState();
+        check("Returning from proposal restores actual Dual View cameras, nodes, A/B resources and immersive shell", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1 && afterDualProposal.every((pane, index) => pane.title === beforeDualProposal[index].title && pane.transform === beforeDualProposal[index].transform && pane.activeNode === beforeDualProposal[index].activeNode),
+          `before ${beforeDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → after ${afterDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
        await page.getByRole("button", { name: "Close Dual View" }).click();
        await page.getByTestId("analysis-mode-button").click();
        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });

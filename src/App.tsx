@@ -149,6 +149,7 @@ import { parseConceptualSyntax } from "./language/conceptual/parser";
 import { parseDatabase } from "./language/database/analyze";
 import { parseDatabaseSyntax } from "./language/database/parser";
 import ComparisonView, { type ComparisonOption, type ComparisonResource, type RevisionComparisonResource } from "./features/preview/ComparisonView";
+import { createVisualSessionController, fingerprintVisualSource, type VisualSessionAvailability, type VisualSessionController, type VisualSessionScope } from "./features/preview/visual-session-controller";
 import DualView from "./features/preview/DualView";
 import { renderEventFlowDocument } from "./renderer/pipeline/eventflow-to-svg";
 import { renderEventFlowCausalDocument } from "./renderer/pipeline/eventflow-to-causal-flow";
@@ -672,6 +673,7 @@ export default function App() {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [dualViewOpen, setDualViewOpen] = useState(false);
   const [dualFocusMode, setDualFocusMode] = useState(false);
+  const visualSessionControllerRef = useRef<VisualSessionController | null>(null);
   const [comparisonMaximized, setComparisonMaximized] = useState(false);
   const [comparisonMaximizedPane, setComparisonMaximizedPane] = useState<"a" | "b" | null>(null);
   const toggleFocusMode = useCallback((origin?: HTMLElement): void => {
@@ -718,6 +720,14 @@ export default function App() {
       }
     } catch { setFullscreenError(true); }
   };
+  const suspendDualViewSession = useCallback(() => {
+    visualSessionControllerRef.current?.suspend();
+    setDualFocusMode(false);
+    if (dualViewRef.current && document.fullscreenElement === dualViewRef.current) {
+      try { void Promise.resolve(document.exitFullscreen()).catch(() => setFullscreenError(true)); }
+      catch { setFullscreenError(true); }
+    }
+  }, []);
   const closeDualView = () => {
     if (dualViewRef.current && document.fullscreenElement === dualViewRef.current) {
       try {
@@ -726,13 +736,13 @@ export default function App() {
         setFullscreenError(true);
       }
     }
+    visualSessionControllerRef.current?.close();
+    visualSessionControllerRef.current = null;
     setDualFocusMode(false);
     setDualViewOpen(false);
   };
   const switchToAnalysis = async () => {
-    if (dualViewRef.current && document.fullscreenElement === dualViewRef.current) {
-      try { await document.exitFullscreen(); } catch { setFullscreenError(true); }
-    }
+    suspendDualViewSession();
     setDualViewOpen(false);
     setDualFocusMode(false);
     setComparisonMaximizedPane(null);
@@ -863,15 +873,17 @@ export default function App() {
   }, []);
 
   const openArchitecturalProposal = useCallback((proposalId: string): void => {
+    suspendDualViewSession();
     setArchitecturalProposalContextId(null);
     setRevisionProposalId(null);
     setProposalInspector((current) => current.proposalId === proposalId ? current : { proposalId, diff: null, selectedPath: null, mode: "unified" });
     setArchitecturalProposalId(proposalId);
     setView("changes");
     setBrowserLocation({ projectId: server.active?.project.id ?? browserLocationState.projectId, contextId: null, resourceId: null, proposalId });
-  }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation]);
+  }, [browserLocationState.projectId, server.active?.project.id, setBrowserLocation, suspendDualViewSession]);
 
   const openInboxProposal = useCallback((item: ServerProposalInbox["items"][number], returnTo: string): void => {
+    suspendDualViewSession();
     browserLocationLoaded.current = false;
     browserLocationHydrated.current = false;
     navigationProjectRequested.current = null;
@@ -882,7 +894,7 @@ export default function App() {
     setArchitecturalProposalId(item.proposalId);
     setProposalInspector({ proposalId: item.proposalId, diff: null, selectedPath: null, mode: "unified" });
     setBrowserLocation({ projectId: item.project.id, contextId: null, resourceId: null, proposalId: item.proposalId, returnTo });
-  }, [setBrowserLocation]);
+  }, [setBrowserLocation, suspendDualViewSession]);
 
   const returnFromInbox = useCallback((): void => {
     setPage("workspace");
@@ -895,6 +907,7 @@ export default function App() {
   }, [server.active, setBrowserLocation]);
 
   const startProposalRevision = useCallback((contextId: string, proposalId: string, resourceId: string | null, resources: Array<{ resourceId: string; path: string; type: ServerResourceType; content: string }>, title: string, description: string): void => {
+    suspendDualViewSession();
     setRevisionReturnContext({ proposalId, contextId, selectedPath: proposalInspector.selectedPath, mode: proposalInspector.mode });
     setRevisionResources(resources);
     setRevisionTitle(title);
@@ -907,7 +920,7 @@ export default function App() {
     setArchitecturalProposalContextId(null);
     setBrowserLocation({ projectId: server.active?.project.id ?? null, contextId, resourceId, proposalId });
     void server.openPrivateWork(contextId);
-  }, [proposalInspector.mode, proposalInspector.selectedPath, server.active?.project.id, server.openPrivateWork, setBrowserLocation]);
+  }, [proposalInspector.mode, proposalInspector.selectedPath, server.active?.project.id, server.openPrivateWork, setBrowserLocation, suspendDualViewSession]);
 
   const resizePane = useCallback(
     (pane: "explorer" | "editor", clientX: number): void => {
@@ -1614,7 +1627,70 @@ export default function App() {
   const dualViewOptions: ComparisonOption[] = comparisonOptions.length ? comparisonOptions : [...allDiagrams, ...allNotes].map((resource) => {
         const resourceId = resourceIdForFile(resource) ?? resource.id;
         return { id: resource.id, resource, resourceId, representation: resourceRepresentationOfName(resource.name), source: "markdown" in resource ? resource.markdown : resource.source, context: { projectId: resource.projectId, knowledgeContext: server.active ? { kind: "shared" as const, id: `shared:${resource.projectId}`, projectId: resource.projectId } : { kind: "local" as const, id: `local:${resource.projectId}`, projectId: resource.projectId }, index: index ?? sharedIndex ?? { projectId: resource.projectId, resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] }, resourceId }, label: `${server.active ? "SHARED" : "LOCAL"} · ${resource.name}` };
-      });
+       });
+  const dualSessionProjectId = server.active?.project.id ?? selectedProjectId ?? dualViewOptions[0]?.context.projectId ?? "local";
+  const dualSessionScope: VisualSessionScope = {
+    projectId: dualSessionProjectId,
+    contextKind: server.active ? (server.active.contextId ? "private-work" : "shared") : "local",
+    contextId: server.active?.contextId ?? (server.active ? `shared:${dualSessionProjectId}` : `local:${dualSessionProjectId}`),
+  };
+  const dualSessionScopeKey = JSON.stringify(dualSessionScope);
+  const dualSessionAvailability: VisualSessionAvailability = workspaceMode === "server"
+    ? server.opening || workspace.isLoading
+      ? "loading"
+      : !server.active || workspace.error || workspace.selectedProjectId !== server.active.project.id
+        ? "unavailable"
+        : "ready"
+    : workspace.isLoading && !workspace.selectedProjectId
+      ? "loading"
+      : workspace.error
+        ? "unavailable"
+        : "ready";
+  const dualSessionOptions = dualViewOptions.map(option => ({
+    optionId: option.id,
+    identity: {
+      projectId: option.context.projectId,
+      contextKind: option.context.knowledgeContext.kind,
+      contextId: option.context.knowledgeContext.id,
+      resourceId: option.resourceId,
+    },
+    sourceFingerprint: fingerprintVisualSource(option.source),
+  }));
+  const dualSessionOptionsKey = JSON.stringify(dualSessionOptions.map(option => [option.optionId, option.identity, option.sourceFingerprint]));
+  const dualViewInitialOptionId = selectedComparisonResource
+    ? dualViewOptions.find(option => option.resource.id === selectedComparisonResource.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id
+    : undefined;
+  const [, setVisualSessionRevision] = useState(0);
+  useLayoutEffect(() => {
+    let controller = visualSessionControllerRef.current;
+    if (controller && JSON.stringify(controller.getState().scope) !== dualSessionScopeKey) {
+      controller.close();
+      visualSessionControllerRef.current = null;
+      controller = null;
+    }
+    const shouldCreate = dualViewOpen && page === "workspace" && !proposalNavigationActive;
+    let created = false;
+    if (!controller && shouldCreate) {
+      controller = createVisualSessionController(dualSessionScope, dualViewInitialOptionId);
+      visualSessionControllerRef.current = controller;
+      created = true;
+    }
+    if (!controller) {
+      if (created) setVisualSessionRevision(version => version + 1);
+      return;
+    }
+
+    controller.reconcile({
+      scope: dualSessionScope,
+      availability: dualSessionAvailability,
+      options: dualSessionAvailability === "ready" ? dualSessionOptions : [],
+      initialOptionId: dualViewInitialOptionId,
+    });
+    const shouldSuspend = !dualViewOpen || page !== "workspace" || proposalNavigationActive || comparisonOpen;
+    if (shouldSuspend) controller.suspend();
+    else controller.resume();
+    setVisualSessionRevision(version => version + 1);
+  }, [comparisonOpen, dualSessionAvailability, dualSessionOptionsKey, dualSessionScopeKey, dualViewInitialOptionId, dualViewOpen, page, proposalNavigationActive]);
   const comparisonPrimaryOptionId = selectedComparisonResource
     ? server.active?.contextId
       ? `my-work:${server.active.contextId}:${resourceIdForFile(selectedComparisonResource) ?? selectedComparisonResource.id}`
@@ -4089,7 +4165,8 @@ export default function App() {
                 <ChangesInbox
                   client={apiClient}
                   projectId={selectedProjectId}
-                  onOpen={(proposalId) => {
+                   onOpen={(proposalId) => {
+                    suspendDualViewSession();
                     setReviewProposalId(proposalId);
                     setReviewReadOnly(false);
                     setProposalReviewOpen(true);
@@ -4163,7 +4240,8 @@ export default function App() {
                   resourceScoped={historyResourceScoped}
                   onShowProjectHistory={() => setHistoryResourceScoped(false)}
                   onShowResourceHistory={() => setHistoryResourceScoped(true)}
-                  onViewProposal={(proposalId) => {
+                   onViewProposal={(proposalId) => {
+                    suspendDualViewSession();
                     setReviewProposalId(proposalId);
                     setReviewReadOnly(true);
                     setProposalReviewOpen(true);
@@ -4230,6 +4308,7 @@ export default function App() {
                     onChanges={
                       canReviewProposals
                         ? () => {
+                            suspendDualViewSession();
                             setReviewProposalId(null);
                             setProposalReviewOpen(true);
                           }
@@ -4291,6 +4370,7 @@ export default function App() {
                     onChanges={
                       canReviewProposals
                         ? () => {
+                            suspendDualViewSession();
                             setReviewProposalId(null);
                             setProposalReviewOpen(true);
                           }
@@ -4407,8 +4487,8 @@ export default function App() {
                     <section className="workspace-empty-preview" data-testid="empty-document-preview" aria-label="Document preview empty">
                       <p>No document is open. Choose one from the Explorer or use Open a document.</p>
                     </section>
-                   ) : dualViewOpen && !proposalNavigationActive ? (
-                      <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} activeProjectId={server.active?.project.id} activeProjectName={server.active?.project.name} serverProjects={server.projects} serverWorkspaces={serverWorkspaces} selectedServerWorkspaceId={selectedServerWorkspaceId} onSelectServerWorkspace={selectServerWorkspace} activeContextId={server.active?.contextId} privateWorkContexts={server.privateWorkContexts.map(({ id, name }) => ({ id, name }))} onSelectContext={server.active ? selectKnowledgeContext : undefined} onOpenServerProject={selectServerProject} proposals={server.architecturalProposals.filter(proposal => proposal.status === "open").map(({ id, title }) => ({ id, title }))} onOpenProposal={server.active ? openArchitecturalProposal : undefined} onExit={closeDualView} onSwitchToAnalysis={() => void switchToAnalysis()} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} />
+                    ) : dualViewOpen && !proposalNavigationActive ? (
+                      visualSessionControllerRef.current ? <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} controller={visualSessionControllerRef.current} availability={dualSessionAvailability} options={dualSessionAvailability === "ready" ? dualViewOptions : []} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} activeProjectId={server.active?.project.id} activeProjectName={server.active?.project.name} serverProjects={server.projects} serverWorkspaces={serverWorkspaces} selectedServerWorkspaceId={selectedServerWorkspaceId} onSelectServerWorkspace={selectServerWorkspace} activeContextId={server.active?.contextId} privateWorkContexts={server.privateWorkContexts.map(({ id, name }) => ({ id, name }))} onSelectContext={server.active ? selectKnowledgeContext : undefined} onOpenServerProject={selectServerProject} proposals={server.architecturalProposals.filter(proposal => proposal.status === "open").map(({ id, title }) => ({ id, title }))} onOpenProposal={server.active ? openArchitecturalProposal : undefined} onExit={closeDualView} onSwitchToAnalysis={() => void switchToAnalysis()} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} /> : <section className="comparison dual-view" role="status">Preparing Dual View session…</section>
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
                       primary={selectedComparisonResource}
