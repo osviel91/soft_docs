@@ -31,6 +31,9 @@ export interface ComparisonViewProps {
   index: ProjectIndex | null;
   resourceIdForFile: (file: ComparisonResource) => string | null;
   onExit: () => void;
+  onSwitchToDualView?: () => void;
+  proposals?: Array<{ id: string; title: string }>;
+  onOpenProposal?: (proposalId: string) => void;
   onOpenResource: (resourceId: string, nodeId?: string) => void;
   maximizedPane: "a" | "b" | null;
   onMaximize: (pane: "a" | "b") => void;
@@ -43,6 +46,9 @@ export interface ComparisonViewProps {
   serverWorkspaces?: ServerWorkspace[];
   selectedServerWorkspaceId?: string | null;
   onSelectServerWorkspace?: (workspaceId: string) => void;
+  activeContextId?: string | null;
+  privateWorkContexts?: Array<{ id: string; name: string }>;
+  onSelectContext?: (contextId: string | null) => void;
   onOpenServerProject?: (project: ServerProject) => void;
   relationships?: ResourceRelationship[];
   analysisContexts?: AnalysisContext[];
@@ -255,6 +261,9 @@ export default function ComparisonView({
   index,
   resourceIdForFile,
   onExit,
+  onSwitchToDualView,
+  proposals = [],
+  onOpenProposal,
   onOpenResource,
   maximizedPane,
   onMaximize,
@@ -267,6 +276,9 @@ export default function ComparisonView({
   serverWorkspaces = [],
   selectedServerWorkspaceId = null,
   onSelectServerWorkspace,
+  activeContextId = null,
+  privateWorkContexts = [],
+  onSelectContext,
   onOpenServerProject,
   relationships = [],
   analysisContexts = [],
@@ -434,6 +446,9 @@ export default function ComparisonView({
       <header className="comparison__toolbar">
         <strong>{revisionMode ? "Compare revisions" : "Compare resources"}</strong>
         {!revisionMode ? <span className="comparison__navigation-hint" role="status" data-testid="comparison-navigation-hint">Usa los selectores Viewer A/B para cambiar los recursos mientras comparas</span> : null}
+        {!revisionMode && onSwitchToDualView ? <button type="button" className="button button--small" aria-label="Switch to Dual View" onClick={onSwitchToDualView}>Dual View</button> : null}
+        {!revisionMode && onOpenProposal && proposals.length ? <label>Proposal <select aria-label="Open proposal" value="" onChange={(event) => { if (event.target.value) onOpenProposal(event.target.value); }}><option value="">Open proposal…</option>{proposals.map((proposal) => <option key={proposal.id} value={proposal.id}>{proposal.title}</option>)}</select></label> : null}
+        {!revisionMode && onSelectContext && (activeContextId != null || privateWorkContexts.length > 0) ? <label>Context <select aria-label="Comparison context" value={activeContextId ? `my-work:${activeContextId}` : "shared"} onChange={(event) => onSelectContext(event.target.value === "shared" ? null : event.target.value.slice("my-work:".length))}><option value="shared">SHARED</option>{privateWorkContexts.map((context) => <option key={context.id} value={`my-work:${context.id}`}>MY WORK · {context.name}</option>)}</select></label> : null}
         {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Comparison workspace" value={selectedServerWorkspaceId ?? ""} onChange={(event) => onSelectServerWorkspace(event.target.value)}>
           {serverWorkspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
         </select></label> : null}

@@ -155,17 +155,20 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getAllByTestId("select-diagram-button").every(button => !(button as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  it("keeps Analysis tabs active with a visible editor and disables them when the editor is hidden", async () => {
+  it("keeps Analysis immersive regardless of the editor visibility preference", async () => {
     writeUiPreferences({ ...defaultUiPreferences(), screens: { ...defaultUiPreferences().screens, comparison: { ...defaultUiPreferences().screens.comparison, editorHidden: false } } });
     render(<App />);
     await project();
     await command("New Diagram");
     await command("New Diagram");
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
     fireEvent.click(screen.getByTestId("analysis-mode-button"));
-    expect(screen.getByTestId("view-overview")).toBeEnabled();
-    fireEvent.click(screen.getByTestId("view-overview"));
-    expect(screen.getByTestId("overview")).toBeInTheDocument();
+    expect(screen.getByTestId("view-overview")).toBeDisabled();
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--immersive");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
     fireEvent.click(screen.getByRole("button", { name: "Close comparison" }));
+    expect(screen.getByTestId("view-overview")).toBeEnabled();
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
     cleanup();
     writeUiPreferences(defaultUiPreferences());
     render(<App />);
@@ -771,6 +774,7 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("dual-pane-b")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Project explorer" })).toBeInTheDocument();
     expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--dual-view");
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--immersive");
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
     fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
     const restored = screen.getByTestId("dsl-textarea") as HTMLTextAreaElement;
@@ -779,6 +783,52 @@ describe("App — dual viewer foundation", () => {
     expect(restored.selectionStart).toBe(12);
     expect(restored.selectionEnd).toBe(19);
     expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--dual-view");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
+  it("switches Dual View and Analysis atomically while preserving the editor and shell preferences", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    await command("New Diagram");
+    fireEvent.change(screen.getByTestId("dsl-textarea"), { target: { value: "participant Unsaved" } });
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    const workspace = document.querySelector(".app__workspace")!;
+    expect(workspace).toHaveClass("app__workspace--immersive");
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved");
+    expect(workspace).toHaveClass("app__workspace--immersive");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Analysis" }));
+    expect(screen.queryByTestId("dual-view")).toBeNull();
+    expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
+    expect(workspace).toHaveClass("app__workspace--immersive");
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved");
+    expect(screen.getByRole("combobox", { name: "Viewer A resource" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Dual View" }));
+    expect(screen.getByTestId("dual-view")).toBeInTheDocument();
+    expect(workspace).toHaveClass("app__workspace--immersive");
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+    fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
+    expect(workspace).not.toHaveClass("app__workspace--immersive");
+    expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
+  it("hides an already-collapsed Explorer without changing its persistent preference", async () => {
+    render(<App />);
+    await project();
+    await command("New Diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse project explorer" }));
+    const preferencesBefore = localStorage.getItem(UI_PREFERENCES_KEY);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByRole("button", { name: "Expand project explorer" })).toBeInTheDocument();
+    expect(document.querySelector(".app__workspace")).toHaveClass("app__workspace--immersive");
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+    fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
+    expect(document.querySelector(".app__workspace")).not.toHaveClass("app__workspace--immersive");
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
   });
 
