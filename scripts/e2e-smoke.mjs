@@ -2349,14 +2349,53 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await myWorkResourceOpeners.first().evaluate((button) => button.click());
       await page.keyboard.press("Tab");
       check("Disabled artifact openers do not change Explorer selection or rendered viewer", await page.locator('[data-testid="explorer-diagram"].explorer__resource--selected, [data-testid="explorer-diagram"].explorer__diagram--selected').textContent() === selectedWorkspaceResourceBeforeAttempt && await page.getByTestId("dual-pane-a").locator("h2").textContent() === viewerBeforeAttempt);
-      const explorerDiagramMenu = privateTree.getByTestId("diagram-menu-button").first();
-      await explorerDiagramMenu.click();
-      check("Explorer context menu remains keyboard-accessible during Dual View", await page.getByRole("menuitem").count() > 0);
-      await page.keyboard.press("Escape");
-      check("Dual View shows the Viewer A/B navigation hint", await page.getByTestId("comparison-navigation-hint").textContent() === "Usa los selectores Viewer A/B para cambiar los recursos mientras comparas");
-      const editorShell = page.locator(".app__pane--editor");
-      check("Dual View hides but keeps the editor mounted and leaves Explorer visible", await editorShell.count() === 1 && !(await editorShell.isVisible()) && await page.locator(".app__pane--explorer").isVisible());
-      check("Dual View shell fills the preview area without using the comparison preference", await page.locator(".app__workspace--dual-view").count() === 1 && await page.locator(".app__workspace--dual-view").evaluate((el) => getComputedStyle(el.querySelector(".app__pane--editor")).display === "none"));
+       check("Dual View shows the Viewer A/B navigation hint", await page.getByTestId("comparison-navigation-hint").textContent() === "Usa los selectores Viewer A/B para cambiar los recursos mientras comparas");
+       const editorShell = page.locator(".app__pane--editor");
+       const immersiveShellState = async () => page.locator(".app__workspace").evaluate((workspace) => {
+         const preview = workspace.querySelector(".app__pane--preview");
+         const editor = workspace.querySelector(".app__pane--editor");
+         const explorer = workspace.querySelector(".app__pane--explorer");
+         const splitters = [...workspace.querySelectorAll(":scope > .app__splitter")];
+         const rect = (element) => {
+           const box = element.getBoundingClientRect();
+           return { x: box.x, y: box.y, width: box.width, height: box.height };
+         };
+         return {
+           active: workspace.classList.contains("app__workspace--immersive"),
+           preview: rect(preview),
+           workspace: rect(workspace),
+           editorDisplay: getComputedStyle(editor).display,
+           explorerDisplay: explorer ? getComputedStyle(explorer).display : "collapsed",
+           splitterDisplays: splitters.map((splitter) => getComputedStyle(splitter).display),
+         };
+       });
+       const dualShell = await immersiveShellState();
+       check("Dual View hides editor, Explorer, and splitters while retaining the editor DOM", await editorShell.count() === 1 && dualShell.active && dualShell.editorDisplay === "none" && dualShell.explorerDisplay === "none" && dualShell.splitterDisplays.every((display) => display === "none"));
+       check("Dual View preview occupies the available workspace width", dualShell.preview.x === dualShell.workspace.x && Math.abs(dualShell.preview.width - dualShell.workspace.width) <= 1, JSON.stringify(dualShell));
+       check("Global toolbar remains visible in the immersive shell", await page.locator(".app__toolbar").isVisible());
+       check("Dual View retains project/workspace/context and per-view resource selectors", await page.getByRole("combobox", { name: "Dual View project" }).isVisible() && await page.getByRole("combobox", { name: "Dual View workspace" }).isVisible() && await page.getByRole("combobox", { name: "Dual View context" }).isVisible() && await page.getByRole("combobox", { name: "Dual View A resource" }).isVisible() && await page.getByRole("combobox", { name: "Dual View B resource" }).isVisible());
+       const dualContext = page.getByRole("combobox", { name: "Dual View context" });
+       const selectedContext = await dualContext.inputValue();
+       await dualContext.selectOption("shared");
+       await page.waitForFunction(() => document.querySelector('[aria-label="Dual View context"]')?.value === "shared", undefined, { timeout: UI_TIMEOUT_MS });
+       await page.getByRole("combobox", { name: "Dual View context" }).selectOption(selectedContext);
+       await page.waitForFunction((value) => document.querySelector('[aria-label="Dual View context"]')?.value === value, selectedContext, { timeout: UI_TIMEOUT_MS });
+       await dualView.getByRole("button", { name: "Switch to Analysis" }).click();
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       const analysisShell = await immersiveShellState();
+       check("Dual to Analysis switches without exposing the workspace shell", analysisShell.active && analysisShell.editorDisplay === "none" && analysisShell.explorerDisplay === "none" && analysisShell.splitterDisplays.every((display) => display === "none"));
+       check("Analysis keeps project, context, and Viewer A/B controls available", await page.getByRole("combobox", { name: "Comparison project" }).count() === 1 && await page.getByRole("combobox", { name: "Comparison context" }).isVisible() && await page.getByRole("combobox", { name: "Viewer A resource" }).isVisible() && await page.getByRole("combobox", { name: "Viewer B resource" }).isVisible());
+       await page.getByRole("button", { name: "Switch to Dual View" }).click();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Analysis to Dual returns directly to the immersive shell", (await immersiveShellState()).active && await page.locator(".app__toolbar").isVisible());
+       await page.getByRole("button", { name: "Fullscreen" }).click();
+       await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
+       await page.getByRole("button", { name: "Switch to Analysis" }).click();
+       await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Switching modes exits the previous Fullscreen target before replacing it", await page.evaluate(() => document.fullscreenElement === null) && (await immersiveShellState()).active);
+       await page.getByRole("button", { name: "Switch to Dual View" }).click();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       const dualFocus = dualView.getByRole("button", { name: "Focus" });
       await dualFocus.click();
       await page.locator(".app--dual-focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
@@ -2511,10 +2550,18 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Exit Focus" }).click();
       await page.locator(".app--dual-focus").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
       const afterFocus = await paneState();
-      check("Exiting Focus retains both actual SVG camera transforms and node selections", afterFocus.every((pane, index) => pane.transform === afterFullscreen[index].transform && pane.activeNode === afterFullscreen[index].activeNode),
-        `focus ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+       check("Exiting Focus retains both actual SVG camera transforms and node selections", afterFocus.every((pane, index) => pane.transform === afterFullscreen[index].transform && pane.activeNode === afterFullscreen[index].activeNode),
+         `focus ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFocus.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
 
-      await page.getByRole("button", { name: "Fullscreen" }).click();
+       await page.getByRole("button", { name: "Switch to Analysis" }).click();
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByRole("button", { name: "Switch to Dual View" }).click();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       const afterModeResume = await paneState();
+       check("Suspending Dual View for Analysis unmounts its in-memory sessions; resuming starts fresh", afterModeResume.some((pane, index) => pane.title !== afterFocus[index].title || pane.transform !== afterFocus[index].transform || pane.activeNode !== afterFocus[index].activeNode),
+         `before ${afterFocus.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → resumed ${afterModeResume.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+
+       await page.getByRole("button", { name: "Fullscreen" }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
       await page.getByRole("button", { name: "Close Dual View" }).click();
       await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
@@ -2539,15 +2586,12 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("Analysis retains semantic comparison summary", await page.getByTestId("semantic-comparison-summary").isVisible());
       check("Analysis starts with tabs disabled when editor preference hides it", await checkEditorTabsDisabled());
       check("Analysis disables SHARED and MY WORK artifact openers", await sharedResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button.disabled)) && await myWorkResourceOpeners.evaluateAll((buttons) => buttons.every((button) => button.disabled)));
-      await showEditor(page);
-      check("Analysis enables tabs when the editor becomes visible", !(await page.getByTestId("view-code").isDisabled()));
-      await page.getByTestId("view-overview").click();
-      await page.getByTestId("overview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      check("Analysis editor tab changes the visible editor content", await page.getByTestId("overview").isVisible());
+       check("Analysis keeps editor tabs disabled while the immersive shell is active", await checkEditorTabsDisabled() && await editorShell.evaluate((editor) => getComputedStyle(editor).display === "none"));
       await page.setViewportSize({ width: 480, height: 1000 });
       await delay(500);
       const responsiveLayoutEvidence = await page.evaluate(() => {
         const workspace = document.querySelector(".app__workspace");
+        const preview = workspace?.querySelector(".app__pane--preview");
         const editor = document.querySelector(".app__pane--editor");
         const tabs = ["view-code", "view-outline", "view-problems", "view-overview", "view-history", "view-changes"]
           .map((id) => ({ id, disabled: document.querySelector(`[data-testid="${id}"]`)?.disabled ?? null }));
@@ -2556,6 +2600,8 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           viewport: window.innerWidth,
           document: document.documentElement.clientWidth,
           workspace: workspace?.clientWidth ?? -1,
+          previewWidth: preview?.getBoundingClientRect().width ?? -1,
+          previewLeft: preview?.getBoundingClientRect().left ?? -1,
           reactMeasuredWorkspace: workspace?.getAttribute("data-layout-width"),
           breakpointHidden: workspace?.getAttribute("data-editor-responsive-hidden"),
           analysisOpen: workspace?.getAttribute("data-analysis-open"),
@@ -2568,15 +2614,24 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           tabs,
         };
       });
-      check("Analysis disables tabs when responsive layout hides the editor", await checkEditorTabsDisabled() && !(await editorShell.isVisible()), JSON.stringify(responsiveLayoutEvidence));
+       check("Analysis retains the immersive layout and full preview width at narrow viewport", await checkEditorTabsDisabled() && !(await editorShell.isVisible()) && await page.locator(".app__workspace--immersive").count() === 1 && responsiveLayoutEvidence.previewLeft === 0 && Math.abs(responsiveLayoutEvidence.previewWidth - responsiveLayoutEvidence.workspace) <= 1, JSON.stringify(responsiveLayoutEvidence));
       await page.setViewportSize({ width: 1440, height: 1100 });
       await delay(500);
-      await page.waitForFunction(() => !document.querySelector(".app__workspace")?.classList.contains("app__workspace--comparison-editor-hidden"), undefined, { timeout: UI_TIMEOUT_MS });
-      check("Analysis restores enabled tabs when responsive editor returns", !(await page.getByTestId("view-code").isDisabled()));
-      await page.getByRole("button", { name: "Close comparison" }).click();
-      check("Closing Analysis restores ordinary resource opening", await myWorkResourceOpeners.first().isEnabled());
+       await page.waitForFunction(() => document.querySelector(".app__workspace")?.classList.contains("app__workspace--immersive"), undefined, { timeout: UI_TIMEOUT_MS });
+       check("Analysis remains immersive when returning to a wide viewport", await checkEditorTabsDisabled() && !(await editorShell.isVisible()));
+       await page.getByRole("button", { name: "Close comparison" }).click();
+       check("Closing Analysis restores editor tabs and ordinary resource opening", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isEnabled());
+       const collapseExplorer = page.getByRole("button", { name: "Collapse project explorer" });
+       if (await collapseExplorer.isVisible()) await collapseExplorer.click();
+       const collapsedPreferenceBefore = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
+       await page.getByTestId("analysis-mode-button").click();
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Immersive Analysis hides an Explorer that was already collapsed", await page.locator(".app__workspace").evaluate((workspace) => getComputedStyle(workspace.querySelector(".app__explorer-restore")).display === "none"));
+       await page.getByRole("button", { name: "Close comparison" }).click();
+       check("Closing Analysis restores the previously collapsed Explorer without preference writes", await page.getByRole("button", { name: "Expand project explorer" }).isVisible() && await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences")) === collapsedPreferenceBefore);
+       await page.getByRole("button", { name: "Expand project explorer" }).click();
 
-      const proposalTitle = `Navigation return ${Date.now()}`;
+       const proposalTitle = `Navigation return ${Date.now()}`;
       const proposalResponse = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, {
         method: "POST",
         body: JSON.stringify({ sourcePrivateContextId: workId, resourceIds: [createdResources.get("alpha.seq")], title: proposalTitle, description: "Disposable navigation E2E proposal." }),
@@ -2587,33 +2642,32 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await openMyWorkContext(page, workId);
       const proposalsToggle = page.locator('[data-testid="explorer-proposals-toggle"]');
       if ((await proposalsToggle.getAttribute("aria-expanded")) !== "true") await proposalsToggle.click();
-      const proposalOpen = page.locator('[data-testid="explorer-proposal"]').filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open");
-      await proposalOpen.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await page.getByRole("button", { name: "Load diagram Alpha" }).click();
-      await page.getByTestId("compare-mode-button").click();
-      await proposalOpen.click();
+       const proposalOpen = page.locator('[data-testid="explorer-proposal"]').filter({ hasText: proposalTitle }).getByTestId("explorer-proposal-open");
+       await proposalOpen.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await privateTree.getByRole("button", { name: "Load diagram Alpha" }).click();
+       await page.getByTestId("compare-mode-button").click();
+       await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
       const restoreProposalDetails = page.getByRole("button", { name: "Show proposal details" });
       if (await restoreProposalDetails.isVisible()) await restoreProposalDetails.click();
       await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await waitForText(page.getByRole("region", { name: "Architectural Proposal" }), text => text.includes(proposalTitle), "Dual View proposal title");
       check("Proposal opened from Dual View is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
-      await page.goBack();
-      await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await openMyWorkContext(page, workId);
-      check("Returning from proposal restores Dual View and its disabled controls", await checkEditorTabsDisabled() && await myWorkResourceOpeners.first().isDisabled());
-      await page.getByRole("button", { name: "Close Dual View" }).click();
-      await page.getByTestId("analysis-mode-button").click();
-      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await proposalOpen.click();
+       await page.goBack();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Returning from proposal restores the immersive Dual View and its disabled editor controls", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1);
+       await page.getByRole("button", { name: "Close Dual View" }).click();
+       await page.getByTestId("analysis-mode-button").click();
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
       const restoreAnalysisProposalDetails = page.getByRole("button", { name: "Show proposal details" });
       if (await restoreAnalysisProposalDetails.isVisible()) await restoreAnalysisProposalDetails.click();
       await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await waitForText(page.getByRole("region", { name: "Architectural Proposal" }), text => text.includes(proposalTitle), "Analysis proposal title");
       check("Proposal opened from Analysis is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
-      await page.goBack();
-      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await openMyWorkContext(page, workId);
-      check("Returning from proposal restores Analysis and its controls for the visible editor", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isDisabled());
+       await page.goBack();
+       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const restoredAnalysis = await page.locator(".app__workspace").evaluate((workspace) => ({ className: workspace.className, tabsDisabled: workspace.getAttribute("data-editor-tabs-disabled"), proposalRegion: Boolean(document.querySelector('[aria-label="Architectural Proposal"]')) }));
+        check("Returning from proposal restores Analysis and its immersive controls", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1, JSON.stringify(restoredAnalysis));
       await page.getByRole("button", { name: "Close comparison" }).click();
 
       const focus = page.getByTestId("viewer-focus-toggle");

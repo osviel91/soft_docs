@@ -11,6 +11,7 @@ import DatabasePreview from "./DatabasePreview";
 import MarkdownView from "../notes/MarkdownView";
 import { analysisProvenanceLabel } from "../../domain/workspace/knowledge-context";
 import type { DiagramViewportTransform } from "./DiagramViewport";
+import type { ServerProject, ServerWorkspace } from "../../workspace/server/api-client";
 
 type Session = { option: ComparisonOption; source: string; representation: ResourceRepresentation };
 
@@ -116,11 +117,24 @@ function DualPane({ session, pane, snapshot, onSnapshot }: {
   </section>;
 }
 
-export default function DualView({ options, initialOptionId, projectId, onExit, focusMode = false, onToggleFocus = () => {}, fullscreen = false, onToggleFullscreen = () => {}, fullscreenError = false, rootRef }: {
+export default function DualView({ options, initialOptionId, projectId, activeProjectId, activeProjectName, serverProjects = [], serverWorkspaces = [], selectedServerWorkspaceId, onSelectServerWorkspace, activeContextId, privateWorkContexts = [], onSelectContext, onOpenServerProject, proposals = [], onOpenProposal, onExit, onSwitchToAnalysis, focusMode = false, onToggleFocus = () => {}, fullscreen = false, onToggleFullscreen = () => {}, fullscreenError = false, rootRef }: {
   options: ComparisonOption[];
   initialOptionId?: string;
   projectId: string;
+  activeProjectId?: string | null;
+  activeProjectName?: string | null;
+  serverProjects?: ServerProject[];
+  serverWorkspaces?: ServerWorkspace[];
+  selectedServerWorkspaceId?: string | null;
+  onSelectServerWorkspace?: (workspaceId: string) => void;
+  activeContextId?: string | null;
+  privateWorkContexts?: Array<{ id: string; name: string }>;
+  onSelectContext?: (contextId: string | null) => void;
+  onOpenServerProject?: (project: ServerProject) => void;
+  proposals?: Array<{ id: string; title: string }>;
+  onOpenProposal?: (proposalId: string) => void;
   onExit: () => void;
+  onSwitchToAnalysis?: () => void;
   focusMode?: boolean;
   onToggleFocus?: () => void;
   fullscreen?: boolean;
@@ -170,8 +184,16 @@ export default function DualView({ options, initialOptionId, projectId, onExit, 
   return <div ref={rootRef} className={`comparison dual-view${focusMode ? " dual-view--focus" : ""}`} data-testid="dual-view" aria-hidden={false}>
     <header className="comparison__toolbar"><strong>Dual View · {projectId}</strong>
       <span className="comparison__navigation-hint" role="status" data-testid="comparison-navigation-hint">Usa los selectores Viewer A/B para cambiar los recursos mientras comparas</span>
+      {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Dual View workspace" value={selectedServerWorkspaceId ?? ""} onChange={event => onSelectServerWorkspace(event.target.value)}>{serverWorkspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label> : null}
+      {onOpenServerProject ? <label>Project <select aria-label="Dual View project" value={activeProjectId ?? ""} onChange={event => { const project = serverProjects.find(item => item.id === event.target.value); if (project) onOpenServerProject(project); }}>
+        {activeProjectName && !serverProjects.some(project => project.id === activeProjectId) ? <option value={activeProjectId ?? ""}>{activeProjectName}</option> : null}
+        {serverProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+      </select></label> : null}
+      {onSelectContext && (activeContextId != null || privateWorkContexts.length > 0) ? <label>Context <select aria-label="Dual View context" value={activeContextId ? `my-work:${activeContextId}` : "shared"} onChange={event => onSelectContext(event.target.value === "shared" ? null : event.target.value.slice("my-work:".length))}><option value="shared">SHARED</option>{privateWorkContexts.map(context => <option key={context.id} value={`my-work:${context.id}`}>MY WORK · {context.name}</option>)}</select></label> : null}
       <button type="button" className="button button--ghost button--small" aria-pressed={focusMode} onClick={onToggleFocus}>{focusMode ? "Exit Focus" : "Focus"}</button>
       <button type="button" className="button button--ghost button--small" aria-pressed={fullscreen} title={fullscreenError ? "Fullscreen unavailable" : undefined} onClick={onToggleFullscreen}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button>
+      {onSwitchToAnalysis ? <button type="button" className="button button--ghost button--small" aria-label="Switch to Analysis" onClick={onSwitchToAnalysis}>Analysis</button> : null}
+      {onOpenProposal && proposals.length ? <label>Proposal <select aria-label="Open proposal" value="" onChange={event => { if (event.target.value) onOpenProposal(event.target.value); }}><option value="">Open proposal…</option>{proposals.map(proposal => <option key={proposal.id} value={proposal.id}>{proposal.title}</option>)}</select></label> : null}
       <label>Viewer A <select aria-label="Dual View A resource" value={a?.id ?? ""} onChange={event => select(0, event.target.value)}>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
       <label>Viewer B <select aria-label="Dual View B resource" value={b?.id ?? ""} onChange={event => select(1, event.target.value)}><option value="">Select a resource</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
       <button type="button" className="icon-button" aria-label="Swap dual viewers" onClick={swap} disabled={!a || !b}>⇄</button>

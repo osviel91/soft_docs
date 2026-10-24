@@ -729,6 +729,25 @@ export default function App() {
     setDualFocusMode(false);
     setDualViewOpen(false);
   };
+  const switchToAnalysis = async () => {
+    if (dualViewRef.current && document.fullscreenElement === dualViewRef.current) {
+      try { await document.exitFullscreen(); } catch { setFullscreenError(true); }
+    }
+    setDualViewOpen(false);
+    setDualFocusMode(false);
+    setComparisonMaximizedPane(null);
+    setComparisonMaximized(false);
+    setComparisonOpen(true);
+  };
+  const switchToDualView = async () => {
+    if (previewPaneRef.current && document.fullscreenElement === previewPaneRef.current) {
+      try { await document.exitFullscreen(); } catch { setFullscreenError(true); }
+    }
+    setComparisonOpen(false);
+    setComparisonMaximizedPane(null);
+    setComparisonMaximized(false);
+    setDualViewOpen(true);
+  };
   const [eventFlowView, setEventFlowView] = useState<EventFlowView>("flow");
   const eventFlowViewTouched = useRef(false);
   const [resizing, setResizing] = useState<"explorer" | "editor" | null>(null);
@@ -791,9 +810,9 @@ export default function App() {
   // These controls are disabled only when the editor they navigate is actually
   // hidden by the active shell. Keep this derived from the same state that drives
   // the workspace visibility classes below.
-  const editorHiddenByWorkspace = dualViewOpen || focusMode || comparisonEditorHidden || shellLayout.editorResponsiveHidden ||
-    (comparisonOpen && (comparisonMaximized || comparisonMaximizedPane !== null));
   const proposalNavigationActive = Boolean(architecturalProposalId || revisionProposalId || proposalReviewOpen);
+  const editorHiddenByWorkspace = dualViewOpen || (comparisonOpen && !proposalNavigationActive) || focusMode || comparisonEditorHidden || shellLayout.editorResponsiveHidden ||
+    (comparisonOpen && (comparisonMaximized || comparisonMaximizedPane !== null));
   const editorViewTabsDisabled = !proposalNavigationActive &&
     (dualViewOpen || (comparisonOpen && editorHiddenByWorkspace));
   const explorerResourceOpenDisabled = comparisonOpen || dualViewOpen;
@@ -820,6 +839,13 @@ export default function App() {
     navigationProjectResolved.current = null;
     setSelectedServerWorkspaceId(workspaceId);
   }, []);
+  const selectKnowledgeContext = useCallback((contextId: string | null): void => {
+    const project = server.active?.project;
+    if (!project) return;
+    setBrowserLocation({ projectId: project.id, contextId, resourceId: null, proposalId: null });
+    if (contextId === null) void server.openProject(project);
+    else void server.openPrivateWork(contextId).catch((error: unknown) => setTransferError(error instanceof Error ? error.message : "Could not open MY WORK."));
+  }, [server.active?.project, server.openPrivateWork, server.openProject, setBrowserLocation]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -1568,6 +1594,9 @@ export default function App() {
   const index = useProjectIndex(selectedProjectId, diagrams, notes, metadata);
   const sharedIndex = useProjectIndex(server.active?.project.id ?? null, sharedDiagrams, sharedNotes, sharedMetadata);
   const selectedComparisonResource: ComparisonResource | null = selectedDiagram ?? selectedNote;
+  const immersiveShellActive = !proposalNavigationActive && !proposalReviewOpen && (
+    dualViewOpen || (comparisonOpen && selectedComparisonResource !== null)
+  );
   const comparisonOptions: ComparisonOption[] = server.active && server.active.contextId && index && sharedIndex
     ? [
         ...[...sharedDiagrams, ...sharedNotes].map((resource) => {
@@ -3854,7 +3883,7 @@ export default function App() {
         <>
           <main
             ref={workspaceRef}
-            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${dualViewOpen && !proposalNavigationActive ? " app__workspace--dual-view" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${(comparisonEditorHidden && !proposalNavigationActive) || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
+            className={`app__workspace${focusMode ? " app__workspace--focus" : ""}${dualViewOpen && !proposalNavigationActive ? " app__workspace--dual-view" : ""}${immersiveShellActive ? " app__workspace--immersive" : ""}${comparisonMaximized || comparisonMaximizedPane ? " app__workspace--preview-maximized" : ""}${(comparisonEditorHidden && !proposalNavigationActive) || shellLayout.editorResponsiveHidden ? " app__workspace--comparison-editor-hidden" : ""}`}
             data-editor-responsive-hidden={shellLayout.editorResponsiveHidden}
             data-layout-width={workspaceSize.width}
             data-editor-tabs-disabled={editorViewTabsDisabled}
@@ -4364,7 +4393,7 @@ export default function App() {
                       {canPresentShared ? <button type="button" className="button button--ghost button--small" aria-label="Present" title="Present" data-testid="viewer-present-toggle" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                   ) : null}
-                   {comparisonEditorHidden || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
+                   {(comparisonEditorHidden && !proposalNavigationActive) || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {revisionProposalId && server.active?.contextId ? (
                     revisionComparisonResource ? <ProposalResourceComparison resource={revisionComparisonResource} mode={revisionComparisonMode} onModeChange={setRevisionComparisonMode} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" inspectorLabel="REVISION COMPARISON" headingLabel="EDITING" /> : <section className="proposal-inspector" aria-label="Revision comparison"><p className="governance-eyebrow">REVISION COMPARISON</p><p>Select a proposal artifact tab to compare MY WORK with the submitted version.</p></section>
                   ) : architecturalProposalId && view === "changes" && proposalInspector.proposalId === architecturalProposalId ? (
@@ -4378,7 +4407,7 @@ export default function App() {
                       <p>No document is open. Choose one from the Explorer or use Open a document.</p>
                     </section>
                    ) : dualViewOpen && !proposalNavigationActive ? (
-                     <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} onExit={closeDualView} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} />
+                      <DualView key={`${server.active?.project.id ?? selectedProjectId ?? "local"}:${server.active?.contextId ?? "shared"}`} options={dualViewOptions} initialOptionId={dualViewOptions.find(option => option.resource.id === selectedComparisonResource?.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id} projectId={server.active?.project.name ?? selectedProjectId ?? "Project"} activeProjectId={server.active?.project.id} activeProjectName={server.active?.project.name} serverProjects={server.projects} serverWorkspaces={serverWorkspaces} selectedServerWorkspaceId={selectedServerWorkspaceId} onSelectServerWorkspace={selectServerWorkspace} activeContextId={server.active?.contextId} privateWorkContexts={server.privateWorkContexts.map(({ id, name }) => ({ id, name }))} onSelectContext={server.active ? selectKnowledgeContext : undefined} onOpenServerProject={selectServerProject} proposals={server.architecturalProposals.filter(proposal => proposal.status === "open").map(({ id, title }) => ({ id, title }))} onOpenProposal={server.active ? openArchitecturalProposal : undefined} onExit={closeDualView} onSwitchToAnalysis={() => void switchToAnalysis()} focusMode={dualFocusMode} onToggleFocus={() => setDualFocusMode(value => !value)} fullscreen={previewFullscreen} onToggleFullscreen={() => void toggleDualFullscreen()} fullscreenError={fullscreenError} rootRef={node => { dualViewRef.current = node; }} />
                   ) : comparisonOpen && selectedComparisonResource ? (
                     <ComparisonView
                       primary={selectedComparisonResource}
@@ -4386,11 +4415,17 @@ export default function App() {
                       resources={[...allDiagrams, ...allNotes]}
                       index={index}
                       resourceIdForFile={resourceIdForFile}
-                      onExit={() => {
-                        setComparisonOpen(false);
-                        setComparisonMaximizedPane(null);
-                        setComparisonMaximized(false);
-                      }}
+                       onExit={() => {
+                         setComparisonOpen(false);
+                         setComparisonMaximizedPane(null);
+                         setComparisonMaximized(false);
+                       }}
+                       onSwitchToDualView={() => void switchToDualView()}
+                       proposals={server.architecturalProposals.filter(proposal => proposal.status === "open").map(({ id, title }) => ({ id, title }))}
+                       onOpenProposal={server.active ? openArchitecturalProposal : undefined}
+                       activeContextId={server.active?.contextId}
+                       privateWorkContexts={server.privateWorkContexts.map(({ id, name }) => ({ id, name }))}
+                       onSelectContext={server.active ? selectKnowledgeContext : undefined}
                       onOpenResource={openResourceById}
                       maximizedPane={comparisonMaximizedPane}
                       onMaximize={setComparisonMaximizedPane}

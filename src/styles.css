@@ -1035,12 +1035,21 @@ body {
   min-height: 0;
 }
 
-.app__workspace--dual-view .app__pane--editor,
-.app__workspace--dual-view > .app__splitter--editor {
-  display: none;
-}
 .app__workspace--dual-view .app__pane--preview {
   flex: 1 1 0;
+  min-width: 0;
+  border-left: 0;
+}
+.app__workspace--immersive .app__pane--explorer,
+.app__workspace--immersive .app__explorer-restore,
+.app__workspace--immersive > .app__splitter,
+.app__workspace--immersive > .app__splitter--editor,
+.app__workspace--immersive .app__pane--editor,
+.app__workspace--immersive .editor-restore-button {
+  display: none;
+}
+.app__workspace--immersive .app__pane--preview {
+  flex: 1 1 100%;
   min-width: 0;
   border-left: 0;
 }
@@ -1049,10 +1058,6 @@ body {
 .dual-view:fullscreen { width: 100vw; height: 100vh; background: var(--bg); display: flex; }
 .dual-view:fullscreen .comparison__content { flex: 1 1 auto; min-height: 0; }
 .dual-view:fullscreen .comparison__panes { height: 100%; }
-.app--dual-focus .app__workspace--dual-view .app__pane--explorer,
-.app--dual-focus .app__workspace--dual-view .app__explorer-restore,
-.app--dual-focus .app__workspace--dual-view .app__splitter:not(.app__splitter--editor) { display: none; }
-
 .app__workspace--preview-maximized .app__pane--explorer,
 .app__workspace--preview-maximized .app__pane--editor,
 .app__workspace--preview-maximized .app__splitter,
