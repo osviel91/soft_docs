@@ -811,6 +811,7 @@ export default function App() {
   // hidden by the active shell. Keep this derived from the same state that drives
   // the workspace visibility classes below.
   const proposalNavigationActive = Boolean(architecturalProposalId || revisionProposalId || proposalReviewOpen);
+  const immersiveModeSuspended = proposalNavigationActive && (dualViewOpen || comparisonOpen);
   const editorHiddenByWorkspace = dualViewOpen || (comparisonOpen && !proposalNavigationActive) || focusMode || comparisonEditorHidden || shellLayout.editorResponsiveHidden ||
     (comparisonOpen && (comparisonMaximized || comparisonMaximizedPane !== null));
   const editorViewTabsDisabled = !proposalNavigationActive &&
@@ -4393,7 +4394,7 @@ export default function App() {
                       {canPresentShared ? <button type="button" className="button button--ghost button--small" aria-label="Present" title="Present" data-testid="viewer-present-toggle" onClick={() => setPresentationActive(true)}>Present</button> : null}
                     </div>
                   ) : null}
-                   {(comparisonEditorHidden && !proposalNavigationActive) || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
+                   {(comparisonEditorHidden && !immersiveModeSuspended) || shellLayout.editorResponsiveHidden ? <button type="button" className="editor-restore-button" disabled={shellLayout.editorResponsiveHidden} onClick={() => setComparisonEditorHidden(false)} aria-label={shellLayout.editorResponsiveHidden ? "Editor collapsed for narrow window" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"} title={shellLayout.editorResponsiveHidden ? "Widen the window to restore the editor" : architecturalProposalId && view === "changes" ? "Show proposal details" : "Show editor"}>›</button> : null}
                   {revisionProposalId && server.active?.contextId ? (
                     revisionComparisonResource ? <ProposalResourceComparison resource={revisionComparisonResource} mode={revisionComparisonMode} onModeChange={setRevisionComparisonMode} beforeLabel="SUBMITTED VERSION" afterLabel="MY WORK NOW" inspectorLabel="REVISION COMPARISON" headingLabel="EDITING" /> : <section className="proposal-inspector" aria-label="Revision comparison"><p className="governance-eyebrow">REVISION COMPARISON</p><p>Select a proposal artifact tab to compare MY WORK with the submitted version.</p></section>
                   ) : architecturalProposalId && view === "changes" && proposalInspector.proposalId === architecturalProposalId ? (
