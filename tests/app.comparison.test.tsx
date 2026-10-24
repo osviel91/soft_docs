@@ -9,6 +9,7 @@ import type { ResourceDiff } from "../src/domain/diff/resource-diff";
 import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../src/workspace/server/api-client";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "../src/workspace/ui-preferences";
+import { createVisualSessionController } from "../src/features/preview/visual-session-controller";
 
 afterEach(() => {
   cleanup();
@@ -50,6 +51,37 @@ async function importResources(project: Project, diagrams: DiagramFile[], notes:
 
 const revisionResource: RevisionComparisonResource = { projectId: "project", resourceId: "stable-resource", contextId: null, path: "model.concept", type: "conceptual" };
 const revisionIndex = { projectId: "project", resources: [], diagrams: [], eventFlows: [], documents: [], participants: [], usages: [], references: [], diagnostics: [] } as ProjectIndex;
+
+function visualControllerFor(options: ComparisonOption[], initialOptionId?: string) {
+  const first = options[0];
+  const knowledgeContext = first?.context.knowledgeContext;
+  const scope = {
+    projectId: first?.context.projectId ?? "project",
+    contextKind: knowledgeContext?.kind ?? "local",
+    contextId: knowledgeContext?.id ?? "local:project",
+  };
+  const controller = createVisualSessionController(scope, initialOptionId);
+  controller.reconcile({
+    scope,
+    availability: "ready",
+    initialOptionId,
+    options: visualSessionDescriptors(options),
+  });
+  return controller;
+}
+
+function visualSessionDescriptors(options: ComparisonOption[]) {
+  return options.map(option => ({
+    optionId: option.id,
+    identity: {
+      projectId: option.context.projectId,
+      contextKind: option.context.knowledgeContext.kind,
+      contextId: option.context.knowledgeContext.id,
+      resourceId: option.resourceId,
+    },
+    sourceFingerprint: fingerprintVisualSource(option.source),
+  }));
+}
 
 function revisionSnapshot(revision: number, content: string, type: "conceptual" | "database" = "conceptual"): ServerResourceRevision {
   return { ...revisionResource, revision, type, representation: type, content, authoredBy: { kind: "user", userId: "owner", subjectUserId: "owner" }, createdAt: `2026-01-0${revision}T00:00:00.000Z` };
@@ -213,7 +245,7 @@ describe("App — dual viewer foundation", () => {
       return { id, resource, resourceId: id, representation: "conceptual", source, context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: id }, label: id };
     };
     const options = [option("one", 'concept alpha "Alpha"'), option("two", 'concept beta "Beta"'), option("three", 'concept gamma "Gamma"')];
-    render(<DualView options={options} initialOptionId="one" projectId="project" onExit={() => {}} />);
+    render(<DualView options={options} controller={visualControllerFor(options, "one")} projectId="project" onExit={() => {}} />);
     const paneA = () => screen.getByTestId("dual-pane-a");
     const paneB = () => screen.getByTestId("dual-pane-b");
     await waitFor(() => expect(paneA().querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
@@ -240,7 +272,8 @@ describe("App — dual viewer foundation", () => {
     };
     const first = option("stable-resource", 'concept alpha "Alpha"');
     const second = option("other-resource", 'concept beta "Beta"');
-    const view = render(<DualView options={[first, second]} initialOptionId={first.id} projectId="project" onExit={() => {}} />);
+    const controller = visualControllerFor([first, second], first.id);
+    const view = render(<DualView options={[first, second]} controller={controller} projectId="project" onExit={() => {}} />);
     const paneA = () => screen.getByTestId("dual-pane-a");
     await waitFor(() => expect(paneA().querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
     fireEvent.click(within(paneA()).getByTestId("zoom-in"));
@@ -250,7 +283,9 @@ describe("App — dual viewer foundation", () => {
     const priorSnapshot: VisualSessionSnapshot = { sourceFingerprint: fingerprintVisualSource(first.source), transform: { x: 23, y: -14, scale: 1.25 }, selectedNodeId: "alpha" };
     expect(fingerprintVisualSource(first.source)).not.toBe(fingerprintVisualSource('concept beta "Beta"'));
     expect(compatibleVisualSnapshot(priorSnapshot, 'concept beta "Beta"')).toBeNull();
-    view.rerender(<DualView options={[option("stable-resource", 'concept beta "Beta"'), second]} initialOptionId={first.id} projectId="project" onExit={() => {}} />);
+    const updatedOptions = [option("stable-resource", 'concept beta "Beta"'), second];
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", initialOptionId: first.id, options: visualSessionDescriptors(updatedOptions) });
+    view.rerender(<DualView options={updatedOptions} controller={controller} projectId="project" onExit={() => {}} />);
     await waitFor(() => expect(paneA().querySelector('[data-concept-id="beta"]')).not.toBeNull());
     expect(paneA().querySelector('[data-concept-id="alpha"]')).toBeNull();
     const invalidatedTransform = paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style");
@@ -274,7 +309,7 @@ describe("App — dual viewer foundation", () => {
     const same: ComparisonOption = { id: "same", resource, resourceId: "same-resource", representation: "conceptual", source, context, label: "same" };
     const otherResource: DiagramFile = { id: "other", name: "other.concept", projectId: "project", source: 'concept other "Other"' };
     const other: ComparisonOption = { id: "other", resource: otherResource, resourceId: "other", representation: "conceptual", source: otherResource.source, context: { ...context, resourceId: "other" }, label: "other" };
-    render(<DualView options={[same, other]} initialOptionId="same" projectId="project" onExit={() => {}} />);
+    render(<DualView options={[same, other]} controller={visualControllerFor([same, other], "same")} projectId="project" onExit={() => {}} />);
     const selectB = screen.getByRole("combobox", { name: "Dual View B resource" });
     fireEvent.change(selectB, { target: { value: "same" } });
     const paneA = () => screen.getByTestId("dual-pane-a");
@@ -427,10 +462,13 @@ describe("App — dual viewer foundation", () => {
       { id: "shared:r1", resource: shared, resourceId: "r1", representation: "sequence", source: shared.source, label: "SHARED · checkout.seq", context: { projectId: "p", knowledgeContext: { kind: "shared", id: "shared:p", projectId: "p" }, index, resourceId: "r1" } },
       { id: "my-work:work1:r1", resource: work, resourceId: "r1", representation: "sequence", source: work.source, label: "MY WORK · Draft", context: { projectId: "p", knowledgeContext: { kind: "private-work", id: "work1", projectId: "p", ownerUserId: "u", name: "Draft", lifecycle: "active", createdAt: new Date(0), updatedAt: new Date(0) }, index, resourceId: "r1" } },
     ];
-    const view = render(<DualView options={options} initialOptionId="my-work:work1:r1" projectId="p" onExit={() => {}} />);
+    const controller = visualControllerFor(options, "my-work:work1:r1");
+    const view = render(<DualView options={options} controller={controller} projectId="p" onExit={() => {}} />);
     expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("MY WORK · Draft");
     expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("SHARED");
-    view.rerender(<DualView options={[options[0]!]} initialOptionId="my-work:work1:r1" projectId="p" onExit={() => {}} />);
+    const remainingOptions = [options[0]!];
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: visualSessionDescriptors(remainingOptions) });
+    view.rerender(<DualView options={remainingOptions} controller={controller} projectId="p" onExit={() => {}} />);
     await waitFor(() => expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("SHARED"));
     expect(screen.queryByText("participant Work")).toBeNull();
   });
@@ -815,6 +853,118 @@ describe("App — dual viewer foundation", () => {
     expect(workspace).not.toHaveClass("app__workspace--immersive");
     expect(screen.getByTestId("dsl-textarea")).toHaveValue("participant Unsaved");
     expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBe(preferencesBefore);
+  });
+
+  it("restores real SVG camera and node selection through an Analysis unmount", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "session-alpha", name: "session-alpha.concept", projectId: "session-project", source: 'concept alpha "Alpha"\nconcept beta "Beta"' },
+      { id: "session-gamma", name: "session-gamma.concept", projectId: "session-project", source: 'concept gamma "Gamma"' },
+    ];
+    await importResources({ id: "session-project", name: "Session project", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    const paneA = () => screen.getByTestId("dual-pane-a");
+    await waitFor(() => expect(paneA().querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    fireEvent.click(paneA().querySelector('[data-concept-id="alpha"]')!);
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    const before = {
+      transform: paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style"),
+      selected: paneA().querySelector(".svg-node--active")?.getAttribute("data-concept-id"),
+    };
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Analysis" }));
+    expect(screen.queryByTestId("dual-view")).toBeNull();
+    expect(screen.getByTestId("comparison-view")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Dual View" }));
+    await waitFor(() => expect(paneA().querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active"));
+    expect(paneA().querySelector('[data-testid="conceptual-preview-svg"]')?.getAttribute("style")).toBe(before.transform);
+    expect(paneA().querySelector(".svg-node--active")?.getAttribute("data-concept-id")).toBe(before.selected);
+  });
+
+  it("blocks restored SVG state until authorization is ready, then purges revoked resources", async () => {
+    const source = 'concept alpha "Alpha"\nconcept beta "Beta"';
+    const diagram: DiagramFile = { id: "authorized", name: "authorized.concept", projectId: "p1", source };
+    const other: DiagramFile = { id: "other", name: "other.concept", projectId: "p1", source: 'concept gamma "Gamma"' };
+    const options: ComparisonOption[] = [diagram, other].map(item => ({
+      id: item.id, resource: item, resourceId: item.id, representation: "conceptual", source: item.source,
+      context: { projectId: "p1", knowledgeContext: { kind: "local", id: "local:p1", projectId: "p1" }, index: revisionIndex, resourceId: item.id }, label: item.name,
+    }));
+    const controller = visualControllerFor(options, diagram.id);
+    controller.select("a", visualSessionDescriptors(options)[0]!);
+    controller.saveSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", {
+      sourceFingerprint: fingerprintVisualSource(source), transform: { x: 41, y: -17, scale: 1.5 }, selectedNodeId: "alpha",
+    }, controller.captureGeneration());
+    const callbackFromBeforeLoading = controller.captureGeneration();
+    const view = render(<DualView options={options} controller={controller} projectId="P1" onExit={() => {}} />);
+    const renderedSvg = () => screen.queryByTestId("dual-pane-a")?.querySelector("[data-testid='conceptual-preview-svg']");
+    await waitFor(() => expect(renderedSvg()).not.toBeNull());
+    expect(screen.getByRole("combobox", { name: "Dual View A resource" })).toHaveValue(diagram.id);
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "loading" });
+    view.rerender(<DualView options={[]} controller={controller} availability="loading" projectId="P1" onExit={() => {}} />);
+    expect(screen.getByText("Loading authorized resources…")).toBeInTheDocument();
+    expect(renderedSvg()).toBeUndefined();
+    expect(controller.getState().selections.a?.optionId).toBe(diagram.id);
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "unavailable" });
+    view.rerender(<DualView options={[]} controller={controller} availability="unavailable" projectId="P1" onExit={() => {}} />);
+    expect(screen.getByText("Dual View resources are unavailable.")).toBeInTheDocument();
+    expect(renderedSvg()).toBeUndefined();
+    expect(controller.getSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", fingerprintVisualSource(source))).toBeNull();
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: visualSessionDescriptors(options) });
+    view.rerender(<DualView options={options} controller={controller} availability="ready" projectId="P1" onExit={() => {}} />);
+    await waitFor(() => expect(renderedSvg()).not.toBeNull());
+    expect(screen.getByRole("combobox", { name: "Dual View A resource" })).toHaveValue(diagram.id);
+    expect(renderedSvg()?.getAttribute("style")).toContain("translate(41px, -17px) scale(1.5)");
+    expect(screen.getByTestId("dual-pane-a").querySelector('[data-concept-id="alpha"]')).toHaveClass("svg-node--active");
+
+    const editedSource = 'concept alpha "Edited Alpha"\nconcept beta "Beta"';
+    const editedDiagram: DiagramFile = { ...diagram, source: editedSource };
+    const editedOptions = [{ ...options[0]!, resource: editedDiagram, source: editedSource }, options[1]!];
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: visualSessionDescriptors(editedOptions) });
+    view.rerender(<DualView options={editedOptions} controller={controller} availability="ready" projectId="P1" onExit={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("Edited Alpha"));
+    expect(renderedSvg()?.getAttribute("style")).not.toContain("translate(41px, -17px) scale(1.5)");
+    expect(screen.getByTestId("dual-pane-a").querySelector(".svg-node--active")).toBeNull();
+    expect([...controller.getState().snapshots].some(([key, value]) => key.includes('"authorized"') && value.sourceFingerprint === fingerprintVisualSource(source))).toBe(false);
+    expect(controller.saveSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", {
+      sourceFingerprint: fingerprintVisualSource(source), transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha",
+    }, callbackFromBeforeLoading)).toBe(false);
+
+    const authorizedOptions = [editedOptions[1]!];
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: visualSessionDescriptors(authorizedOptions) });
+    view.rerender(<DualView options={authorizedOptions} controller={controller} availability="ready" projectId="P1" onExit={() => {}} />);
+    expect([...controller.getState().snapshots.keys()].some(key => key.includes('"authorized"'))).toBe(false);
+    expect(controller.getState().selections.a?.identity.resourceId).not.toBe(diagram.id);
+    expect(screen.getByRole("combobox", { name: "Dual View A resource" })).toHaveValue(other.id);
+    expect(screen.queryByText("Alpha")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("Gamma"));
+  });
+
+  it("invalidates an incompatible fingerprint and isolates a suspended scope from stale callbacks", () => {
+    const first = createVisualSessionController({ projectId: "p1", contextKind: "shared", contextId: "shared:p1" });
+    const old = { optionId: "alpha", identity: { projectId: "p1", contextKind: "shared", contextId: "shared:p1", resourceId: "alpha" }, sourceFingerprint: fingerprintVisualSource('concept alpha "Alpha"') };
+    first.reconcile({ scope: first.getState().scope, availability: "ready", options: [old] });
+    first.select("a", old);
+    const oldGeneration = first.captureGeneration();
+    first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, transform: { x: 22, y: 3, scale: 2 }, selectedNodeId: "alpha" }, oldGeneration);
+    first.suspend();
+
+    const changedFingerprint = { ...old, sourceFingerprint: fingerprintVisualSource('concept alpha "Renamed"') };
+    const changedScope = { projectId: "p2", contextKind: "private-work", contextId: "work-p2" };
+    const next = first.reconcile({ scope: changedScope, availability: "ready", options: [{ ...changedFingerprint, identity: { ...changedFingerprint.identity, ...changedScope } }] });
+    expect(next.snapshots.size).toBe(0);
+    expect(next.selections.a?.identity).toEqual({ ...changedFingerprint.identity, ...changedScope });
+    expect(first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha" }, oldGeneration)).toBe(false);
+    expect(first.getState().snapshots.size).toBe(0);
+
+    first.close();
+    const reopened = createVisualSessionController(changedScope);
+    reopened.reconcile({ scope: changedScope, availability: "ready", options: [] });
+    expect(reopened.getState().selections).toEqual({ a: null, b: null });
+    expect(reopened.getState().snapshots.size).toBe(0);
   });
 
   it("hides an already-collapsed Explorer without changing its persistent preference", async () => {
