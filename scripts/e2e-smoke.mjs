@@ -2243,6 +2243,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
             "Gateway -> Store: Read",
             "Store --> Gateway: Result",
             "Gateway --> Browser: Response",
+            "Browser -> Browser: Retry locally",
           ].join("\n"),
         },
         {
@@ -2644,6 +2645,73 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         initial[0].title === "Alpha" && initial[1].title === "Beta" && initial.every((pane) => pane.nodes > 0 && pane.svgText.length > 0),
         initial.map(({ title, nodes, zoom }) => `${title}: ${nodes} nodes at ${zoom}`).join("; "),
       );
+      const firstSequenceMessage = panes[0].locator('[data-message-node-id]').first();
+      const firstMessageId = await firstSequenceMessage.getAttribute("data-message-node-id");
+      const firstMessageTargets = [
+        firstSequenceMessage.locator("[data-sequence-number] circle"),
+        firstSequenceMessage.locator('line[data-node-id]'),
+        firstSequenceMessage.locator("polygon").first(),
+        firstSequenceMessage.locator(":scope > text").first(),
+      ];
+      let sequenceSelectionTargetsWork = true;
+      for (const target of firstMessageTargets) {
+        await target.click({ force: true });
+        try {
+          await page.waitForFunction((id) => document.querySelector(`[data-testid="dual-pane-a"] .svg-node--active[data-node-id="${CSS.escape(id)}"]`), firstMessageId, { timeout: UI_TIMEOUT_MS });
+        } catch {
+          throw new Error(`Message target click did not select ${firstMessageId}; target=${await target.evaluate((element) => element.outerHTML)}, active=${await panes[0].locator(".svg-node--active").evaluateAll((elements) => elements.map((element) => element.outerHTML))}`);
+        }
+        sequenceSelectionTargetsWork &&= await panes[0].locator('.svg-node--active[data-node-id]').getAttribute("data-node-id") === firstMessageId;
+      }
+      const selfLoop = panes[0].locator('[data-message-label="Retry locally"]');
+      const selfLoopId = await selfLoop.getAttribute("data-message-node-id");
+      const selfLoopTargets = [selfLoop.locator("[data-sequence-number] circle"), selfLoop.locator("path[data-node-id]")];
+      for (let index = 0; index < selfLoopTargets.length; index += 1) {
+        const target = selfLoopTargets[index];
+        await target.click(index === 1 ? { force: true, position: { x: 20, y: 1 } } : { force: true });
+        try {
+          await page.waitForFunction((id) => document.querySelector(`[data-testid="dual-pane-a"] .svg-node--active[data-node-id="${CSS.escape(id)}"]`), selfLoopId, { timeout: UI_TIMEOUT_MS });
+        } catch {
+          throw new Error(`Self-loop target click did not select ${selfLoopId}; target=${await target.evaluate((element) => element.outerHTML)}, active=${await panes[0].locator(".svg-node--active").evaluateAll((elements) => elements.map((element) => element.outerHTML))}`);
+        }
+      }
+      const sequenceCameraAfterSelections = await paneState();
+      check("Number, line, arrow, label and self-loop segments select their common message without moving either camera", sequenceSelectionTargetsWork && sequenceCameraAfterSelections.every((pane, index) => pane.transform === initial[index].transform));
+      const sequenceContext = panes[0].getByTestId("message-endpoints-hint");
+      const sequenceContextState = await sequenceContext.evaluate((element) => {
+        const hint = element.getBoundingClientRect();
+        const viewport = element.closest(".viewport").getBoundingClientRect();
+        return { text: element.textContent, fits: hint.left >= viewport.left && hint.top >= viewport.top && hint.right <= viewport.right && hint.bottom <= viewport.bottom && element.scrollHeight <= element.clientHeight };
+      });
+      check("Selected message context includes its label and endpoints without clipping", sequenceContextState.text.includes("Retry locally") && sequenceContextState.text.includes("From Browser → To Browser") && sequenceContextState.fits, JSON.stringify(sequenceContextState));
+      const activeBeforePan = await panes[0].locator('.svg-node--active[data-node-id]').getAttribute("data-node-id");
+      const panTargetBox = await firstSequenceMessage.boundingBox();
+      if (!panTargetBox) throw new Error("Could not measure the message target for pan regression.");
+      const panStart = { x: panTargetBox.x + panTargetBox.width / 2, y: panTargetBox.y + panTargetBox.height / 2 };
+      await page.mouse.move(panStart.x, panStart.y);
+      await page.mouse.down();
+      await page.mouse.move(panStart.x + 28, panStart.y + 18, { steps: 3 });
+      await page.mouse.up();
+      const panCamera = await paneState();
+      check("Dragging from a message pans without selecting it", panCamera[0].transform !== initial[0].transform && await panes[0].locator('.svg-node--active[data-node-id]').getAttribute("data-node-id") === activeBeforePan);
+      await page.mouse.move(panStart.x + 28, panStart.y + 18);
+      await page.mouse.down();
+      await page.mouse.move(panStart.x, panStart.y, { steps: 3 });
+      await page.mouse.up();
+      const participantLifeline = panes[0].locator('g[data-participant-id="Browser"] line[stroke-dasharray]').first();
+      const participantId = await panes[0].locator('g[data-participant-id="Browser"] [data-node-id]').getAttribute("data-node-id");
+      await participantLifeline.click({ force: true });
+      await page.waitForFunction((id) => document.querySelector(`[data-testid="dual-pane-a"] .svg-node--active[data-node-id="${CSS.escape(id)}"]`), participantId, { timeout: UI_TIMEOUT_MS });
+      let participantCameraStable = true;
+      for (let zoom = 0; zoom < 3; zoom += 1) {
+        await panes[0].getByTestId("zoom-in").click();
+        const beforeParticipantTap = await paneState();
+        await participantLifeline.click({ force: true });
+        const afterParticipantTap = await paneState();
+        participantCameraStable &&= beforeParticipantTap.every((pane, index) => pane.transform === afterParticipantTap[index].transform);
+      }
+      for (let zoom = 0; zoom < 3; zoom += 1) await panes[0].getByTestId("zoom-out").click();
+      check("Participant lifeline selection is stable at multiple zoom levels and does not change either camera", participantCameraStable);
       await page.getByRole("button", { name: "Maximize Viewer A" }).click();
       await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "a", undefined, { timeout: UI_TIMEOUT_MS });
       const cameraWhileMaximized = await paneState();
@@ -2766,7 +2834,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
 
       await panes[1].getByTestId("zoom-in").click();
       await panes[1].getByTestId("zoom-in").click();
-      await panes[1].locator("g.participant[data-node-id]").last().click();
+      await panes[1].locator("g.participant[data-node-id]").last().locator("rect[data-node-id]").click();
       await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-b"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
       const beforeSwap = await paneState();
       check(
@@ -2810,7 +2878,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await panes[0].locator("g.participant[data-node-id]").first().click();
       await panes[1].getByTestId("zoom-in").click();
       await panes[1].getByTestId("zoom-in").click();
-      await panes[1].locator("g.participant[data-node-id]").last().click();
+      await panes[1].locator("g.participant[data-node-id]").last().locator("rect[data-node-id]").click();
       await page.waitForFunction(() => document.querySelectorAll('[data-testid="dual-pane-a"] .svg-node--active').length === 1 && document.querySelectorAll('[data-testid="dual-pane-b"] .svg-node--active').length === 1, undefined, { timeout: UI_TIMEOUT_MS });
       const duplicateBeforeSwap = await paneState();
       check("The same artifact can occupy A and B with independent cameras and node selections",
@@ -2830,7 +2898,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 
       await panes[0].getByTestId("zoom-in").click();
-      await panes[0].locator("g.participant[data-node-id]").last().click();
+      await panes[0].locator("g.participant[data-node-id]").last().locator("rect[data-node-id]").click();
       await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="dual-pane-a"] .svg-node--active')), undefined, { timeout: UI_TIMEOUT_MS });
       const beforeFocus = await paneState();
       await page.getByRole("button", { name: "Focus" }).click();
@@ -2916,7 +2984,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
          await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
         await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
         await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
-        await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
+        await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().locator("rect[data-node-id]").click();
         await page.waitForFunction(() => document.querySelectorAll("[data-testid^='dual-pane-'] .svg-node--active").length === 2, undefined, { timeout: UI_TIMEOUT_MS });
         const contextBeforeSwitch = await paneState();
          const contextSelector = page.getByRole("combobox", { name: "Dual View context" });
@@ -3120,7 +3188,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
         await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
         await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
-         await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
+          await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().locator("rect[data-node-id]").click();
         await page.waitForFunction(() => document.querySelectorAll("[data-testid^='dual-pane-'] .svg-node--active").length === 2, undefined, { timeout: UI_TIMEOUT_MS });
          await viewerA.selectOption(longNoteId);
          await viewerB.selectOption(longNoteId);

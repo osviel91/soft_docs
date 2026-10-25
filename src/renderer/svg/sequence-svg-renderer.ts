@@ -318,7 +318,9 @@ function renderSelfMessage(
   const dashed = msg.lineStyle === "dashed" ? ' stroke-dasharray="5 4"' : "";
 
   // Rounded joins keep the three turns of the cycle from reading as spikes.
-  const path = `<path d="M${x.toFixed(2)},${top.toFixed(2)} L${right.toFixed(2)},${top.toFixed(2)} L${right.toFixed(2)},${bottom.toFixed(2)} L${x.toFixed(2)},${bottom.toFixed(2)}" fill="none" stroke="${palette.ink}" stroke-width="${STROKE_WIDTH}" stroke-linejoin="round"${dashed}${nodeIdAttribute(msg.nodeId)}/>`;
+  const pathData = `M${x.toFixed(2)},${top.toFixed(2)} L${right.toFixed(2)},${top.toFixed(2)} L${right.toFixed(2)},${bottom.toFixed(2)} L${x.toFixed(2)},${bottom.toFixed(2)}`;
+  const hitPath = `<path class="sequence-message__hit" d="${pathData}" fill="none" stroke="transparent" stroke-width="14" stroke-linejoin="round" vector-effect="non-scaling-stroke" pointer-events="stroke"/>`;
+  const path = `<path d="${pathData}" fill="none" stroke="${palette.ink}" stroke-width="${STROKE_WIDTH}" stroke-linejoin="round"${dashed}${nodeIdAttribute(msg.nodeId)}/>`;
 
   // The message comes back to the originating lifeline, so any head points left.
   // A bidirectional loop also marks the point where it leaves the lifeline.
@@ -340,7 +342,7 @@ function renderSelfMessage(
     palette,
   );
 
-  return `${path}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}`;
+  return `${hitPath}${path}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}`;
 }
 
 /** A restrained text-labelled affordance; semantics never rely on colour alone. */
@@ -389,7 +391,7 @@ function renderMessage(
   const endpoints = ` data-message-from="${escapeXml(msg.from)}" data-message-to="${escapeXml(msg.to)}"`;
   // A self-message is a loop, not a horizontal arrow.
   if (msg.selfLoop)
-    return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${msg.semantics?.messageRef ? ` data-semantic-message-id="${escapeXml(msg.semantics.messageRef)}"` : msg.semantics ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"` : ""}>${renderSelfMessage(msg, number, palette)}</g>`;
+    return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${msg.nodeId ? ` data-message-node-id="${escapeXml(msg.nodeId)}"` : ""} data-message-label="${escapeXml(msg.label)}"${msg.semantics?.messageRef ? ` data-semantic-message-id="${escapeXml(msg.semantics.messageRef)}"` : msg.semantics ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"` : ""}>${renderSelfMessage(msg, number, palette)}</g>`;
 
   const dashed = msg.lineStyle === "dashed" ? ' stroke-dasharray="5 4"' : "";
   // `dashed` must sit inside the tag, before the self-closing slash: emitting it
@@ -428,7 +430,8 @@ function renderMessage(
     : msg.semantics
       ? ` data-semantic-message-name="${escapeXml(msg.semantics.name)}"`
       : "";
-  return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${semanticId}>${line}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}</g>`;
+  const hitLine = `<line class="sequence-message__hit" x1="${msg.startX.toFixed(2)}" y1="${msg.y.toFixed(2)}" x2="${msg.endX.toFixed(2)}" y2="${msg.y.toFixed(2)}" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke" pointer-events="stroke"/>`;
+  return `<g class="sequence-message" data-sequence-message="${number}"${endpoints}${msg.nodeId ? ` data-message-node-id="${escapeXml(msg.nodeId)}"` : ""} data-message-label="${escapeXml(msg.label)}"${semanticId}>${hitLine}${line}${head}${renderSequenceBadge(msg, number, palette)}${label}${semantic}</g>`;
 }
 
 /** Size of the dog-ear fold on a note's top-right corner, in pixels. */
