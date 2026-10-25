@@ -8,7 +8,7 @@
  * keeps link resolution out of the renderer (which must not know about the
  * workspace) and out of every individual anchor.
  */
-import { useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import { useMemo, type MouseEvent as ReactMouseEvent, type Ref, type UIEventHandler } from "react";
 import {
   renderMarkdownToHtml,
   type MarkdownOptions,
@@ -27,6 +27,9 @@ export interface MarkdownViewProps {
   onOpenDiagramLink?: (target: string) => void;
   /** Called with a project-relative href when the user activates the link. */
   onOpenResourceLink?: (href: string) => void;
+  /** Optional access to the rendered reading scroller for ephemeral view state. */
+  scrollerRef?: Ref<HTMLDivElement>;
+  onScroll?: UIEventHandler<HTMLDivElement>;
 }
 
 /** The value of `attribute` on the closest ancestor that carries it. */
@@ -46,6 +49,8 @@ export default function MarkdownView({
   renderEmbed,
   onOpenDiagramLink,
   onOpenResourceLink,
+  scrollerRef,
+  onScroll,
 }: MarkdownViewProps) {
   const html = useMemo(
     () =>
@@ -84,7 +89,7 @@ export default function MarkdownView({
   };
 
   return (
-    <div className="note-preview" data-testid="note-preview">
+      <div ref={scrollerRef} className="note-preview" data-testid="note-preview" onScroll={onScroll}>
       <article
         className="markdown"
         data-testid="markdown-body"

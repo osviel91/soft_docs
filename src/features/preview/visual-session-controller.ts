@@ -1,4 +1,20 @@
 import type { ViewportTransform as DiagramViewportTransform } from "./viewport";
+import type { ResourceRepresentation } from "../../domain/workspace/resource-id";
+import { isValidMarkdownScrollSnapshot } from "./markdown-scroll-snapshot";
+
+export type EventFlowProjection = "flow" | "catalog" | "topology" | "causal";
+
+export type MarkdownScrollSnapshot = {
+  scrollTop: number;
+  /** Scroll progress in the 0..1 range, using the available vertical scroll distance. */
+  scrollRatio: number;
+  /** Scrollable range at capture time; used to choose absolute vs proportional restoration. */
+  maxScroll: number;
+};
+
+export function isEventFlowProjection(value: unknown): value is EventFlowProjection {
+  return value === "flow" || value === "catalog" || value === "topology" || value === "causal";
+}
 
 export type VisualSessionLineage = "viewer-a" | "viewer-b";
 export type VisualPane = "a" | "b";
@@ -14,14 +30,27 @@ export type VisualSessionScope = Pick<VisualResourceIdentity, "projectId" | "con
 
 export type VisualSessionSnapshot = {
   sourceFingerprint: string;
+  /** Guards representation-specific visual state when a stable resource id is renamed/reclassified. */
+  representation?: ResourceRepresentation;
   transform: DiagramViewportTransform | null;
+  /** For Event Flow only: projection whose SVG geometry this camera describes. */
+  transformProjection?: EventFlowProjection;
   selectedNodeId: string | null;
+  eventFlowProjection?: EventFlowProjection;
+  markdownScroll?: MarkdownScrollSnapshot;
 };
+
+/** Partial updates are merged only into a snapshot for the same source and representation. */
+export type VisualSessionSnapshotUpdate = {
+  sourceFingerprint: string;
+  representation: ResourceRepresentation;
+} & Partial<Pick<VisualSessionSnapshot, "transform" | "transformProjection" | "selectedNodeId" | "eventFlowProjection" | "markdownScroll">>;
 
 export type VisualSessionOption = {
   optionId: string;
   identity: VisualResourceIdentity;
   sourceFingerprint: string;
+  representation: ResourceRepresentation;
 };
 
 export type VisualSessionAvailability = "loading" | "ready" | "unavailable";
@@ -72,7 +101,33 @@ function sameScope(left: VisualSessionScope, right: VisualSessionScope): boolean
 }
 
 function copySnapshot(snapshot: VisualSessionSnapshot): VisualSessionSnapshot {
-  return { ...snapshot, transform: snapshot.transform ? { ...snapshot.transform } : null };
+  return {
+    ...snapshot,
+    transform: snapshot.transform ? { ...snapshot.transform } : null,
+    ...(snapshot.markdownScroll ? { markdownScroll: { ...snapshot.markdownScroll } } : {}),
+  };
+}
+
+function mergeSnapshotUpdate(previous: VisualSessionSnapshot | undefined, update: VisualSessionSnapshotUpdate): VisualSessionSnapshot {
+  const compatible = previous?.sourceFingerprint === update.sourceFingerprint
+    && previous.representation === update.representation;
+  const base: VisualSessionSnapshot = compatible
+    ? copySnapshot(previous!)
+    : { sourceFingerprint: update.sourceFingerprint, representation: update.representation, transform: null, selectedNodeId: null };
+  const merged: VisualSessionSnapshot = { ...base, sourceFingerprint: update.sourceFingerprint, representation: update.representation };
+  for (const field of ["transform", "transformProjection", "selectedNodeId", "eventFlowProjection", "markdownScroll"] as const) {
+    if (Object.prototype.hasOwnProperty.call(update, field)) {
+      const value = update[field];
+      if (field === "markdownScroll") {
+        const scroll = value as MarkdownScrollSnapshot | undefined;
+        merged.markdownScroll = scroll ? { ...scroll } : undefined;
+      } else {
+        // Explicit null is meaningful for camera/selection; undefined means no update.
+        if (value !== undefined) Object.assign(merged, { [field]: value });
+      }
+    }
+  }
+  return merged;
 }
 
 function copyState(state: VisualSessionState): VisualSessionState {
@@ -106,7 +161,7 @@ export type VisualSessionController = {
   select(pane: VisualPane, option: VisualSessionOption | null): VisualSessionState;
   swap(): VisualSessionState;
   getSnapshot(identity: VisualResourceIdentity, lineage: VisualSessionLineage, sourceFingerprint: string): VisualSessionSnapshot | null;
-  saveSnapshot(identity: VisualResourceIdentity, lineage: VisualSessionLineage, snapshot: VisualSessionSnapshot, generation: number): boolean;
+  saveSnapshot(identity: VisualResourceIdentity, lineage: VisualSessionLineage, snapshot: VisualSessionSnapshotUpdate, generation: number): boolean;
 };
 
 /** In-memory, single-scope owner for Dual View's serializable exploration state. */
@@ -162,7 +217,8 @@ export function createVisualSessionController(scope: VisualSessionScope, initial
     for (const key of snapshots.keys()) {
       const [, resourceKey] = JSON.parse(key) as [VisualSessionLineage, string];
       const option = allowed.get(resourceKey);
-      if (!option || snapshots.get(key)?.sourceFingerprint !== option.sourceFingerprint) snapshots.delete(key);
+      const existing = snapshots.get(key);
+      if (!option || existing?.sourceFingerprint !== option.sourceFingerprint || existing.representation !== option.representation) snapshots.delete(key);
     }
     const reconcileSelection = (selection: VisualSessionSelection | null): VisualSessionSelection | null => {
       if (!selection) return null;
@@ -213,23 +269,38 @@ export function createVisualSessionController(scope: VisualSessionScope, initial
     const key = visualSnapshotKey(identity, lineage);
     const cached = state.snapshots.get(key);
     if (!cached) return null;
-    if (cached.sourceFingerprint !== sourceFingerprint) {
+    const option = authorizedOptions.get(visualResourceKey(identity));
+    if (cached.sourceFingerprint !== sourceFingerprint || (option && cached.representation !== option.representation)) {
       const snapshots = new Map(state.snapshots);
       snapshots.delete(key);
       state = { ...state, snapshots };
       return null;
     }
-    return copySnapshot(cached);
+    const result = copySnapshot(cached);
+    if (result.eventFlowProjection !== undefined && (result.representation !== "event-flow" || !isEventFlowProjection(result.eventFlowProjection))) {
+      delete result.eventFlowProjection;
+    }
+    if (result.transformProjection !== undefined && (result.representation !== "event-flow" || !isEventFlowProjection(result.transformProjection))) {
+      delete result.transformProjection;
+    }
+    return result;
   };
-  const saveSnapshot = (identity: VisualResourceIdentity, lineage: VisualSessionLineage, snapshot: VisualSessionSnapshot, generation: number) => {
+  const saveSnapshot = (identity: VisualResourceIdentity, lineage: VisualSessionLineage, snapshot: VisualSessionSnapshotUpdate, generation: number) => {
     if (closed || generation !== state.generation || state.availability !== "ready") return false;
     const allowed = [state.selections.a, state.selections.b].some(selection => selection !== null &&
       selection.lineage === lineage && visualResourceKey(selection.identity) === visualResourceKey(identity));
     if (!allowed) return false;
     const authorized = authorizedOptions.get(visualResourceKey(identity));
-    if (!authorized || authorized.sourceFingerprint !== snapshot.sourceFingerprint) return false;
+    if (!authorized || authorized.sourceFingerprint !== snapshot.sourceFingerprint || authorized.representation !== snapshot.representation) return false;
+    if (Object.prototype.hasOwnProperty.call(snapshot, "eventFlowProjection") && authorized.representation !== "event-flow") return false;
+    if (Object.prototype.hasOwnProperty.call(snapshot, "transformProjection") && authorized.representation !== "event-flow") return false;
+    if (Object.prototype.hasOwnProperty.call(snapshot, "markdownScroll") && authorized.representation !== "markdown") return false;
+    if (snapshot.markdownScroll !== undefined && !isValidMarkdownScrollSnapshot(snapshot.markdownScroll)) return false;
+    if (snapshot.eventFlowProjection !== undefined && !isEventFlowProjection(snapshot.eventFlowProjection)) return false;
+    if (snapshot.transformProjection !== undefined && !isEventFlowProjection(snapshot.transformProjection)) return false;
     const snapshots = new Map(state.snapshots);
-    rememberVisualSnapshot(snapshots, visualSnapshotKey(identity, lineage), copySnapshot(snapshot));
+    const key = visualSnapshotKey(identity, lineage);
+    rememberVisualSnapshot(snapshots, key, mergeSnapshotUpdate(snapshots.get(key), snapshot));
     state = { ...state, snapshots };
     return true;
   };

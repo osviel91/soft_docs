@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComparisonOption } from "./ComparisonView";
 import { analyzeEventFlow } from "../../language/eventflow/parser";
 import { resourceRepresentationOfName, type ResourceRepresentation } from "../../domain/workspace/resource-id";
@@ -9,11 +9,13 @@ import EventFlowPreview, { type EventFlowView } from "./EventFlowPreview";
 import ConceptualPreview from "./ConceptualPreview";
 import DatabasePreview from "./DatabasePreview";
 import MarkdownView from "../notes/MarkdownView";
+import { markdownRestoreScrollTop, markdownScrollSnapshot } from "./markdown-scroll-snapshot";
 import { analysisProvenanceLabel } from "../../domain/workspace/knowledge-context";
 import type { DiagramViewportTransform } from "./DiagramViewport";
 import type { ServerProject, ServerWorkspace } from "../../workspace/server/api-client";
 import {
   fingerprintVisualSource,
+  isEventFlowProjection,
   type VisualSessionAvailability,
   type VisualSessionController,
   type VisualResourceIdentity,
@@ -42,22 +44,95 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
   controller: VisualSessionController;
 }) {
   const { option, source, representation } = session;
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(() => snapshot?.selectedNodeId ?? null);
-  const transformRef = useRef<DiagramViewportTransform | null>(snapshot?.transform ?? null);
+  const resourceIdentity = useMemo(() => identityOf(option), [option.context.knowledgeContext.id, option.context.knowledgeContext.kind, option.context.projectId, option.resourceId]);
   const sourceFingerprint = fingerprintVisualSource(source);
+  const sessionSnapshot = controller.getSnapshot(resourceIdentity, lineage, sourceFingerprint) ?? snapshot;
+  const eventFlowView = representation === "event-flow" && isEventFlowProjection(sessionSnapshot?.eventFlowProjection)
+    ? sessionSnapshot.eventFlowProjection
+    : "flow";
+  const compatibleTransform = representation === "event-flow"
+    ? sessionSnapshot?.transformProjection === eventFlowView ? sessionSnapshot.transform : null
+    : sessionSnapshot?.transform ?? null;
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(() => sessionSnapshot?.selectedNodeId ?? null);
+  const transformRef = useRef<DiagramViewportTransform | null>(compatibleTransform);
+  const [, setSnapshotRevision] = useState(0);
   const generation = controller.captureGeneration();
+  const controllerSuspended = controller.getState().suspended;
+  const markdownRestoreKey = JSON.stringify([resourceIdentity, lineage, sourceFingerprint, generation]);
+  const markdownScrollerRef = useRef<HTMLDivElement>(null);
+  const markdownFrameRef = useRef<number | null>(null);
+  const markdownRestoreFrameRef = useRef<number | null>(null);
+  const pendingMarkdownSnapshotRef = useRef<VisualSessionSnapshot["markdownScroll"]>(undefined);
+  const expectedProgrammaticScrollRef = useRef<number | null>(null);
   const saveSnapshot = useCallback((patch: Partial<VisualSessionSnapshot>) => {
-    controller.saveSnapshot(identityOf(option), lineage, { sourceFingerprint, transform: transformRef.current, selectedNodeId: activeNodeId, ...patch }, generation);
-  }, [activeNodeId, controller, generation, lineage, option, sourceFingerprint]);
+    const saved = controller.saveSnapshot(resourceIdentity, lineage, { sourceFingerprint, representation, ...patch }, generation);
+    if (saved && Object.prototype.hasOwnProperty.call(patch, "eventFlowProjection")) setSnapshotRevision(revision => revision + 1);
+  }, [controller, generation, lineage, representation, resourceIdentity, sourceFingerprint]);
   const selectNode = useCallback((nodeId: string | null) => {
     setActiveNodeId(nodeId);
     saveSnapshot({ selectedNodeId: nodeId });
   }, [saveSnapshot]);
   const captureTransform = useCallback((transform: DiagramViewportTransform) => {
     transformRef.current = transform;
-    saveSnapshot({ transform });
+    saveSnapshot(representation === "event-flow" ? { transform, transformProjection: eventFlowView } : { transform });
+  }, [eventFlowView, representation, saveSnapshot]);
+  const changeEventView = useCallback((view: EventFlowView) => {
+    saveSnapshot({ eventFlowProjection: view });
   }, [saveSnapshot]);
-  const [eventView, setEventView] = useState<EventFlowView>("flow");
+  const captureMarkdownScroll = useCallback(() => {
+    const scroller = markdownScrollerRef.current;
+    if (!scroller || representation !== "markdown") return;
+    if (expectedProgrammaticScrollRef.current !== null && Math.abs(scroller.scrollTop - expectedProgrammaticScrollRef.current) < 1) {
+      expectedProgrammaticScrollRef.current = null;
+      return;
+    }
+    pendingMarkdownSnapshotRef.current = markdownScrollSnapshot(scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight);
+    if (markdownFrameRef.current !== null) return;
+    const view = scroller.ownerDocument.defaultView;
+    const commit = () => {
+      markdownFrameRef.current = null;
+      const markdownScroll = pendingMarkdownSnapshotRef.current;
+      pendingMarkdownSnapshotRef.current = undefined;
+      if (markdownScroll) saveSnapshot({ markdownScroll });
+    };
+    markdownFrameRef.current = view?.requestAnimationFrame(commit) ?? -1;
+    if (!view?.requestAnimationFrame) queueMicrotask(commit);
+  }, [representation, saveSnapshot]);
+
+  useLayoutEffect(() => {
+    if (representation !== "markdown") return;
+    const scroller = markdownScrollerRef.current;
+    const controllerState = controller.getState();
+    if (!scroller || controllerSuspended || controllerState.suspended || controllerState.availability !== "ready") return;
+    const view = scroller.ownerDocument.defaultView;
+    const restore = () => {
+      markdownRestoreFrameRef.current = null;
+      const currentState = controller.getState();
+      if (controller.captureGeneration() !== generation || currentState.suspended || currentState.availability !== "ready") return;
+      const current = controller.getSnapshot(resourceIdentity, lineage, sourceFingerprint)?.markdownScroll;
+      if (!current) return;
+      const target = markdownRestoreScrollTop(current, scroller.scrollHeight, scroller.clientHeight);
+      if (Math.abs(scroller.scrollTop - target) >= 1) {
+        expectedProgrammaticScrollRef.current = target;
+        scroller.scrollTop = target;
+      }
+    };
+    if (view?.requestAnimationFrame) markdownRestoreFrameRef.current = view.requestAnimationFrame(restore);
+    else queueMicrotask(restore);
+    return () => {
+      const pendingMarkdownScroll = pendingMarkdownSnapshotRef.current;
+      pendingMarkdownSnapshotRef.current = undefined;
+      if (pendingMarkdownScroll && controller.captureGeneration() === generation
+        && !controller.getState().suspended && controller.getState().availability === "ready") {
+        saveSnapshot({ markdownScroll: pendingMarkdownScroll });
+      }
+      if (markdownFrameRef.current !== null && markdownFrameRef.current >= 0) view?.cancelAnimationFrame(markdownFrameRef.current);
+      if (markdownRestoreFrameRef.current !== null) view?.cancelAnimationFrame(markdownRestoreFrameRef.current);
+      markdownFrameRef.current = null;
+      markdownRestoreFrameRef.current = null;
+      pendingMarkdownSnapshotRef.current = undefined;
+    };
+  }, [controller, controllerSuspended, generation, lineage, markdownRestoreKey, pane, representation, resourceIdentity, saveSnapshot, sourceFingerprint]);
   const flow = useMemo(() => representation === "event-flow" ? analyzeEventFlow(source).flow : null, [representation, source]);
   const name = "markdown" in option.resource
     ? noteDisplayName(option.resource.name, source)
@@ -68,12 +143,12 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
 
   return <section className="comparison__pane" aria-label={`Dual viewer ${pane.toUpperCase()}`} data-testid={`dual-pane-${pane}`}>
     <header className="comparison__header"><div><strong>Viewer {pane.toUpperCase()}</strong><span className="comparison__provenance">{provenance}</span><h2>{name}</h2><span>{option.resource.name}</span></div></header>
-    <div className="comparison__viewer">
-      {representation === "markdown" ? <MarkdownView markdown={source} />
-        : representation === "conceptual" ? <ConceptualPreview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={snapshot?.transform ?? null} onVisualTransformChange={captureTransform} validateRestoredNode />
-          : representation === "database" ? <DatabasePreview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={snapshot?.transform ?? null} onVisualTransformChange={captureTransform} validateRestoredNode />
-            : representation === "event-flow" ? <EventFlowPreview source={source} flow={flow} view={eventView} onViewChange={setEventView} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={snapshot?.transform ?? null} onVisualTransformChange={captureTransform} validateRestoredNode />
-              : <Preview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={snapshot?.transform ?? null} onVisualTransformChange={captureTransform} validateRestoredNode />}
+    <div className={`comparison__viewer${representation === "markdown" ? " comparison__viewer--markdown" : ""}`}>
+      {representation === "markdown" ? <MarkdownView markdown={source} scrollerRef={markdownScrollerRef} onScroll={captureMarkdownScroll} />
+        : representation === "conceptual" ? <ConceptualPreview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={compatibleTransform} onVisualTransformChange={captureTransform} validateRestoredNode />
+          : representation === "database" ? <DatabasePreview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={compatibleTransform} onVisualTransformChange={captureTransform} validateRestoredNode />
+            : representation === "event-flow" ? <EventFlowPreview source={source} flow={flow} view={eventFlowView} onViewChange={changeEventView} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={compatibleTransform} onVisualTransformChange={captureTransform} validateRestoredNode />
+              : <Preview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={compatibleTransform} onVisualTransformChange={captureTransform} validateRestoredNode />}
     </div>
   </section>;
 }
@@ -112,7 +187,7 @@ export default function DualView({ options, projectId, activeProjectId, activePr
   const lineages = sessionState.lineages;
   const select = (pane: "a" | "b", id: string) => {
     const option = options.find(item => item.id === id);
-    controller.select(pane, option ? { optionId: option.id, identity: identityOf(option), sourceFingerprint: fingerprintVisualSource(option.source) } : null);
+    controller.select(pane, option ? { optionId: option.id, identity: identityOf(option), sourceFingerprint: fingerprintVisualSource(option.source), representation: option.representation ?? resourceRepresentationOfName(option.resource.name) } : null);
     updateFromController();
   };
   const swap = () => { controller.swap(); updateFromController(); };
