@@ -2714,20 +2714,22 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
       for (let zoom = 0; zoom < 3; zoom += 1) await panes[0].getByTestId("zoom-out").click();
       check("Participant lifeline selection is stable at multiple zoom levels and does not change either camera", participantCameraStable);
+      const sequenceCameraBeforeMaximize = await paneState();
       await page.getByRole("button", { name: "Maximize Viewer A" }).click();
       await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "a", undefined, { timeout: UI_TIMEOUT_MS });
       const cameraWhileMaximized = await paneState();
-      check("Maximizing A keeps both mounted Sequence cameras unchanged", cameraWhileMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])) && await page.getByTestId("dual-pane-b").count() === 1);
+      check("Maximizing A keeps both mounted Sequence cameras unchanged", cameraWhileMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(sequenceCameraBeforeMaximize[index])) && await page.getByTestId("dual-pane-b").count() === 1, JSON.stringify(cameraWhileMaximized.map((pane, index) => ({ before: cameraTransform(sequenceCameraBeforeMaximize[index]), after: cameraTransform(pane) }))));
       await page.getByRole("button", { name: "Restore Viewer A" }).click();
        await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        const cameraAfterRestore = await paneState();
-       check("Restoring A keeps both Sequence camera transforms without implicit Fit", cameraAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])), JSON.stringify(cameraAfterRestore.map(pane => pane.transform)));
+       check("Restoring A keeps both Sequence camera transforms without implicit Fit", cameraAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(sequenceCameraBeforeMaximize[index])), JSON.stringify(cameraAfterRestore.map((pane, index) => ({ before: cameraTransform(sequenceCameraBeforeMaximize[index]), after: cameraTransform(pane) }))));
+       const sequenceCameraBeforeMaximizeB = await paneState();
        await page.getByRole("button", { name: "Maximize Viewer B" }).click();
        const sequenceBMaximized = await paneState();
        await page.getByRole("button", { name: "Restore Viewer B" }).click();
        await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "normal", undefined, { timeout: UI_TIMEOUT_MS });
        const sequenceBAfterRestore = await paneState();
-       check("Maximizing/restoring B leaves both Sequence SVG camera transforms unchanged", sequenceBMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])) && sequenceBAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])));
+       check("Maximizing/restoring B leaves both Sequence SVG camera transforms unchanged", sequenceBMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(sequenceCameraBeforeMaximizeB[index])) && sequenceBAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(sequenceCameraBeforeMaximizeB[index])), JSON.stringify(sequenceBAfterRestore.map((pane, index) => ({ before: cameraTransform(sequenceCameraBeforeMaximizeB[index]), after: cameraTransform(pane) }))));
        await page.getByRole("button", { name: "Swap dual viewers" }).click();
        const swappedSequenceInitial = await paneState();
        await page.getByRole("button", { name: "Maximize Viewer A" }).click();
@@ -3159,16 +3161,20 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await page.waitForFunction(() => document.querySelector(".app__workspace")?.classList.contains("app__workspace--immersive"), undefined, { timeout: UI_TIMEOUT_MS });
        check("Analysis remains immersive when returning to a wide viewport", await checkEditorTabsDisabled() && !(await editorShell.isVisible()));
        await page.getByRole("button", { name: "Close comparison" }).click();
-       check("Closing Analysis restores editor tabs and ordinary resource opening", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isEnabled());
-       const collapseExplorer = page.getByRole("button", { name: "Collapse project explorer" });
-       if (await collapseExplorer.isVisible()) await collapseExplorer.click();
-       const collapsedPreferenceBefore = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
+        check("Closing Analysis restores editor tabs and ordinary resource opening", !(await page.getByTestId("view-code").isDisabled()) && await myWorkResourceOpeners.first().isEnabled());
+        const collapseExplorer = page.getByRole("button", { name: "Collapse project explorer" });
+        if (await collapseExplorer.isVisible()) await collapseExplorer.click();
+        const expandExplorer = page.getByRole("button", { name: "Expand project explorer" });
+        await expandExplorer.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const collapsedPreferenceBefore = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
        await page.getByTestId("analysis-mode-button").click();
        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       check("Immersive Analysis hides an Explorer that was already collapsed", await page.locator(".app__workspace").evaluate((workspace) => getComputedStyle(workspace.querySelector(".app__explorer-restore")).display === "none"));
-       await page.getByRole("button", { name: "Close comparison" }).click();
-       check("Closing Analysis restores the previously collapsed Explorer without preference writes", await page.getByRole("button", { name: "Expand project explorer" }).isVisible() && await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences")) === collapsedPreferenceBefore);
-       await page.getByRole("button", { name: "Expand project explorer" }).click();
+        check("Immersive Analysis hides an Explorer that was already collapsed", await page.locator(".app__workspace").evaluate((workspace) => getComputedStyle(workspace.querySelector(".app__explorer-restore")).display === "none"));
+        await page.getByRole("button", { name: "Close comparison" }).click();
+        await expandExplorer.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const collapsedPreferenceAfter = await page.evaluate(() => localStorage.getItem("sequencediagrams.ui-preferences"));
+        check("Closing Analysis restores the previously collapsed Explorer without preference writes", await expandExplorer.isVisible() && collapsedPreferenceAfter === collapsedPreferenceBefore, JSON.stringify({ before: collapsedPreferenceBefore, after: collapsedPreferenceAfter }));
+        await expandExplorer.click();
 
        const proposalTitle = `Navigation return ${Date.now()}`;
       const proposalResponse = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, {
@@ -3882,13 +3888,18 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const focusButton = page.getByTestId("viewer-focus-toggle");
       await focusButton.click();
       await page.locator(".app__workspace--focus").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction((style) => document.querySelector(".causal-flow .react-flow__viewport")?.getAttribute("style") !== style, causalCameraBeforeFocus);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const causalCameraAtFocus = await causalViewportNode.getAttribute("style");
+      const flowWidthBeforeResize = await page.locator(".causal-flow .react-flow").evaluate(element => element.clientWidth);
       const selectedBeforeFocus = await page.locator(".causal-flow .react-flow__node.selected").count();
       check("causal React Flow remains the same mounted instance in focus mode", await causalViewportNode.evaluate((element) => element.isConnected));
       if (process.env.E2E_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.E2E_SCREENSHOT_DIR, "ux-2a-causal-focus.png"), fullPage: true });
 
       await page.setViewportSize({ width: 1280, height: 900 });
-      await page.waitForFunction((style) => document.querySelector(".causal-flow .react-flow__viewport")?.getAttribute("style") === style, causalCameraBeforeFocus);
-      check("causal React Flow resize does not trigger implicit fitView", await causalViewportNode.getAttribute("style") === causalCameraBeforeFocus);
+      await page.waitForFunction((width) => document.querySelector(".causal-flow .react-flow")?.clientWidth !== width, flowWidthBeforeResize);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      check("causal React Flow resize does not trigger implicit fitView", await causalViewportNode.getAttribute("style") === causalCameraAtFocus, `before=${causalCameraAtFocus}; after=${await causalViewportNode.getAttribute("style")}`);
       check("causal node selection survives focus and resize", selectedBeforeFocus === 1 && await page.locator(".causal-flow .react-flow__node.selected").count() === 1);
       await page.keyboard.press("Escape");
       await page.locator(".app__workspace:not(.app__workspace--focus)").waitFor({ state: "attached", timeout: UI_TIMEOUT_MS });
