@@ -100,6 +100,20 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
   }, [representation, saveSnapshot]);
 
   useLayoutEffect(() => {
+    const scroller = markdownScrollerRef.current;
+    if (!scroller || representation !== "markdown") return;
+    const captureBeforeSuspend = () => {
+      const state = controller.getState();
+      if (state.suspended || state.availability !== "ready") return;
+      const markdownScroll = markdownScrollSnapshot(scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight);
+      pendingMarkdownSnapshotRef.current = undefined;
+      saveSnapshot({ markdownScroll });
+    };
+    scroller.addEventListener("scroll", captureBeforeSuspend);
+    return () => scroller.removeEventListener("scroll", captureBeforeSuspend);
+  }, [controller, representation, saveSnapshot]);
+
+  useLayoutEffect(() => {
     if (representation !== "markdown") return;
     const scroller = markdownScrollerRef.current;
     const controllerState = controller.getState();
