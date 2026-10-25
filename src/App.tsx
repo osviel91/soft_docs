@@ -1655,8 +1655,9 @@ export default function App() {
       resourceId: option.resourceId,
     },
     sourceFingerprint: fingerprintVisualSource(option.source),
+    representation: option.representation ?? resourceRepresentationOfName(option.resource.name),
   }));
-  const dualSessionOptionsKey = JSON.stringify(dualSessionOptions.map(option => [option.optionId, option.identity, option.sourceFingerprint]));
+  const dualSessionOptionsKey = JSON.stringify(dualSessionOptions.map(option => [option.optionId, option.identity, option.sourceFingerprint, option.representation]));
   const dualViewInitialOptionId = selectedComparisonResource
     ? dualViewOptions.find(option => option.resource.id === selectedComparisonResource.id && (server.active?.contextId ? option.id.startsWith(`my-work:${server.active.contextId}:`) : true))?.id
     : undefined;

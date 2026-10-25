@@ -2264,6 +2264,30 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           type: "markdown-document",
           content: "# Parallel test note\n\nA disposable note for the Dual View smoke test.\n",
         },
+        {
+          path: "long-reading.md",
+          type: "markdown-document",
+          content: ["# Long reading", ...Array.from({ length: 80 }, (_, index) => `\n## Section ${index + 1}\n\nThis disposable paragraph provides enough content to exercise the real Markdown reading scroller in Chromium.`)].join("\n"),
+        },
+        {
+          path: "long-reading-alt.md",
+          type: "markdown-document",
+          content: ["# Alternate reading", ...Array.from({ length: 80 }, (_, index) => `\n## Alternate section ${index + 1}\n\nA separate disposable document for testing resource identity across viewer swaps.`)].join("\n"),
+        },
+        {
+          path: "orders.eventseq",
+          type: "event-flow",
+          content: [
+            "event OrderCreated",
+            "producer OrderService",
+            "consumer BillingService",
+            "OrderService publishes OrderCreated",
+            "BillingService consumes OrderCreated",
+            "handler BillingHandler in BillingService",
+            "OrderCreated handled by BillingHandler",
+            "effect persist-order on BillingHandler kind database: Store the order",
+          ].join("\n"),
+        },
       ];
       const createdResources = new Map();
       for (const resource of resources) {
@@ -2294,13 +2318,20 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       });
       if (isolationResource.status !== 201 || !isolationResource.json?.resource?.id) throw new Error(`Isolation resource fixture failed: ${isolationResource.status} ${isolationResource.text}`);
       isolationResourceId = isolationResource.json.resource.id;
+      const isolationMarkdownContent = ["# P2 isolated reading", ...Array.from({ length: 50 }, (_, index) => `\n## P2 section ${index + 1}\n\nP2-only reading content for real scroller isolation.`)].join("\n");
+      const isolationMarkdown = await apiRequest(page, `/api/projects/${isolationProjectId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ path: "isolation-reading.md", type: "markdown-document", content: isolationMarkdownContent, contextId: isolationWorkId }),
+      });
+      if (isolationMarkdown.status !== 201 || !isolationMarkdown.json?.resource?.id) throw new Error(`Isolation Markdown fixture failed: ${isolationMarkdown.status} ${isolationMarkdown.text}`);
+      const isolationMarkdownId = isolationMarkdown.json.resource.id;
 
       // Prepare an actual SHARED artifact only through the disposable project's
       // proposal lifecycle; direct authoritative writes are intentionally refused.
       const sharedSeedTitle = `Navigation SHARED seed ${Date.now()}`;
       const sharedSeed = await apiRequest(page, `/api/projects/${projectId}/architectural-proposals`, {
         method: "POST",
-        body: JSON.stringify({ sourcePrivateContextId: workId, resourceIds: [createdResources.get("alpha.seq")], title: sharedSeedTitle, description: "Disposable E2E SHARED navigation fixture." }),
+        body: JSON.stringify({ sourcePrivateContextId: workId, resourceIds: [createdResources.get("alpha.seq"), createdResources.get("long-reading.md")], title: sharedSeedTitle, description: "Disposable E2E SHARED navigation fixture." }),
       });
       if (sharedSeed.status !== 201) throw new Error(`SHARED navigation fixture proposal failed: ${sharedSeed.status} ${sharedSeed.text}`);
       const reviewerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -2437,14 +2468,93 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       const alphaId = `my-work:${workId}:${createdResources.get("alpha.seq")}`;
       const betaId = `my-work:${workId}:${createdResources.get("beta.seq")}`;
       const noteId = `my-work:${workId}:${createdResources.get("dual-view-note.md")}`;
+      const longNoteId = `my-work:${workId}:${createdResources.get("long-reading.md")}`;
+      const alternateLongNoteId = `my-work:${workId}:${createdResources.get("long-reading-alt.md")}`;
+      const eventFlowId = `my-work:${workId}:${createdResources.get("orders.eventseq")}`;
       await viewerA.selectOption(alphaId);
       await viewerB.selectOption(betaId);
       check("Dual View selectors hold the two requested resource identities", await viewerA.inputValue() === alphaId && await viewerB.inputValue() === betaId);
       await viewerA.selectOption(noteId);
       await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Parallel test note" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Short Markdown content has no effective scroll range", await page.getByTestId("dual-pane-a").locator(".note-preview").evaluate((element) => Math.max(0, element.scrollHeight - element.clientHeight) === 0));
       await viewerA.selectOption(alphaId);
       await page.getByTestId("dual-pane-a").getByRole("heading", { name: "Alpha" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       check("Viewer A selector changes the actual rendered artifact", await page.getByTestId("dual-pane-a").locator("h2").textContent() === "Alpha");
+
+      await viewerA.selectOption(longNoteId);
+      await viewerB.selectOption(longNoteId);
+      const notePaneA = page.getByTestId("dual-pane-a");
+      const notePaneB = page.getByTestId("dual-pane-b");
+      const markdownScroller = (pane) => pane.locator(".note-preview");
+      await notePaneA.getByTestId("markdown-body").getByRole("heading", { name: "Section 80" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.evaluate(() => {
+        const scrollers = [...document.querySelectorAll(".note-preview")];
+        scrollers[0].scrollTop = 700;
+        scrollers[0].dispatchEvent(new Event("scroll", { bubbles: true }));
+        scrollers[1].scrollTop = 1_300;
+        scrollers[1].dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await page.waitForTimeout(100);
+      const realScrolls = await Promise.all([markdownScroller(notePaneA).evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight })), markdownScroller(notePaneB).evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }))]);
+      check("Markdown capture uses the real .note-preview scroller with distinct A/B offsets", realScrolls[0].top === 700 && realScrolls[1].top === 1_300 && realScrolls.every((state) => state.max > state.top), JSON.stringify(realScrolls));
+      await viewerA.selectOption(alphaId);
+      await page.getByTestId("dual-pane-a").getByRole("heading", { name: "Alpha" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await viewerA.selectOption(longNoteId);
+      await notePaneA.getByTestId("markdown-body").getByRole("heading", { name: "Section 80" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop === 700, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Markdown X → Y → X restores real scrollTop for viewer A", await markdownScroller(notePaneA).evaluate((element) => element.scrollTop === 700));
+      await markdownScroller(notePaneB).evaluate((element) => { element.scrollTop = 1_300; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
+      await page.waitForTimeout(100);
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForTimeout(100);
+      const swappedScrolls = await Promise.all([markdownScroller(notePaneA).evaluate((element) => element.scrollTop), markdownScroller(notePaneB).evaluate((element) => element.scrollTop)]);
+      const withinScrollTolerance = (actual, expected) => Math.abs(actual - expected) <= 2;
+      check("Markdown Swap restores independent real scrollTop values with viewer lineage", withinScrollTolerance(swappedScrolls[0], 1_300) && withinScrollTolerance(swappedScrolls[1], 700), JSON.stringify(swappedScrolls));
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 700) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 700) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Markdown two consecutive Swaps preserve both actual scroller offsets", withinScrollTolerance(await markdownScroller(notePaneA).evaluate((element) => element.scrollTop), 1_300) && withinScrollTolerance(await markdownScroller(notePaneB).evaluate((element) => element.scrollTop), 700));
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 700) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+
+      await viewerA.selectOption(alternateLongNoteId);
+      await notePaneA.getByTestId("markdown-body").getByRole("heading", { name: "Alternate reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await markdownScroller(notePaneA).evaluate((element) => { element.scrollTop = 600; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
+      await page.waitForTimeout(100);
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 600) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+      check("Markdown Swap across different resource identities restores each resource's real scroller", withinScrollTolerance(await markdownScroller(notePaneA).evaluate((element) => element.scrollTop), 1_300) && withinScrollTolerance(await markdownScroller(notePaneB).evaluate((element) => element.scrollTop), 600));
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+
+      await viewerA.selectOption(longNoteId);
+      await notePaneA.getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 700) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Switch to Analysis" }).click();
+      await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Switch to Dual View" }).click();
+      await notePaneA.locator(".note-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 700) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 1_300) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+      const afterAnalysisScrolls = await Promise.all([markdownScroller(notePaneA).evaluate((element) => element.scrollTop), markdownScroller(notePaneB).evaluate((element) => element.scrollTop)]);
+      check("Markdown offsets survive Dual → Analysis → Dual in the real scrollers", withinScrollTolerance(afterAnalysisScrolls[0], 700) && withinScrollTolerance(afterAnalysisScrolls[1], 1_300), JSON.stringify(afterAnalysisScrolls));
+      const markdownBeforeResize = await markdownScroller(notePaneA).evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }));
+      await page.setViewportSize({ width: 1180, height: 1100 });
+      await page.waitForTimeout(100);
+      const markdownAfterResize = await markdownScroller(notePaneA).evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }));
+      check("Markdown resize restores normalized reading progress on the real scroller", markdownAfterResize.max > 0 && Math.abs(markdownAfterResize.top / markdownAfterResize.max - markdownBeforeResize.top / markdownBeforeResize.max) < 0.015, JSON.stringify({ markdownBeforeResize, markdownAfterResize }));
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.getByRole("button", { name: "Focus" }).click();
+      const focusScrolls = await Promise.all([markdownScroller(notePaneA).evaluate((element) => element.scrollTop), markdownScroller(notePaneB).evaluate((element) => element.scrollTop)]);
+      check("Markdown scroll positions remain attached to the real scrollers in Focus", withinScrollTolerance(focusScrolls[0], markdownAfterResize.top) && withinScrollTolerance(focusScrolls[1], 1_300), JSON.stringify({ markdownAfterResize, focusScrolls }));
+      await page.getByRole("button", { name: "Fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
+      const fullscreenScrolls = await Promise.all([markdownScroller(notePaneA).evaluate((element) => element.scrollTop), markdownScroller(notePaneB).evaluate((element) => element.scrollTop)]);
+      check("Markdown scroll positions remain attached to the real scrollers in Fullscreen", withinScrollTolerance(fullscreenScrolls[0], markdownAfterResize.top) && withinScrollTolerance(fullscreenScrolls[1], 1_300), JSON.stringify({ markdownAfterResize, fullscreenScrolls }));
+      await page.getByRole("button", { name: "Exit fullscreen" }).click();
+      await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Focus" }).click();
+      await viewerA.selectOption(alphaId);
+      await viewerB.selectOption(betaId);
 
       const panes = [page.getByTestId("dual-pane-a"), page.getByTestId("dual-pane-b")];
       for (const pane of panes) await pane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2465,6 +2575,48 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         initial[0].title === "Alpha" && initial[1].title === "Beta" && initial.every((pane) => pane.nodes > 0 && pane.svgText.length > 0),
         initial.map(({ title, nodes, zoom }) => `${title}: ${nodes} nodes at ${zoom}`).join("; "),
       );
+
+      await viewerA.selectOption(eventFlowId);
+      await viewerB.selectOption(eventFlowId);
+      const eventPaneA = page.getByTestId("dual-pane-a");
+      const eventPaneB = page.getByTestId("dual-pane-b");
+      const projection = (pane, label) => pane.getByRole("button", { name: label, exact: true });
+      await eventPaneA.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Event Flow projection defaults to Flow in both duplicate-resource panes", await projection(eventPaneA, "Flow").getAttribute("aria-pressed") === "true" && await projection(eventPaneB, "Flow").getAttribute("aria-pressed") === "true");
+      await projection(eventPaneA, "Topology").click();
+      await eventPaneA.locator('[data-testid="event-topology"] [data-testid="topology-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const topologyTransform = await eventPaneA.locator('[data-testid="topology-svg"]').getAttribute("style");
+      check("Event Flow Topology selection renders its own SVG and active selector", await projection(eventPaneA, "Topology").getAttribute("aria-pressed") === "true" && await eventPaneA.getByRole("img", { name: "Event topology" }).isVisible());
+      await eventPaneA.getByTestId("zoom-in").click();
+      const zoomedTopologyTransform = await eventPaneA.locator('[data-testid="topology-svg"]').getAttribute("style");
+      await projection(eventPaneA, "Causal").click();
+      await eventPaneA.getByTestId("event-causal").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Topology → Causal changes projection and unmounts the topology SVG", await projection(eventPaneA, "Causal").getAttribute("aria-pressed") === "true" && await eventPaneA.locator('[data-testid="topology-svg"]').count() === 0);
+      await projection(eventPaneA, "Catalog").click();
+      await eventPaneA.getByTestId("event-catalog").getByText("OrderCreated").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Causal → Catalog shows catalog content rather than causal graph", await projection(eventPaneA, "Catalog").getAttribute("aria-pressed") === "true" && await eventPaneA.locator('[data-testid="event-causal"]').count() === 0);
+      await projection(eventPaneA, "Flow").click();
+      await eventPaneA.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      const flowTransformAfterCatalog = await eventPaneA.locator('[data-testid="preview-svg"]').getAttribute("style");
+      check("Catalog → Flow fits Flow geometry instead of applying the Topology camera", flowTransformAfterCatalog !== zoomedTopologyTransform && flowTransformAfterCatalog !== topologyTransform,
+        `topology=${zoomedTopologyTransform}; flow=${flowTransformAfterCatalog}`);
+      await projection(eventPaneB, "Topology").click();
+      await eventPaneB.locator('[data-testid="topology-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("A and B keep independent Event Flow projections for the same resource", await projection(eventPaneA, "Flow").getAttribute("aria-pressed") === "true" && await projection(eventPaneB, "Topology").getAttribute("aria-pressed") === "true");
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      check("Swap moves each duplicate resource projection with its viewer lineage", await projection(page.getByTestId("dual-pane-a"), "Topology").getAttribute("aria-pressed") === "true" && await projection(page.getByTestId("dual-pane-b"), "Flow").getAttribute("aria-pressed") === "true");
+      await page.getByRole("button", { name: "Swap dual viewers" }).click();
+      await projection(page.getByTestId("dual-pane-a"), "Catalog").click();
+      await page.getByTestId("dual-pane-a").getByTestId("event-catalog").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await viewerA.selectOption(alphaId);
+      await page.getByTestId("dual-pane-a").getByRole("heading", { name: "Alpha" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await viewerA.selectOption(eventFlowId);
+      await page.getByTestId("dual-pane-a").getByTestId("event-catalog").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("Event Flow projection persists across resource X → Y → X in the same viewer lineage", await projection(page.getByTestId("dual-pane-a"), "Catalog").getAttribute("aria-pressed") === "true");
+      await viewerA.selectOption(alphaId);
+      await viewerB.selectOption(betaId);
+      await page.getByTestId("dual-pane-a").getByRole("heading", { name: "Alpha" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("dual-pane-b").getByRole("heading", { name: "Beta" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
 
       await panes[0].getByTestId("viewport-pane").focus();
       await page.keyboard.press("ArrowRight");
@@ -2572,6 +2724,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("Exiting Fullscreen retains Focus and both cameras/selections", await page.locator(".app--dual-focus").count() === 1 && afterFullscreen.every((pane, index) => pane.transform === inFullscreen[index].transform && pane.activeNode === inFullscreen[index].activeNode),
         `fullscreen ${inFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → exit ${afterFullscreen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
         const projectBeforeSwitch = await paneState();
+        const p1LongNoteId = `my-work:${workId}:${createdResources.get("long-reading.md")}`;
+        await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(p1LongNoteId);
+        await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(p1LongNoteId);
+        const p1MarkdownPaneA = page.getByTestId("dual-pane-a");
+        const p1MarkdownPaneB = page.getByTestId("dual-pane-b");
+        await p1MarkdownPaneA.getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await p1MarkdownPaneB.getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 1_050 : 450; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+        await page.waitForTimeout(100);
+        const p1ProjectScrolls = await Promise.all([p1MarkdownPaneA.locator(".note-preview").evaluate(element => element.scrollTop), p1MarkdownPaneB.locator(".note-preview").evaluate(element => element.scrollTop)]);
+        check("P1 Markdown starts project isolation with distinct real A/B offsets", Math.abs(p1ProjectScrolls[0] - 450) <= 2 && Math.abs(p1ProjectScrolls[1] - 1_050) <= 2, JSON.stringify(p1ProjectScrolls));
         const projectSelector = page.getByRole("combobox", { name: "Dual View project" });
         await projectSelector.selectOption(isolationProjectId);
         await page.waitForFunction((name) => document.querySelector(".comparison__toolbar strong")?.textContent?.includes(name), isolationProjectName, { timeout: UI_TIMEOUT_MS });
@@ -2585,6 +2748,16 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await page.getByTestId("dual-pane-a").locator('[data-concept-id="isolated"]').click();
         const project2VisualState = await paneState();
         check("P1 → P2 project switch renders only P2's authorized fixture resources", project2VisualState[0].activeNode === "isolated");
+        const p2MarkdownId = `my-work:${isolationWorkId}:${isolationMarkdownId}`;
+        await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(p2MarkdownId);
+        await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(p2MarkdownId);
+        const p2MarkdownPaneA = page.getByTestId("dual-pane-a");
+        const p2MarkdownPaneB = page.getByTestId("dual-pane-b");
+        await p2MarkdownPaneA.getByTestId("markdown-body").getByRole("heading", { name: "P2 isolated reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.waitForFunction(() => (document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? -1) === 0 && (document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? -1) === 0, undefined, { timeout: UI_TIMEOUT_MS });
+        check("P1 offsets do not transfer into P2 Markdown A/B real scrollers", await p2MarkdownPaneA.locator(".note-preview").evaluate(element => element.scrollTop) === 0 && await p2MarkdownPaneB.locator(".note-preview").evaluate(element => element.scrollTop) === 0);
+        await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 760 : 280; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+        await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 280) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 760) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
         await projectSelector.selectOption(projectId);
         await page.waitForFunction((name) => document.querySelector(".comparison__toolbar strong")?.textContent?.includes(name), projectName, { timeout: UI_TIMEOUT_MS });
         await page.getByRole("combobox", { name: "Dual View context" }).selectOption(`my-work:${workId}`);
@@ -2594,9 +2767,20 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         check("P2 → P1 does not resurrect P1's prior camera or node selection", project1Returned.every((pane, index) => pane.activeNode === null && pane.transform !== projectBeforeSwitch[index].transform),
           `before P2 ${projectBeforeSwitch.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → returned P1 ${project1Returned.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
 
-        await viewerA.selectOption(alphaId);
-        await viewerB.selectOption(betaId);
-        await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
+        await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(p1LongNoteId);
+        await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(p1LongNoteId);
+        await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("dual-pane-b").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.waitForFunction(() => (document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? -1) === 0 && (document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? -1) === 0, undefined, { timeout: UI_TIMEOUT_MS });
+        check("P2 → P1 returns with P1's prior Markdown offsets discarded", await page.getByTestId("dual-pane-a").locator(".note-preview").evaluate(element => element.scrollTop) === 0 && await page.getByTestId("dual-pane-b").locator(".note-preview").evaluate(element => element.scrollTop) === 0);
+
+        await page.waitForFunction((id) => {
+          const selector = document.querySelector('[aria-label="Dual View A resource"]');
+          return selector instanceof HTMLSelectElement && !selector.disabled && [...selector.options].some(option => option.value === id);
+        }, alphaId, { timeout: UI_TIMEOUT_MS });
+         await viewerA.selectOption(alphaId);
+         await viewerB.selectOption(betaId);
+         await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
         await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
         await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
         await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
@@ -2612,6 +2796,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         const afterContextRoundTrip = await paneState();
         check("SHARED ↔ MY WORK context changes discard the previous visual session", contextBeforeSwitch.every(pane => pane.activeNode !== null) && afterContextRoundTrip.every(pane => pane.activeNode === null && pane.transform !== contextBeforeSwitch[0].transform),
           `before ${contextBeforeSwitch.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → after ${afterContextRoundTrip.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+        await viewerA.selectOption(alphaId);
+        await viewerB.selectOption(betaId);
+        await page.getByTestId("dual-pane-b").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         const beforeModeSuspendAfterContextChange = await paneState();
         await page.getByRole("button", { name: "Switch to Analysis" }).click();
        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2620,10 +2807,22 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        const afterModeResume = await paneState();
         check("Analysis suspension preserves A/B SVG transforms, selected nodes, and resource identities", afterModeResume.every((pane, index) => pane.title === beforeModeSuspendAfterContextChange[index].title && pane.transform === beforeModeSuspendAfterContextChange[index].transform && pane.activeNode === beforeModeSuspendAfterContextChange[index].activeNode),
-          `before ${beforeModeSuspendAfterContextChange.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → resumed ${afterModeResume.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
-       check("Dual Focus and Fullscreen are not restored after resuming", await page.locator(".app--dual-focus").count() === 0 && await page.evaluate(() => document.fullscreenElement === null));
+           `before ${beforeModeSuspendAfterContextChange.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → resumed ${afterModeResume.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+        check("Dual Focus and Fullscreen are not restored after resuming", await page.locator(".app--dual-focus").count() === 0 && await page.evaluate(() => document.fullscreenElement === null));
 
-       const beforeExplicitClose = await paneState();
+        await viewerA.selectOption(eventFlowId);
+        await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await projection(page.getByTestId("dual-pane-a"), "Catalog").click();
+        await page.getByTestId("dual-pane-a").getByTestId("event-catalog").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByRole("button", { name: "Switch to Analysis" }).click();
+        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByRole("button", { name: "Switch to Dual View" }).click();
+        await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        check("Dual → Analysis → Dual restores the Event Flow Catalog projection in DOM", await projection(page.getByTestId("dual-pane-a"), "Catalog").getAttribute("aria-pressed") === "true" && await page.getByTestId("dual-pane-a").locator('[data-testid="event-catalog"]').isVisible());
+        await viewerA.selectOption(alphaId);
+        await viewerB.selectOption(betaId);
+
+        const beforeExplicitClose = await paneState();
        await page.getByRole("button", { name: "Fullscreen" }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.querySelector("[data-testid='dual-view']"), undefined, { timeout: UI_TIMEOUT_MS });
       await page.getByRole("button", { name: "Close Dual View" }).click();
@@ -2634,20 +2833,82 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        await page.getByTestId("dual-pane-b").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-       const afterExplicitReopen = await paneState();
-       check("Explicit close and reopen starts clean instead of restoring the closed session", afterExplicitReopen.every(pane => pane.activeNode === null) && afterExplicitReopen.some((pane, index) => pane.transform !== beforeExplicitClose[index].transform),
-         `closed ${beforeExplicitClose.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → reopened ${afterExplicitReopen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
-      const dualA = page.getByRole("combobox", { name: "Dual View A resource" });
+        const afterExplicitReopen = await paneState();
+        check("Explicit close and reopen starts clean instead of restoring the closed session", afterExplicitReopen.every(pane => pane.activeNode === null) && afterExplicitReopen.some((pane, index) => pane.transform !== beforeExplicitClose[index].transform),
+          `closed ${beforeExplicitClose.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")} → reopened ${afterExplicitReopen.map(({ transform, activeNode }) => `${transform} / ${activeNode}`).join(" | ")}`);
+       const reopenViewerA = page.getByRole("combobox", { name: "Dual View A resource" });
+       const reopenViewerB = page.getByRole("combobox", { name: "Dual View B resource" });
+       await reopenViewerA.selectOption(longNoteId);
+       await reopenViewerB.selectOption(longNoteId);
+       const reopenPaneA = page.getByTestId("dual-pane-a");
+       const reopenPaneB = page.getByTestId("dual-pane-b");
+       await reopenPaneA.getByTestId("markdown-body").getByRole("heading", { name: "Section 80" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 1_300 : 700; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+       await page.waitForTimeout(100);
+       await page.getByRole("button", { name: "Close Dual View" }).click();
+       await page.getByTestId("dual-view").waitFor({ state: "detached", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("compare-mode-button").click();
+       await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await reopenViewerA.selectOption(longNoteId);
+       await reopenViewerB.selectOption(longNoteId);
+       await reopenPaneA.locator(".note-preview").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.waitForFunction(() => (document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? -1) === 0 && (document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? -1) === 0, undefined, { timeout: UI_TIMEOUT_MS });
+       check("Explicit close/reopen clears Markdown read positions in both real scrollers", (await reopenPaneA.locator(".note-preview").evaluate((element) => element.scrollTop)) === 0 && (await reopenPaneB.locator(".note-preview").evaluate((element) => element.scrollTop)) === 0);
+       const dualA = page.getByRole("combobox", { name: "Dual View A resource" });
       const dualB = page.getByRole("combobox", { name: "Dual View B resource" });
       await dualA.selectOption(noteId);
       await dualB.selectOption(alphaId);
       const notePane = page.getByTestId("dual-pane-a");
       const diagramPane = page.getByTestId("dual-pane-b");
       await notePane.getByTestId("markdown-body").getByRole("heading", { name: "Parallel test note" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      await diagramPane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-      check("Dual View renders a Markdown note beside a Sequence diagram", await notePane.getByTestId("markdown-body").isVisible() && await diagramPane.locator("[data-node-id]").count() > 0);
+       await diagramPane.locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       check("Dual View renders a Markdown note beside a Sequence diagram", await notePane.getByTestId("markdown-body").isVisible() && await diagramPane.locator("[data-node-id]").count() > 0);
 
-      await page.getByRole("button", { name: "Close Dual View" }).click();
+       const contextMarkdownMyWorkId = `my-work:${workId}:${createdResources.get("long-reading.md")}`;
+       const contextSwitch = page.getByRole("combobox", { name: "Dual View context" });
+       const waitForMarkdownContextOption = async (optionId) => {
+         await page.waitForFunction((id) => {
+           const selectors = ["[aria-label='Dual View A resource']", "[aria-label='Dual View B resource']"]
+             .map(selector => document.querySelector(selector));
+           return selectors.every(selector => selector instanceof HTMLSelectElement && !selector.disabled && [...selector.options].some(option => option.value === id));
+         }, optionId, { timeout: UI_TIMEOUT_MS });
+       };
+       await waitForMarkdownContextOption(contextMarkdownMyWorkId);
+       await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(contextMarkdownMyWorkId);
+       await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(contextMarkdownMyWorkId);
+       await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("dual-pane-b").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 920 : 360; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+       await page.waitForTimeout(100);
+        await contextSwitch.selectOption("shared");
+        await page.waitForFunction(() => document.querySelector('[aria-label="Dual View context"]')?.value === "shared", undefined, { timeout: UI_TIMEOUT_MS });
+        await page.waitForFunction(() => {
+          const select = document.querySelector('[aria-label="Dual View A resource"]');
+          return select instanceof HTMLSelectElement && !select.disabled && [...select.options].some(option => /reading/i.test(option.textContent ?? ""));
+        }, undefined, { timeout: UI_TIMEOUT_MS });
+        const sharedOptionState = await page.getByRole("combobox", { name: "Dual View A resource" }).evaluate(select => [...select.options].map(option => ({ value: option.value, label: option.textContent })));
+       const sharedLongNoteId = sharedOptionState.find(option => /reading/i.test(option.label ?? ""))?.value ?? "";
+       check("SHARED fixture exposes the promoted Markdown resource by its authorized option", sharedLongNoteId !== "", JSON.stringify(sharedOptionState));
+       await waitForMarkdownContextOption(sharedLongNoteId);
+       await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(sharedLongNoteId);
+       await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(sharedLongNoteId);
+       await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("dual-pane-b").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.waitForFunction(() => (document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? -1) === 0 && (document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? -1) === 0, undefined, { timeout: UI_TIMEOUT_MS });
+       check("MY WORK offsets do not transfer into SHARED Markdown A/B real scrollers", await page.getByTestId("dual-pane-a").locator(".note-preview").evaluate(element => element.scrollTop) === 0 && await page.getByTestId("dual-pane-b").locator(".note-preview").evaluate(element => element.scrollTop) === 0);
+       await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 640 : 210; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+       await page.waitForTimeout(100);
+       await contextSwitch.selectOption(`my-work:${workId}`);
+       await page.waitForFunction((value) => document.querySelector('[aria-label="Dual View context"]')?.value === value, `my-work:${workId}`, { timeout: UI_TIMEOUT_MS });
+       await waitForMarkdownContextOption(contextMarkdownMyWorkId);
+       await page.getByRole("combobox", { name: "Dual View A resource" }).selectOption(contextMarkdownMyWorkId);
+       await page.getByRole("combobox", { name: "Dual View B resource" }).selectOption(contextMarkdownMyWorkId);
+       await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.getByTestId("dual-pane-b").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+       await page.waitForFunction(() => (document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? -1) === 0 && (document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? -1) === 0, undefined, { timeout: UI_TIMEOUT_MS });
+       check("SHARED offsets do not transfer back into MY WORK Markdown A/B real scrollers", await page.getByTestId("dual-pane-a").locator(".note-preview").evaluate(element => element.scrollTop) === 0 && await page.getByTestId("dual-pane-b").locator(".note-preview").evaluate(element => element.scrollTop) === 0);
+
+       await page.getByRole("button", { name: "Close Dual View" }).click();
       await page.getByTestId("analysis-mode-button").click();
       await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
       await page.getByTestId("semantic-comparison-summary").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
@@ -2714,14 +2975,30 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
        await proposalOpen.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await privateTree.getByRole("button", { name: "Load diagram Alpha" }).click();
         await page.getByTestId("compare-mode-button").click();
-        await viewerA.selectOption(alphaId);
-        await viewerB.selectOption(betaId);
+         await viewerA.selectOption(alphaId);
+         await viewerB.selectOption(betaId);
         await page.getByTestId("dual-pane-a").getByTestId("zoom-in").click();
         await page.getByTestId("dual-pane-a").locator("g.participant[data-node-id]").first().click();
         await page.getByTestId("dual-pane-b").getByTestId("zoom-in").click();
-        await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
+         await page.getByTestId("dual-pane-b").locator("g.participant[data-node-id]").last().click();
         await page.waitForFunction(() => document.querySelectorAll("[data-testid^='dual-pane-'] .svg-node--active").length === 2, undefined, { timeout: UI_TIMEOUT_MS });
-        const beforeDualProposal = await paneState();
+         await viewerA.selectOption(longNoteId);
+         await viewerB.selectOption(longNoteId);
+         await page.getByTestId("dual-pane-a").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         await page.getByTestId("dual-pane-b").getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 970 : 520; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
+         await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 520) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 970) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+         await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
+         await page.getByRole("region", { name: "Architectural Proposal" }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         await page.goBack();
+         await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 520) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 970) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
+         check("Dual → proposal → Dual restores independent Markdown read positions in both real scrollers", Math.abs(await page.getByTestId("dual-pane-a").locator(".note-preview").evaluate(element => element.scrollTop) - 520) <= 2 && Math.abs(await page.getByTestId("dual-pane-b").locator(".note-preview").evaluate(element => element.scrollTop) - 970) <= 2);
+         await viewerA.selectOption(eventFlowId);
+         await page.getByTestId("dual-pane-a").locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         await projection(page.getByTestId("dual-pane-a"), "Causal").click();
+         await page.getByTestId("dual-pane-a").getByTestId("event-causal").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+         const beforeDualProposal = await paneState();
         await page.getByRole("combobox", { name: "Open proposal" }).selectOption(proposalResponse.json.proposal.id);
       const restoreProposalDetails = page.getByRole("button", { name: "Show proposal details" });
       if (await restoreProposalDetails.isVisible()) await restoreProposalDetails.click();
@@ -2730,9 +3007,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("Proposal opened from Dual View is displayed", await page.getByRole("region", { name: "Architectural Proposal" }).getByRole("heading", { name: proposalTitle }).isVisible());
         await page.goBack();
         await page.getByTestId("dual-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        const afterDualProposal = await paneState();
-        check("Returning from proposal restores actual Dual View cameras, nodes, A/B resources and immersive shell", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1 && afterDualProposal.every((pane, index) => pane.title === beforeDualProposal[index].title && pane.transform === beforeDualProposal[index].transform && pane.activeNode === beforeDualProposal[index].activeNode),
-          `before ${beforeDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → after ${afterDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+         const afterDualProposal = await paneState();
+         check("Returning from proposal restores actual Dual View cameras, nodes, A/B resources and immersive shell", await checkEditorTabsDisabled() && await page.locator(".app__workspace--immersive").count() === 1 && afterDualProposal.every((pane, index) => pane.title === beforeDualProposal[index].title && pane.transform === beforeDualProposal[index].transform && pane.activeNode === beforeDualProposal[index].activeNode),
+           `before ${beforeDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")} → after ${afterDualProposal.map(({ title, transform, activeNode }) => `${title}: ${transform} / ${activeNode}`).join(" | ")}`);
+         check("Dual → proposal → Dual restores the Event Flow Causal projection in DOM", await projection(page.getByTestId("dual-pane-a"), "Causal").getAttribute("aria-pressed") === "true" && await page.getByTestId("dual-pane-a").getByTestId("event-causal").isVisible());
        await page.getByRole("button", { name: "Close Dual View" }).click();
        await page.getByTestId("analysis-mode-button").click();
        await page.getByTestId("comparison-view").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });

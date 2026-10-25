@@ -10,6 +10,7 @@ import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../s
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "../src/workspace/ui-preferences";
 import { createVisualSessionController } from "../src/features/preview/visual-session-controller";
+import { resourceRepresentationOfName } from "../src/domain/workspace/resource-id";
 
 afterEach(() => {
   cleanup();
@@ -80,6 +81,7 @@ function visualSessionDescriptors(options: ComparisonOption[]) {
       resourceId: option.resourceId,
     },
     sourceFingerprint: fingerprintVisualSource(option.source),
+    representation: option.representation ?? resourceRepresentationOfName(option.resource.name),
   }));
 }
 
@@ -893,7 +895,7 @@ describe("App — dual viewer foundation", () => {
     const controller = visualControllerFor(options, diagram.id);
     controller.select("a", visualSessionDescriptors(options)[0]!);
     controller.saveSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", {
-      sourceFingerprint: fingerprintVisualSource(source), transform: { x: 41, y: -17, scale: 1.5 }, selectedNodeId: "alpha",
+      sourceFingerprint: fingerprintVisualSource(source), representation: "conceptual", transform: { x: 41, y: -17, scale: 1.5 }, selectedNodeId: "alpha",
     }, controller.captureGeneration());
     const callbackFromBeforeLoading = controller.captureGeneration();
     const view = render(<DualView options={options} controller={controller} projectId="P1" onExit={() => {}} />);
@@ -930,7 +932,7 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("dual-pane-a").querySelector(".svg-node--active")).toBeNull();
     expect([...controller.getState().snapshots].some(([key, value]) => key.includes('"authorized"') && value.sourceFingerprint === fingerprintVisualSource(source))).toBe(false);
     expect(controller.saveSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", {
-      sourceFingerprint: fingerprintVisualSource(source), transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha",
+      sourceFingerprint: fingerprintVisualSource(source), representation: "conceptual", transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha",
     }, callbackFromBeforeLoading)).toBe(false);
 
     const authorizedOptions = [editedOptions[1]!];
@@ -945,11 +947,11 @@ describe("App — dual viewer foundation", () => {
 
   it("invalidates an incompatible fingerprint and isolates a suspended scope from stale callbacks", () => {
     const first = createVisualSessionController({ projectId: "p1", contextKind: "shared", contextId: "shared:p1" });
-    const old = { optionId: "alpha", identity: { projectId: "p1", contextKind: "shared", contextId: "shared:p1", resourceId: "alpha" }, sourceFingerprint: fingerprintVisualSource('concept alpha "Alpha"') };
+    const old = { optionId: "alpha", identity: { projectId: "p1", contextKind: "shared", contextId: "shared:p1", resourceId: "alpha" }, sourceFingerprint: fingerprintVisualSource('concept alpha "Alpha"'), representation: "conceptual" as const };
     first.reconcile({ scope: first.getState().scope, availability: "ready", options: [old] });
     first.select("a", old);
     const oldGeneration = first.captureGeneration();
-    first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, transform: { x: 22, y: 3, scale: 2 }, selectedNodeId: "alpha" }, oldGeneration);
+    first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, representation: old.representation, transform: { x: 22, y: 3, scale: 2 }, selectedNodeId: "alpha" }, oldGeneration);
     first.suspend();
 
     const changedFingerprint = { ...old, sourceFingerprint: fingerprintVisualSource('concept alpha "Renamed"') };
@@ -957,7 +959,7 @@ describe("App — dual viewer foundation", () => {
     const next = first.reconcile({ scope: changedScope, availability: "ready", options: [{ ...changedFingerprint, identity: { ...changedFingerprint.identity, ...changedScope } }] });
     expect(next.snapshots.size).toBe(0);
     expect(next.selections.a?.identity).toEqual({ ...changedFingerprint.identity, ...changedScope });
-    expect(first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha" }, oldGeneration)).toBe(false);
+    expect(first.saveSnapshot(old.identity, "viewer-a", { sourceFingerprint: old.sourceFingerprint, representation: old.representation, transform: { x: 999, y: 0, scale: 3 }, selectedNodeId: "alpha" }, oldGeneration)).toBe(false);
     expect(first.getState().snapshots.size).toBe(0);
 
     first.close();
@@ -965,6 +967,247 @@ describe("App — dual viewer foundation", () => {
     reopened.reconcile({ scope: changedScope, availability: "ready", options: [] });
     expect(reopened.getState().selections).toEqual({ a: null, b: null });
     expect(reopened.getState().snapshots.size).toBe(0);
+  });
+
+  it("restores Event Flow projections per resource and viewer lineage while keeping camera projections compatible", async () => {
+    const eventSource = [
+      "event OrderCreated",
+      "producer OrderService",
+      "consumer BillingService",
+      "OrderService publishes OrderCreated",
+      "BillingService consumes OrderCreated",
+      "handler BillingHandler in BillingService",
+      "OrderCreated handled by BillingHandler",
+      "effect persist-order on BillingHandler kind database: Store the order",
+    ].join("\n");
+    const otherSource = eventSource.replaceAll("OrderCreated", "PaymentRequested").replaceAll("OrderService", "PaymentService");
+    const resources: DiagramFile[] = [
+      { id: "flow-x", name: "x.eventseq", projectId: "project", source: eventSource },
+      { id: "flow-y", name: "y.eventseq", projectId: "project", source: otherSource },
+    ];
+    const options: ComparisonOption[] = resources.map(resource => ({
+      id: resource.id, resource, resourceId: resource.id, representation: "event-flow", source: resource.source,
+      context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: resource.id }, label: resource.name,
+    }));
+    const controller = visualControllerFor(options, "flow-x");
+    controller.select("a", visualSessionDescriptors(options)[0]!);
+    controller.select("b", visualSessionDescriptors(options)[0]!);
+    const view = render(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    const paneA = () => screen.getByTestId("dual-pane-a");
+    const paneB = () => screen.getByTestId("dual-pane-b");
+    const projectionButton = (pane: HTMLElement, label: string) => within(pane).getByRole("button", { name: label });
+
+    await waitFor(() => expect(projectionButton(paneA(), "Flow")).toHaveAttribute("aria-pressed", "true"));
+    expect(paneA().querySelector('[data-testid="preview-svg"] svg')).not.toBeNull();
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    fireEvent.click(paneA().querySelector('[data-testid="preview-svg"] [data-node-id]')!);
+    await waitFor(() => expect(paneA().querySelector('[data-testid="preview-svg"] .svg-node--active')).not.toBeNull());
+    const flowTransform = paneA().querySelector('[data-testid="preview-svg"]')?.getAttribute("style");
+    fireEvent.click(projectionButton(paneA(), "Catalog"));
+    await waitFor(() => expect(paneA().querySelector('[data-testid="event-catalog"]')).not.toBeNull());
+    fireEvent.click(projectionButton(paneA(), "Flow"));
+    await waitFor(() => expect(projectionButton(paneA(), "Flow")).toHaveAttribute("aria-pressed", "true"));
+    expect(paneA().querySelector('[data-testid="preview-svg"] .svg-node--active')).not.toBeNull();
+    fireEvent.click(projectionButton(paneA(), "Topology"));
+    await waitFor(() => expect(paneA().querySelector('[data-testid="event-topology"] [data-testid="topology-svg"]')).not.toBeNull());
+    expect(projectionButton(paneA(), "Topology")).toHaveAttribute("aria-pressed", "true");
+    const topologyCamera = paneA().querySelector('[data-testid="topology-svg"]')?.getAttribute("style") ?? "";
+    expect(topologyCamera).not.toBe(flowTransform);
+    fireEvent.click(within(paneA()).getByTestId("zoom-in"));
+    const zoomedTopologyCamera = paneA().querySelector('[data-testid="topology-svg"]')?.getAttribute("style") ?? "";
+    fireEvent.click(projectionButton(paneA(), "Causal"));
+    await waitFor(() => expect(projectionButton(paneA(), "Causal")).toHaveAttribute("aria-pressed", "true"));
+    expect(paneA().querySelector('[data-testid="event-causal"]')).not.toBeNull();
+    fireEvent.click(projectionButton(paneA(), "Catalog"));
+    await waitFor(() => expect(paneA().querySelector('[data-testid="event-catalog"]')).not.toBeNull());
+    fireEvent.click(projectionButton(paneA(), "Flow"));
+    await waitFor(() => expect(projectionButton(paneA(), "Flow")).toHaveAttribute("aria-pressed", "true"));
+    expect(paneA().querySelector('[data-testid="preview-svg"] svg')).not.toBeNull();
+    const returnedFlowTransform = paneA().querySelector('[data-testid="preview-svg"]')?.getAttribute("style") ?? "";
+    expect(returnedFlowTransform).not.toBe(zoomedTopologyCamera);
+    expect(controller.getSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-a", fingerprintVisualSource(eventSource))?.eventFlowProjection).toBe("flow");
+    expect(controller.getSnapshot(visualSessionDescriptors(options)[0]!.identity, "viewer-b", fingerprintVisualSource(eventSource))?.eventFlowProjection).toBeUndefined();
+
+    fireEvent.click(projectionButton(paneB(), "Topology"));
+    await waitFor(() => expect(projectionButton(paneB(), "Topology")).toHaveAttribute("aria-pressed", "true"));
+    expect(projectionButton(paneA(), "Flow")).toHaveAttribute("aria-pressed", "true");
+    controller.swap();
+    view.rerender(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    await waitFor(() => expect(projectionButton(paneA(), "Topology")).toHaveAttribute("aria-pressed", "true"));
+    expect(projectionButton(paneB(), "Flow")).toHaveAttribute("aria-pressed", "true");
+
+    // X → Y → X restores the X projection; Y starts at Flow for this lineage.
+    fireEvent.change(screen.getByRole("combobox", { name: "Dual View A resource" }), { target: { value: "flow-y" } });
+    await waitFor(() => expect(paneA()).toHaveTextContent("PaymentRequested"));
+    expect(projectionButton(paneA(), "Flow")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByRole("combobox", { name: "Dual View A resource" }), { target: { value: "flow-x" } });
+    await waitFor(() => expect(projectionButton(paneA(), "Topology")).toHaveAttribute("aria-pressed", "true"));
+
+    view.unmount();
+    controller.suspend();
+    controller.resume();
+    render(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    await waitFor(() => expect(projectionButton(screen.getByTestId("dual-pane-a"), "Topology")).toHaveAttribute("aria-pressed", "true"));
+
+    // Topology camera geometry is never applied to Flow (or vice versa).
+    expect(topologyCamera).not.toBe(flowTransform);
+  });
+
+  it("captures Markdown scroll from the real scroller by lineage and restores it after swap and suspension", async () => {
+    const markdown = ["# Long reading", ...Array.from({ length: 60 }, (_, index) => `\n## Section ${index + 1}\n\nA paragraph with enough content to make the reading surface vertically scrollable.`)].join("\n");
+    const note: NoteFile = { id: "long-note", name: "long-reading.md", projectId: "project", markdown };
+    const options: ComparisonOption[] = [{
+      id: "long-note-option", resource: note, resourceId: note.id, representation: "markdown", source: markdown,
+      context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: note.id }, label: note.name,
+    }];
+    const controller = visualControllerFor(options, note.id);
+    controller.select("b", visualSessionDescriptors(options)[0]!);
+    const identity = visualSessionDescriptors(options)[0]!.identity;
+    const fingerprint = fingerprintVisualSource(markdown);
+    const generation = controller.captureGeneration();
+    controller.saveSnapshot(identity, "viewer-a", {
+      sourceFingerprint: fingerprint, representation: "markdown", transform: { x: 7, y: -3, scale: 1.5 }, selectedNodeId: "retained-a",
+      markdownScroll: { scrollTop: 100, scrollRatio: 0.1, maxScroll: 1000 },
+    }, generation);
+    controller.saveSnapshot(identity, "viewer-b", {
+      sourceFingerprint: fingerprint, representation: "markdown", transform: { x: 19, y: -8, scale: 2 }, selectedNodeId: "retained-b",
+      markdownScroll: { scrollTop: 400, scrollRatio: 0.4, maxScroll: 1000 },
+    }, generation);
+
+    const view = render(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    const installScrollerGeometry = (pane: "a" | "b") => {
+      const scroller = screen.getByTestId(`dual-pane-${pane}`).querySelector<HTMLElement>(".note-preview")!;
+      Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 200 });
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1200 });
+      return scroller;
+    };
+    let scrollA = installScrollerGeometry("a");
+    let scrollB = installScrollerGeometry("b");
+    await waitFor(() => {
+      expect(scrollA.scrollTop).toBe(100);
+      expect(scrollB.scrollTop).toBe(400);
+    });
+    expect(scrollA).toHaveClass("note-preview");
+    expect(scrollA).not.toBe(screen.getByTestId("dual-pane-a").querySelector(".markdown-body"));
+
+    scrollA.scrollTop = 300;
+    fireEvent.scroll(scrollA);
+    scrollB.scrollTop = 650;
+    fireEvent.scroll(scrollB);
+    await waitFor(() => {
+      expect(controller.getSnapshot(identity, "viewer-a", fingerprint)?.markdownScroll?.scrollTop).toBe(300);
+      expect(controller.getSnapshot(identity, "viewer-b", fingerprint)?.markdownScroll?.scrollTop).toBe(650);
+    });
+    expect(controller.getSnapshot(identity, "viewer-a", fingerprint)).toMatchObject({ transform: { x: 7, y: -3, scale: 1.5 }, selectedNodeId: "retained-a" });
+    expect(controller.getSnapshot(identity, "viewer-b", fingerprint)).toMatchObject({ transform: { x: 19, y: -8, scale: 2 }, selectedNodeId: "retained-b" });
+
+    scrollA.scrollTop = 500;
+    fireEvent.scroll(scrollA);
+    scrollB.scrollTop = 800;
+    fireEvent.scroll(scrollB);
+    controller.swap();
+    view.rerender(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    scrollA = installScrollerGeometry("a");
+    scrollB = installScrollerGeometry("b");
+    await waitFor(() => {
+      expect(scrollA.scrollTop).toBe(800);
+      expect(scrollB.scrollTop).toBe(500);
+    });
+    expect(controller.getSnapshot(identity, "viewer-a", fingerprint)?.markdownScroll?.scrollTop).toBe(500);
+    expect(controller.getSnapshot(identity, "viewer-b", fingerprint)?.markdownScroll?.scrollTop).toBe(800);
+
+    view.unmount();
+    controller.suspend();
+    controller.resume();
+    render(<DualView options={options} controller={controller} projectId="Project" onExit={() => {}} />);
+    scrollA = installScrollerGeometry("a");
+    scrollB = installScrollerGeometry("b");
+    await waitFor(() => {
+      expect(scrollA.scrollTop).toBe(800);
+      expect(scrollB.scrollTop).toBe(500);
+    });
+  });
+
+  it("gates Markdown offsets through availability, authorization, fingerprint, and representation changes", async () => {
+    const markdown = ["# Authorized reading", ...Array.from({ length: 40 }, (_, index) => `\n## Section ${index + 1}\n\nAuthorized content for deterministic availability testing.`)].join("\n");
+    const note: NoteFile = { id: "availability-note", name: "availability.md", projectId: "project", markdown };
+    const makeOption = (source: string, representation: "markdown" | "conceptual" = "markdown"): ComparisonOption => {
+      const resource = representation === "markdown"
+        ? { ...note, markdown: source }
+        : { id: note.id, name: "availability.concept", projectId: "project", source };
+      return {
+        id: "availability-option", resource, resourceId: note.id, representation, source,
+        context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: note.id }, label: resource.name,
+      } as ComparisonOption;
+    };
+    const options = [makeOption(markdown)];
+    const descriptor = visualSessionDescriptors(options)[0]!;
+    const controller = visualControllerFor(options, options[0]!.id);
+    const view = render(<DualView options={options} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    const scroller = () => screen.getByTestId("dual-view").querySelector<HTMLElement>("[data-testid='dual-pane-a'] .note-preview");
+    const installScrollerGeometry = () => {
+      const current = scroller();
+      if (!current) return null;
+      Object.defineProperty(current, "clientHeight", { configurable: true, value: 180 });
+      Object.defineProperty(current, "scrollHeight", { configurable: true, value: 1_180 });
+      return current;
+    };
+    await waitFor(() => expect(installScrollerGeometry()).not.toBeNull());
+    installScrollerGeometry()!.scrollTop = 320;
+    fireEvent.scroll(installScrollerGeometry()!);
+    await waitFor(() => expect(controller.getSnapshot(descriptor.identity, "viewer-a", descriptor.sourceFingerprint)?.markdownScroll?.scrollTop).toBe(320));
+    const readyGeneration = controller.captureGeneration();
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "loading" });
+    view.rerender(<DualView options={[]} controller={controller} projectId="project" availability="loading" onExit={() => {}} />);
+    expect(scroller()).toBeNull();
+    expect(controller.getSnapshot(descriptor.identity, "viewer-a", descriptor.sourceFingerprint)).toBeNull();
+    expect(controller.saveSnapshot(descriptor.identity, "viewer-a", { sourceFingerprint: descriptor.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 777, scrollRatio: 0.777, maxScroll: 1_000 } }, readyGeneration)).toBe(false);
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [descriptor] });
+    view.rerender(<DualView options={options} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    await waitFor(() => expect(installScrollerGeometry()?.scrollTop).toBe(320));
+    expect(controller.getSnapshot(descriptor.identity, "viewer-a", descriptor.sourceFingerprint)?.markdownScroll?.scrollTop).toBe(320);
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "unavailable" });
+    view.rerender(<DualView options={[]} controller={controller} projectId="project" availability="unavailable" onExit={() => {}} />);
+    expect(scroller()).toBeNull();
+    expect(controller.getSnapshot(descriptor.identity, "viewer-a", descriptor.sourceFingerprint)).toBeNull();
+    const unavailableGeneration = controller.captureGeneration();
+    expect(controller.saveSnapshot(descriptor.identity, "viewer-a", { sourceFingerprint: descriptor.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 777, scrollRatio: 0.777, maxScroll: 1_000 } }, unavailableGeneration)).toBe(false);
+
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [descriptor] });
+    view.rerender(<DualView options={options} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    await waitFor(() => expect(installScrollerGeometry()?.scrollTop).toBe(320));
+
+    const revokedGeneration = controller.captureGeneration();
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [] });
+    view.rerender(<DualView options={[]} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    expect(controller.getState().snapshots.size).toBe(0);
+    expect(controller.getState().selections).toEqual({ a: null, b: null });
+    expect(controller.saveSnapshot(descriptor.identity, "viewer-a", { sourceFingerprint: descriptor.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 999, scrollRatio: 0.999, maxScroll: 1_000 } }, revokedGeneration)).toBe(false);
+    expect(scroller()).toBeNull();
+
+    const fingerprintChanged = makeOption(markdown + "\n\nEdited.");
+    const changedFingerprintDescriptor = visualSessionDescriptors([fingerprintChanged])[0]!;
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [changedFingerprintDescriptor] });
+    view.rerender(<DualView options={[fingerprintChanged]} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    await waitFor(() => expect(installScrollerGeometry()).not.toBeNull());
+    expect(controller.getSnapshot(descriptor.identity, "viewer-a", descriptor.sourceFingerprint)).toBeNull();
+    expect(controller.getSnapshot(descriptor.identity, "viewer-a", changedFingerprintDescriptor.sourceFingerprint)).toBeNull();
+
+    const sourceChanged = markdown + "\n\nRepresentation changed.";
+    const markdownAgain = makeOption(sourceChanged);
+    const markdownAgainDescriptor = visualSessionDescriptors([markdownAgain])[0]!;
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [markdownAgainDescriptor] });
+    controller.saveSnapshot(markdownAgainDescriptor.identity, "viewer-a", { sourceFingerprint: markdownAgainDescriptor.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 240, scrollRatio: 0.24, maxScroll: 1_000 } }, controller.captureGeneration());
+    const conceptual = makeOption(sourceChanged, "conceptual");
+    const conceptualDescriptor = visualSessionDescriptors([conceptual])[0]!;
+    controller.reconcile({ scope: controller.getState().scope, availability: "ready", options: [conceptualDescriptor] });
+    view.rerender(<DualView options={[conceptual]} controller={controller} projectId="project" availability="ready" onExit={() => {}} />);
+    expect(controller.getState().snapshots.size).toBe(0);
+    expect(controller.getSnapshot(conceptualDescriptor.identity, "viewer-a", conceptualDescriptor.sourceFingerprint)).toBeNull();
+    expect(scroller()).toBeNull();
   });
 
   it("hides an already-collapsed Explorer without changing its persistent preference", async () => {

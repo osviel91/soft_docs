@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createVisualSessionController,
+  compatibleVisualSnapshot,
   fingerprintVisualSource,
   MAX_VISUAL_SESSIONS,
   type VisualResourceIdentity,
@@ -12,10 +13,10 @@ import {
 const scope: VisualSessionScope = { projectId: "p1", contextKind: "shared", contextId: "shared" };
 const identity = (resourceId: string, override: Partial<VisualResourceIdentity> = {}): VisualResourceIdentity => ({ ...scope, resourceId, ...override });
 const option = (resourceId: string, source: string, optionId = resourceId, override: Partial<VisualResourceIdentity> = {}): VisualSessionOption => ({
-  optionId, identity: identity(resourceId, override), sourceFingerprint: fingerprintVisualSource(source),
+  optionId, identity: identity(resourceId, override), sourceFingerprint: fingerprintVisualSource(source), representation: "conceptual",
 });
-const snapshot = (source: string, x: number, selectedNodeId: string | null = null): VisualSessionSnapshot => ({
-  sourceFingerprint: fingerprintVisualSource(source), transform: { x, y: -x, scale: 1.5 }, selectedNodeId,
+const snapshot = (source: string, x: number, selectedNodeId: string | null = null): VisualSessionSnapshot & { representation: "conceptual" } => ({
+  sourceFingerprint: fingerprintVisualSource(source), representation: "conceptual", transform: { x, y: -x, scale: 1.5 }, selectedNodeId,
 });
 
 describe("visual session controller", () => {
@@ -115,6 +116,116 @@ describe("visual session controller", () => {
     const updated = option("a", "new-source");
     controller.reconcile({ scope, availability: "ready", options: [updated] });
     expect(controller.getSnapshot(updated.identity, "viewer-a", updated.sourceFingerprint)).toBeNull();
+  });
+
+  it("keeps legacy camera snapshots valid when optional view and scroll fields are absent", () => {
+    const legacy: VisualSessionSnapshot = {
+      sourceFingerprint: fingerprintVisualSource("source-a"),
+      transform: { x: 4, y: 8, scale: 1.25 },
+      selectedNodeId: "node-a",
+    };
+    expect(compatibleVisualSnapshot(legacy, "source-a")).toEqual(legacy);
+  });
+
+  it("merges partial projection and Markdown scroll updates without replacing camera or selection", () => {
+    const controller = createVisualSessionController(scope);
+    const eventFlow = { ...option("flow", "flow-source"), representation: "event-flow" as const };
+    controller.reconcile({ scope, availability: "ready", options: [eventFlow] });
+    controller.select("a", eventFlow);
+    const generation = controller.captureGeneration();
+    const fingerprint = eventFlow.sourceFingerprint;
+    const base = { sourceFingerprint: fingerprint, representation: "event-flow" as const };
+    controller.saveSnapshot(eventFlow.identity, "viewer-a", {
+      ...base, transform: { x: 14, y: -3, scale: 1.75 }, selectedNodeId: "handler-a",
+    }, generation);
+    expect(controller.saveSnapshot(eventFlow.identity, "viewer-a", { ...base, eventFlowProjection: "causal" }, generation)).toBe(true);
+    let saved = controller.getSnapshot(eventFlow.identity, "viewer-a", fingerprint)!;
+    expect(saved.eventFlowProjection).toBe("causal");
+    expect(saved.transform).toEqual({ x: 14, y: -3, scale: 1.75 });
+    expect(saved.selectedNodeId).toBe("handler-a");
+
+    expect(saved.eventFlowProjection).toBe("causal");
+    expect(saved.transform).toEqual({ x: 14, y: -3, scale: 1.75 });
+    expect(saved.selectedNodeId).toBe("handler-a");
+
+    const markdown = { ...option("note", "# Read me"), representation: "markdown" as const };
+    controller.reconcile({ scope, availability: "ready", options: [markdown] });
+    controller.select("a", markdown);
+    const markdownBase = { sourceFingerprint: markdown.sourceFingerprint, representation: "markdown" as const };
+    controller.saveSnapshot(markdown.identity, "viewer-a", {
+      ...markdownBase, transform: { x: 14, y: -3, scale: 1.75 }, selectedNodeId: "legacy-shared-selection",
+    }, generation);
+    expect(controller.saveSnapshot(markdown.identity, "viewer-a", { ...markdownBase, markdownScroll: { scrollTop: 120, scrollRatio: 0.4, maxScroll: 300 } }, generation)).toBe(true);
+    saved = controller.getSnapshot(markdown.identity, "viewer-a", markdown.sourceFingerprint)!;
+    expect(saved.markdownScroll).toEqual({ scrollTop: 120, scrollRatio: 0.4, maxScroll: 300 });
+    expect(saved.transform).toEqual({ x: 14, y: -3, scale: 1.75 });
+    expect(saved.selectedNodeId).toBe("legacy-shared-selection");
+  });
+
+  it("does not merge a partial update across a changed fingerprint or representation", () => {
+    const controller = createVisualSessionController(scope);
+    const flow = { ...option("stable", "source"), representation: "event-flow" as const };
+    controller.reconcile({ scope, availability: "ready", options: [flow] });
+    controller.select("a", flow);
+    const generation = controller.captureGeneration();
+    controller.saveSnapshot(flow.identity, "viewer-a", {
+      sourceFingerprint: flow.sourceFingerprint, representation: flow.representation,
+      transform: { x: 25, y: 10, scale: 2 }, selectedNodeId: "event-node", eventFlowProjection: "topology",
+    }, generation);
+    const markdown = { ...flow, sourceFingerprint: fingerprintVisualSource("source"), representation: "markdown" as const };
+    controller.reconcile({ scope, availability: "ready", options: [markdown] });
+    controller.select("a", markdown);
+    expect(controller.getState().snapshots.size).toBe(0);
+    controller.saveSnapshot(flow.identity, "viewer-a", {
+      sourceFingerprint: markdown.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 8, scrollRatio: 0.2, maxScroll: 40 },
+    }, generation);
+    const saved = controller.getSnapshot(markdown.identity, "viewer-a", markdown.sourceFingerprint)!;
+    expect(saved.transform).toBeNull();
+    expect(saved.selectedNodeId).toBeNull();
+    expect(saved.eventFlowProjection).toBeUndefined();
+    expect(saved.markdownScroll).toEqual({ scrollTop: 8, scrollRatio: 0.2, maxScroll: 40 });
+  });
+
+  it("rejects Event Flow projection fields for other representations and invalid projection values", () => {
+    const controller = createVisualSessionController(scope);
+    const markdown = { ...option("note", "# Note"), representation: "markdown" as const };
+    controller.reconcile({ scope, availability: "ready", options: [markdown] });
+    controller.select("a", markdown);
+    expect(controller.saveSnapshot(markdown.identity, "viewer-a", {
+      sourceFingerprint: markdown.sourceFingerprint, representation: "markdown", eventFlowProjection: "flow",
+    }, controller.captureGeneration())).toBe(false);
+    expect(controller.saveSnapshot(markdown.identity, "viewer-a", {
+      sourceFingerprint: markdown.sourceFingerprint, representation: "markdown", transformProjection: "flow",
+    }, controller.captureGeneration())).toBe(false);
+    expect(controller.saveSnapshot(markdown.identity, "viewer-a", {
+      sourceFingerprint: markdown.sourceFingerprint, representation: "markdown", markdownScroll: { scrollTop: 15, scrollRatio: Number.NaN, maxScroll: 20 },
+    }, controller.captureGeneration())).toBe(false);
+
+    const flow = { ...option("flow", "event A"), representation: "event-flow" as const };
+    controller.reconcile({ scope, availability: "ready", options: [flow] });
+    controller.select("a", flow);
+    expect(controller.saveSnapshot(flow.identity, "viewer-a", {
+      sourceFingerprint: flow.sourceFingerprint, representation: "event-flow", eventFlowProjection: "unknown" as never,
+    }, controller.captureGeneration())).toBe(false);
+  });
+
+  it("rejects a delayed projection callback after suspension and explicit close", () => {
+    const controller = createVisualSessionController(scope);
+    const flow = { ...option("flow", "event A"), representation: "event-flow" as const };
+    controller.reconcile({ scope, availability: "ready", options: [flow] });
+    controller.select("a", flow);
+    const beforeSuspend = controller.captureGeneration();
+    controller.suspend();
+    expect(controller.saveSnapshot(flow.identity, "viewer-a", {
+      sourceFingerprint: flow.sourceFingerprint, representation: "event-flow", eventFlowProjection: "causal",
+    }, beforeSuspend)).toBe(false);
+    controller.resume();
+    const beforeClose = controller.captureGeneration();
+    controller.close();
+    expect(controller.saveSnapshot(flow.identity, "viewer-a", {
+      sourceFingerprint: flow.sourceFingerprint, representation: "event-flow", eventFlowProjection: "topology",
+    }, beforeClose)).toBe(false);
+    expect(controller.getState().snapshots.size).toBe(0);
   });
 
   it("keeps duplicate A/B resources independent and swaps resource plus lineage", () => {
