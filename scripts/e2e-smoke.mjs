@@ -2731,8 +2731,14 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         const p1MarkdownPaneB = page.getByTestId("dual-pane-b");
         await p1MarkdownPaneA.getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
         await p1MarkdownPaneB.getByTestId("markdown-body").getByRole("heading", { name: "Long reading", level: 1 }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
-        await page.evaluate(() => [...document.querySelectorAll(".note-preview")].forEach((element, index) => { element.scrollTop = index ? 1_050 : 450; element.dispatchEvent(new Event("scroll", { bubbles: true })); }));
-        await page.waitForTimeout(100);
+        // Let the panes' post-selection restoration RAFs settle before setting
+        // the distinct P1 read positions used as the project-isolation input.
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await Promise.all([
+          p1MarkdownPaneA.locator(".note-preview").evaluate(element => { element.scrollTop = 450; element.dispatchEvent(new Event("scroll", { bubbles: true })); }),
+          p1MarkdownPaneB.locator(".note-preview").evaluate(element => { element.scrollTop = 1_050; element.dispatchEvent(new Event("scroll", { bubbles: true })); }),
+        ]);
+        await page.waitForFunction(() => Math.abs((document.querySelector('[data-testid="dual-pane-a"] .note-preview')?.scrollTop ?? 0) - 450) <= 2 && Math.abs((document.querySelector('[data-testid="dual-pane-b"] .note-preview')?.scrollTop ?? 0) - 1_050) <= 2, undefined, { timeout: UI_TIMEOUT_MS });
         const p1ProjectScrolls = await Promise.all([p1MarkdownPaneA.locator(".note-preview").evaluate(element => element.scrollTop), p1MarkdownPaneB.locator(".note-preview").evaluate(element => element.scrollTop)]);
         check("P1 Markdown starts project isolation with distinct real A/B offsets", Math.abs(p1ProjectScrolls[0] - 450) <= 2 && Math.abs(p1ProjectScrolls[1] - 1_050) <= 2, JSON.stringify(p1ProjectScrolls));
         const projectSelector = page.getByRole("combobox", { name: "Dual View project" });
