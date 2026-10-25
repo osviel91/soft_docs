@@ -491,9 +491,24 @@ describe("renderDiagramToSvg — well-formedness", () => {
 
   it("draws one lifeline per participant and one line per message", () => {
     const doc = parseSvg(renderDiagramToSvg(sampleLayout()));
-    const lines = doc.querySelectorAll("line");
-    // Two participant lifelines plus the single message arrow.
-    expect(lines.length).toBe(3);
+    const lifelines = doc.querySelectorAll('g.participant line[stroke-dasharray]');
+    const visibleMessageLines = doc.querySelectorAll('.sequence-message > line:not(.sequence-message__hit)');
+    expect(lifelines.length).toBe(2);
+    expect(visibleMessageLines.length).toBe(1);
+  });
+
+  it("gives every part of a message one delegated identity and a geometry-only hit stroke", () => {
+    const layout = sampleLayout();
+    layout.messages[0]!.nodeId = "message@1:0";
+    const group = parseSvg(renderDiagramToSvg(layout)).querySelector(".sequence-message")!;
+    expect(group.getAttribute("data-message-node-id")).toBe("message@1:0");
+    expect(group.querySelector("[data-sequence-number]")?.hasAttribute("data-node-id")).toBe(false);
+    const hit = group.querySelector("line")!;
+    expect(hit.getAttribute("class")).toBe("sequence-message__hit");
+    expect(hit.getAttribute("pointer-events")).toBe("stroke");
+    expect(hit.getAttribute("stroke-width")).toBe("14");
+    expect(hit.getAttribute("vector-effect")).toBe("non-scaling-stroke");
+    expect(hit.getAttribute("stroke")).toBe("transparent");
   });
 
   it("keeps the message arrowhead and label as siblings of the line", () => {
@@ -1044,7 +1059,7 @@ end
     const withoutIds = renderDiagramToSvg(clearNodeIds(layout), {
       expandedNotes,
     });
-    expect(withIds.replace(/ data-node-id="[^"]*"/g, "")).toBe(withoutIds);
+    expect(withIds.replace(/ data-(?:message-)?node-id="[^"]*"/g, "")).toBe(withoutIds);
   });
 
   it("renders the same AST twice byte-identically", () => {

@@ -13,6 +13,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -97,21 +98,25 @@ export interface DiagramViewportProps {
 
 /** Pixels to pan per arrow key press. */
 const KEYBOARD_PAN_STEP = 48;
-const PARTICIPANT_HIT_RADIUS = 12;
-const CONTEXT_HINT_WIDTH = 300;
-const CONTEXT_HINT_HEIGHT = 96;
+const PARTICIPANT_HIT_RADIUS = 18;
+const POINTER_SLOP = 5;
 
 interface ParticipantHint {
   participantId: string;
   label: string;
+  anchorX: number;
+  anchorY: number;
   left: number;
   top: number;
-  source: "alt" | "focus";
+  source: "alt" | "focus" | "selected";
 }
 
 interface MessageEndpointsHint {
   from: string;
   to: string;
+  label: string;
+  anchorX: number;
+  anchorY: number;
   left: number;
   top: number;
 }
@@ -153,6 +158,8 @@ export function nodeIdFromTarget(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   const node = target.closest("[data-node-id]");
   return node?.getAttribute("data-node-id")
+    ?? target.closest("[data-message-node-id]")?.getAttribute("data-message-node-id")
+    ?? target.closest("[data-participant-id]")?.querySelector("[data-node-id]")?.getAttribute("data-node-id")
     ?? target.closest("[data-semantic-message-id], [data-semantic-message-name]")?.querySelector("[data-node-id]")?.getAttribute("data-node-id")
     ?? null;
 }
@@ -189,14 +196,19 @@ function participantNearPoint(content: HTMLElement | null, clientX: number, clie
   return nearest;
 }
 
-function contextHintPosition(container: HTMLElement | null, clientX: number, clientY: number): { left: number; top: number } {
+export function contextHintPosition(container: HTMLElement | null, clientX: number, clientY: number, hint: HTMLElement | null = null): { left: number; top: number } {
   const bounds = container?.getBoundingClientRect();
   if (!bounds) return { left: 8, top: 8 };
-  const maxLeft = Math.max(8, bounds.width - CONTEXT_HINT_WIDTH - 8);
-  const maxTop = Math.max(8, bounds.height - CONTEXT_HINT_HEIGHT - 8);
+  const hintBounds = hint?.getBoundingClientRect();
+  const width = Math.min(Math.max(1, bounds.width - 16), Math.max(180, hintBounds?.width ?? 300));
+  const height = Math.min(Math.max(1, bounds.height - 16), Math.max(40, hintBounds?.height ?? 72));
+  const maxLeft = Math.max(8, bounds.width - width - 8);
+  const maxTop = Math.max(8, bounds.height - height - 8);
+  const left = clientX - bounds.left + 14;
+  const top = clientY - bounds.top + 14;
   return {
-    left: Math.min(maxLeft, Math.max(8, clientX - bounds.left + 14)),
-    top: Math.min(maxTop, Math.max(8, clientY - bounds.top + 14)),
+    left: Math.min(maxLeft, Math.max(8, left > maxLeft ? clientX - bounds.left - width - 14 : left)),
+    top: Math.min(maxTop, Math.max(8, top > maxTop ? clientY - bounds.top - height - 14 : top)),
   };
 }
 
@@ -232,6 +244,7 @@ export default function DiagramViewport({
   const [participantHint, setParticipantHint] = useState<ParticipantHint | null>(null);
   const [focusedParticipantId, setFocusedParticipantId] = useState<string | null>(null);
   const [messageEndpointsHint, setMessageEndpointsHint] = useState<MessageEndpointsHint | null>(null);
+  const contextHintRef = useRef<HTMLDivElement | null>(null);
   const [paneSize, setPaneSize] = useState<Size>(() => measure(null));
   const [paneMeasured, setPaneMeasured] = useState(false);
   const paneSizeRef = useRef(paneSize);
@@ -273,7 +286,7 @@ export default function DiagramViewport({
   // Whether the pointer moved during the current press, so a pan is not read as
   // a click on whatever happened to be under it.
   const movedSincePointerDown = useRef(false);
-  const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number; dragging: boolean; excluded: boolean } | null>(
     null,
   );
 
@@ -451,9 +464,53 @@ export default function DiagramViewport({
     }
     const labelFor = (participantId: string) => content.querySelector(`[data-participant-id="${CSS.escape(participantId)}"]`)?.getAttribute("data-participant-label") ?? participantId;
     const bounds = message.getBoundingClientRect();
-    const position = contextHintPosition(viewportRef.current, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
-    setMessageEndpointsHint({ from: labelFor(from), to: labelFor(to), ...position });
-  }, [activeNodeId, participantAssist, svg]);
+    const anchorX = (bounds.left + bounds.right) / 2;
+    const anchorY = (bounds.top + bounds.bottom) / 2;
+    const position = contextHintPosition(viewportRef.current, anchorX, anchorY, contextHintRef.current);
+    setMessageEndpointsHint({ from: labelFor(from), to: labelFor(to), label: message.getAttribute("data-message-label") ?? "", anchorX, anchorY, ...position });
+  }, [activeNodeId, participantAssist, svg, transform, paneSize]);
+
+  useEffect(() => {
+    if (!participantAssist || !activeNodeId) {
+      setParticipantHint((current) => current?.source === "selected" ? null : current);
+      return;
+    }
+    const content = contentRef.current;
+    const participant = [...(content?.querySelectorAll<SVGGElement>("g[data-participant-id]") ?? [])]
+      .find((group) => group.getAttribute("data-node-id") === activeNodeId || group.querySelector(`[data-node-id="${CSS.escape(activeNodeId)}"]`));
+    if (!participant) {
+      setParticipantHint((current) => current?.source === "selected" ? null : current);
+      return;
+    }
+    const id = participant.getAttribute("data-participant-id") ?? "";
+    const label = participant.getAttribute("data-participant-label") ?? id;
+    const bounds = participant.getBoundingClientRect();
+    const position = contextHintPosition(viewportRef.current, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2, contextHintRef.current);
+    setParticipantHint({ participantId: id, label, anchorX: (bounds.left + bounds.right) / 2, anchorY: (bounds.top + bounds.bottom) / 2, source: "selected", ...position });
+  }, [activeNodeId, participantAssist, paneSize, svg, transform]);
+
+  useLayoutEffect(() => {
+    const container = viewportRef.current;
+    const hint = contextHintRef.current;
+    if (!container || !hint) return;
+    const anchor = participantHint
+      ? { x: participantHint.anchorX, y: participantHint.anchorY }
+      : messageEndpointsHint
+        ? { x: messageEndpointsHint.anchorX, y: messageEndpointsHint.anchorY }
+        : null;
+    if (!anchor) return;
+    const position = contextHintPosition(container, anchor.x, anchor.y, hint);
+    if (participantHint && (position.left !== participantHint.left || position.top !== participantHint.top))
+      setParticipantHint((current) => current ? { ...current, ...position } : current);
+    if (!participantHint && messageEndpointsHint && (position.left !== messageEndpointsHint.left || position.top !== messageEndpointsHint.top))
+      setMessageEndpointsHint((current) => current ? { ...current, ...position } : current);
+  });
+
+  useEffect(() => {
+    if (!messageEndpointsHint || participantHint) return;
+    const position = contextHintPosition(viewportRef.current, messageEndpointsHint.anchorX, messageEndpointsHint.anchorY, contextHintRef.current);
+    setMessageEndpointsHint((current) => current ? { ...current, ...position } : current);
+  }, [messageEndpointsHint?.anchorX, messageEndpointsHint?.anchorY, messageEndpointsHint?.from, participantHint, paneSize, transform]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return; // left button / touch / pen only
@@ -462,15 +519,19 @@ export default function DiagramViewport({
     // would retarget the follow-up click at the pane, so the delegated toggle
     // would never see it — and a press on a bullet should not pan anyway.
     if (onNoteToggle && noteIndexFromTarget(event.target) !== null) return;
-    // Clickable SVG nodes must keep their original click target for delegated selection.
-    if (semanticTarget(event.target) || nodeIdFromTarget(event.target) !== null) return;
+    // Start as a potential tap. Capture only after the movement threshold is
+    // crossed, so a tap retains its original SVG target for delegated selection.
     dragRef.current = {
       pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
       x: event.clientX,
       y: event.clientY,
+      dragging: false,
+      // Participant groups remain native drag sources for editor insertion; do
+      // not steal their gesture for canvas pan.
+      excluded: Boolean((onNoteToggle && noteIndexFromTarget(event.target) !== null) || participantDragName(event.target) !== null),
     };
-    setIsPanning(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -480,7 +541,7 @@ export default function DiagramViewport({
         if (match) {
           const participantId = match.group.getAttribute("data-participant-id") ?? "";
           const position = contextHintPosition(viewportRef.current, event.clientX, event.clientY);
-          setParticipantHint({ participantId, label: match.group.getAttribute("data-participant-label") ?? participantId, source: "alt", ...position });
+          setParticipantHint({ participantId, label: match.group.getAttribute("data-participant-label") ?? participantId, anchorX: event.clientX, anchorY: event.clientY, source: "alt", ...position });
         } else {
           setParticipantHint((current) => current?.source === "alt" ? null : current);
         }
@@ -489,12 +550,18 @@ export default function DiagramViewport({
       }
     }
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const dx = event.clientX - drag.x;
-    const dy = event.clientY - drag.y;
-    // Past a couple of pixels this is a pan, not a click on what is underneath.
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2)
+    if (!drag || drag.pointerId !== event.pointerId || drag.excluded) return;
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    const wasDragging = drag.dragging;
+    if (!wasDragging && distance <= POINTER_SLOP) return;
+    if (!wasDragging) {
+      drag.dragging = true;
       movedSincePointerDown.current = true;
+      setIsPanning(true);
+      try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* detached/test targets */ }
+    }
+    const dx = event.clientX - (wasDragging ? drag.x : drag.startX);
+    const dy = event.clientY - (wasDragging ? drag.y : drag.startY);
     drag.x = event.clientX;
     drag.y = event.clientY;
     updateTransform((current) => panBy(current, dx, dy));
@@ -502,11 +569,18 @@ export default function DiagramViewport({
 
   const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
+    const wasDragging = dragRef.current.dragging;
     dragRef.current = null;
     setIsPanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    if (!wasDragging) movedSincePointerDown.current = false;
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId);
+    } catch { /* the browser may already have released capture on cancellation */ }
+  };
+
+  const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    endDrag(event);
+    movedSincePointerDown.current = false;
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -561,7 +635,11 @@ export default function DiagramViewport({
     }
     const nodeId = nodeIdFromTarget(event.target);
     if (nodeId !== null) onNodeSelect?.(nodeId);
-    else onNodeSelect?.(null);
+    else {
+      const match = participantNearPoint(contentRef.current, event.nativeEvent.clientX, event.nativeEvent.clientY);
+      if (match) onNodeSelect?.(nodeIdFromTarget(match.group));
+      else onNodeSelect?.(null);
+    }
   };
 
   // Highlight the active node by toggling a class on the injected SVG. Doing it
@@ -577,7 +655,12 @@ export default function DiagramViewport({
     if (activeNodeId) {
       const target = content.querySelector(`[data-node-id="${CSS.escape(activeNodeId)}"]`);
       target?.classList.add("svg-node--active");
+      for (const participant of content.querySelectorAll<SVGGElement>("g[data-participant-id]")) {
+        const selected = participant.querySelector(`[data-node-id="${CSS.escape(activeNodeId)}"]`) !== null || participant.getAttribute("data-node-id") === activeNodeId;
+        participant.classList.toggle("participant--selected", selected);
+      }
     }
+    if (!activeNodeId) for (const participant of content.querySelectorAll(".participant--selected")) participant.classList.remove("participant--selected");
     if (!conceptual) return;
     const relatedEdges: Element[] = [];
     for (const edge of conceptual.querySelectorAll(".conceptual__connection")) {
@@ -703,7 +786,7 @@ export default function DiagramViewport({
     const line = group.querySelector<SVGGraphicsElement>('line[stroke-dasharray]');
     const bounds = (line ?? group).getBoundingClientRect();
     const position = contextHintPosition(viewportRef.current, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
-    setParticipantHint({ participantId, label, source: "focus", ...position });
+    setParticipantHint({ participantId, label, anchorX: (bounds.left + bounds.right) / 2, anchorY: (bounds.top + bounds.bottom) / 2, source: "focus", ...position });
   };
 
   const onContentBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
@@ -788,7 +871,7 @@ export default function DiagramViewport({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerCancel={cancelDrag}
         onPointerLeave={() => setParticipantHint((current) => current?.source === "alt" ? null : current)}
         onClick={(event) => {
           if (event.target === event.currentTarget && !movedSincePointerDown.current) onNodeSelect?.(null);
@@ -813,8 +896,8 @@ export default function DiagramViewport({
         />
       </div>
 
-      {participantHint ? <div className="viewport__context-hint" data-testid="participant-context-hint" role="status" aria-live="polite" style={{ left: participantHint.left, top: participantHint.top }}>Participant · {participantHint.label}</div> : null}
-      {!participantHint && messageEndpointsHint ? <div className="viewport__context-hint" data-testid="message-endpoints-hint" role="status" aria-live="polite" style={{ left: messageEndpointsHint.left, top: messageEndpointsHint.top }}>From {messageEndpointsHint.from} → To {messageEndpointsHint.to}</div> : null}
+      {participantHint ? <div ref={contextHintRef} className="viewport__context-hint" data-testid="participant-context-hint" role="status" aria-live="polite" style={{ left: participantHint.left, top: participantHint.top }}>Participant · {participantHint.label}</div> : null}
+      {!participantHint && messageEndpointsHint ? <div ref={contextHintRef} className="viewport__context-hint" data-testid="message-endpoints-hint" role="status" aria-live="polite" style={{ left: messageEndpointsHint.left, top: messageEndpointsHint.top }}>{messageEndpointsHint.label ? `${messageEndpointsHint.label} · ` : ""}From {messageEndpointsHint.from} → To {messageEndpointsHint.to}</div> : null}
 
       <div className="viewport__rail" role="group" aria-label="Zoom controls">
         <button

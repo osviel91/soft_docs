@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import DiagramViewport, {
+  contextHintPosition,
+  nodeIdFromTarget,
   noteIndexFromTarget,
   participantDragName,
 } from "../../../src/features/preview/DiagramViewport";
@@ -36,6 +38,45 @@ describe("DiagramViewport", () => {
   it("renders the supplied svg markup", () => {
     render(<DiagramViewport svg={SVG} size={SIZE} />);
     expect(screen.getByTestId("viewport-content").innerHTML).toContain("<svg");
+  });
+
+  it.each(["circle", "line", "polygon", "text"])("resolves a message %s to its message identity", (part) => {
+    const onNodeSelect = vi.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="sequence-message" data-sequence-message="1" data-message-node-id="message@1:0"><circle data-sequence-number="1"/><line/><polygon/><text>request</text></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+    const target = document.querySelector(`.sequence-message ${part}`)!;
+    expect(nodeIdFromTarget(target)).toBe("message@1:0");
+    fireEvent.click(target);
+    expect(onNodeSelect).toHaveBeenCalledWith("message@1:0");
+  });
+
+  it("resolves every self-loop segment to its common message identity", () => {
+    const onNodeSelect = vi.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="sequence-message" data-message-node-id="message@2:0"><path data-segment="loop-top"/><path data-segment="loop-side"/><path data-segment="loop-bottom"/><text data-sequence-number="2">2</text></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+    for (const target of document.querySelectorAll(".sequence-message > *")) fireEvent.click(target);
+    expect(onNodeSelect).toHaveBeenNthCalledWith(1, "message@2:0");
+    expect(onNodeSelect).toHaveBeenCalledTimes(4);
+  });
+
+  it("selects a participant from its lifeline and resolves nearby screen-space corridor hits", () => {
+    const onNodeSelect = vi.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="participant" data-participant-id="billing"><rect data-node-id="participant@0:0"/><line class="lifeline" x1="100" x2="100" y1="0" y2="300" stroke-dasharray="4 3"/></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} participantAssist />);
+    const line = document.querySelector(".lifeline")!;
+    fireEvent.click(line);
+    expect(onNodeSelect).toHaveBeenLastCalledWith("participant@0:0");
+    vi.spyOn(line, "getBoundingClientRect").mockReturnValue({ left: 99, right: 101, top: 0, bottom: 300, width: 2, height: 300 } as DOMRect);
+    fireEvent.click(screen.getByTestId("viewport-content"), { clientX: 109, clientY: 150 });
+    expect(onNodeSelect).toHaveBeenLastCalledWith("participant@0:0");
+  });
+
+  it("measures context position against available space and flips away from viewport edges", () => {
+    const container = document.createElement("div");
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ left: 20, top: 30, width: 400, height: 300 } as DOMRect);
+    const hint = document.createElement("div");
+    vi.spyOn(hint, "getBoundingClientRect").mockReturnValue({ width: 220, height: 80 } as DOMRect);
+    expect(contextHintPosition(container, 410, 320, hint)).toEqual({ left: 156, top: 196 });
   });
 
   it("clears node selection when the blank diagram canvas is clicked", () => {
@@ -88,10 +129,16 @@ describe("DiagramViewport", () => {
   });
 
   it("shows exact message endpoints from renderer metadata when a Sequence message is active", async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g data-participant-id="A" data-participant-label="Order Service"><line x1="80" y1="20" x2="80" y2="280" stroke-dasharray="4 3"/></g><g data-participant-id="B" data-participant-label="Billing Service"><line x1="260" y1="20" x2="260" y2="280" stroke-dasharray="4 3"/></g><g class="sequence-message" data-sequence-message="1" data-message-from="A" data-message-to="B"><line data-node-id="message@1:0" x1="80" y1="140" x2="260" y2="140"/></g></svg>';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g data-participant-id="A" data-participant-label="Order Service"><line x1="80" y1="20" x2="80" y2="280" stroke-dasharray="4 3"/></g><g data-participant-id="B" data-participant-label="Billing Service"><line x1="260" y1="20" x2="260" y2="280" stroke-dasharray="4 3"/></g><g class="sequence-message" data-sequence-message="1" data-message-node-id="message@1:0" data-message-label="Create invoice" data-message-from="A" data-message-to="B"><line data-node-id="message@1:0" x1="80" y1="140" x2="260" y2="140"/></g></svg>';
     render(<DiagramViewport svg={svg} size={SIZE} activeNodeId="message@1:0" participantAssist />);
 
-    expect(await screen.findByTestId("message-endpoints-hint")).toHaveTextContent("From Order Service → To Billing Service");
+    expect(await screen.findByTestId("message-endpoints-hint")).toHaveTextContent("Create invoice · From Order Service → To Billing Service");
+  });
+
+  it("shows stable participant context for an externally selected participant", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="participant" data-participant-id="billing"><rect data-node-id="participant@0:0"/><line x1="100" x2="100" y1="10" y2="290" stroke-dasharray="4 3"/></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} activeNodeId="participant@0:0" participantAssist />);
+    expect(await screen.findByTestId("participant-context-hint")).toHaveTextContent("Participant · billing");
   });
 
   it("clamps the participant hint inside the viewport near its lower-right edge", async () => {
@@ -108,7 +155,7 @@ describe("DiagramViewport", () => {
     }
     const hint = await screen.findByTestId("participant-context-hint");
     expect(Number.parseFloat(hint.style.left)).toBeLessThanOrEqual(492);
-    expect(Number.parseFloat(hint.style.top)).toBeLessThanOrEqual(496);
+    expect(Number.parseFloat(hint.style.top)).toBeLessThanOrEqual(504);
   });
 
   it("uses one roving tab stop for participants and arrow keys move focus without panning", async () => {
@@ -168,11 +215,42 @@ describe("DiagramViewport", () => {
       expect(onNodeSelect).toHaveBeenCalledWith("concept:account");
 
       fireEvent.pointerDown(screen.getByTestId("viewport-pane"), { button: 0, pointerId: 2, clientX: 200, clientY: 200 });
+      expect(capture).not.toHaveBeenCalled();
+      fireEvent.pointerMove(screen.getByTestId("viewport-pane"), { pointerId: 2, clientX: 212, clientY: 200 });
       expect(capture).toHaveBeenCalledTimes(1);
     } finally {
       if (original) Object.defineProperty(HTMLElement.prototype, "setPointerCapture", original);
       else Reflect.deleteProperty(HTMLElement.prototype, "setPointerCapture");
       if (originalPointerEvent) Object.defineProperty(window, "PointerEvent", originalPointerEvent);
+      else Reflect.deleteProperty(window, "PointerEvent");
+    }
+  });
+
+  it("treats sub-threshold movement as a tap and suppresses selection after a pan", () => {
+    const onNodeSelect = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(window, "PointerEvent");
+    Object.defineProperty(window, "PointerEvent", { configurable: true, value: MouseEvent });
+    try {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="sequence-message" data-message-node-id="message:1"><text>number</text></g></svg>';
+      render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+      const target = document.querySelector(".sequence-message text")!;
+      const pane = screen.getByTestId("viewport-pane");
+      const before = transformOf();
+      fireEvent.pointerDown(target, { button: 0, pointerId: 9, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(target, { pointerId: 9, clientX: 13, clientY: 12 });
+      fireEvent.pointerUp(target, { pointerId: 9, clientX: 13, clientY: 12 });
+      fireEvent.click(target);
+      expect(transformOf()).toBe(before);
+      expect(onNodeSelect).toHaveBeenLastCalledWith("message:1");
+
+      fireEvent.pointerDown(target, { button: 0, pointerId: 10, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(target, { pointerId: 10, clientX: 30, clientY: 20 });
+      fireEvent.pointerUp(pane, { pointerId: 10, clientX: 30, clientY: 20 });
+      fireEvent.click(pane);
+      expect(transformOf()).not.toBe(before);
+      expect(onNodeSelect).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) Object.defineProperty(window, "PointerEvent", original);
       else Reflect.deleteProperty(window, "PointerEvent");
     }
   });
@@ -483,5 +561,24 @@ describe("DiagramViewport — dragging a participant", () => {
       { dataTransfer: { setData, effectAllowed: "" } },
     );
     expect(setData).toHaveBeenCalledWith("text/plain", "API");
+  });
+
+  it("does not capture a participant drag as a canvas pan", () => {
+    const original = Object.getOwnPropertyDescriptor(window, "PointerEvent");
+    Object.defineProperty(window, "PointerEvent", { configurable: true, value: MouseEvent });
+    try {
+      render(<DiagramViewport svg={SVG_WITH_PARTICIPANT} size={SIZE} />);
+      const participant = document.querySelector('[data-participant-id="API"]')!;
+      const before = transformOf();
+      fireEvent.pointerDown(participant, { button: 0, pointerId: 4, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(participant, { pointerId: 4, clientX: 40, clientY: 10 });
+      expect(transformOf()).toBe(before);
+      const setData = vi.fn();
+      fireEvent.dragStart(participant, { dataTransfer: { setData, effectAllowed: "" } });
+      expect(setData).toHaveBeenCalledWith("text/plain", "API");
+    } finally {
+      if (original) Object.defineProperty(window, "PointerEvent", original);
+      else Reflect.deleteProperty(window, "PointerEvent");
+    }
   });
 });
