@@ -1355,7 +1355,7 @@ async function runChecks(page, idp) {
     "self-message loop",
   );
   const loopPaths = await page
-    .locator('[data-testid="preview-svg"] path')
+    .locator('[data-testid="preview-svg"] path:not(.sequence-message__hit)')
     .count();
   check(
     "a self-message paints a loop path",
@@ -2639,6 +2639,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           activeNode: pane?.querySelector(".svg-node--active")?.getAttribute("data-node-id") ?? null,
         };
       }));
+      const cameraTransform = (pane) => pane.transform.match(/transform:\s*([^;]+)/)?.[1] ?? pane.transform;
       const initial = await paneState();
       check(
         "Dual View renders two distinct Sequence SVGs with nodes",
@@ -2675,6 +2676,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
           throw new Error(`Self-loop target click did not select ${selfLoopId}; target=${await target.evaluate((element) => element.outerHTML)}, active=${await panes[0].locator(".svg-node--active").evaluateAll((elements) => elements.map((element) => element.outerHTML))}`);
         }
       }
+      await page.waitForFunction(() => document.querySelector('[data-testid="dual-pane-a"] [data-testid="message-endpoints-hint"]')?.textContent?.includes("Retry locally · From Browser → To Browser"), undefined, { timeout: UI_TIMEOUT_MS });
       const sequenceCameraAfterSelections = await paneState();
       check("Number, line, arrow, label and self-loop segments select their common message without moving either camera", sequenceSelectionTargetsWork && sequenceCameraAfterSelections.every((pane, index) => pane.transform === initial[index].transform));
       const sequenceContext = panes[0].getByTestId("message-endpoints-hint");
@@ -2715,17 +2717,17 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("button", { name: "Maximize Viewer A" }).click();
       await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "a", undefined, { timeout: UI_TIMEOUT_MS });
       const cameraWhileMaximized = await paneState();
-      check("Maximizing A keeps both mounted Sequence cameras unchanged", cameraWhileMaximized.every((pane, index) => pane.transform === initial[index].transform) && await page.getByTestId("dual-pane-b").count() === 1);
+      check("Maximizing A keeps both mounted Sequence cameras unchanged", cameraWhileMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])) && await page.getByTestId("dual-pane-b").count() === 1);
       await page.getByRole("button", { name: "Restore Viewer A" }).click();
        await panes[1].locator('[data-testid="preview-svg"] svg').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
        const cameraAfterRestore = await paneState();
-       check("Restoring A keeps both Sequence camera transforms without implicit Fit", cameraAfterRestore.every((pane, index) => pane.transform === initial[index].transform), JSON.stringify(cameraAfterRestore.map(pane => pane.transform)));
+       check("Restoring A keeps both Sequence camera transforms without implicit Fit", cameraAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])), JSON.stringify(cameraAfterRestore.map(pane => pane.transform)));
        await page.getByRole("button", { name: "Maximize Viewer B" }).click();
        const sequenceBMaximized = await paneState();
        await page.getByRole("button", { name: "Restore Viewer B" }).click();
        await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "normal", undefined, { timeout: UI_TIMEOUT_MS });
        const sequenceBAfterRestore = await paneState();
-       check("Maximizing/restoring B leaves both Sequence SVG camera transforms unchanged", sequenceBMaximized.every((pane, index) => pane.transform === initial[index].transform) && sequenceBAfterRestore.every((pane, index) => pane.transform === initial[index].transform));
+       check("Maximizing/restoring B leaves both Sequence SVG camera transforms unchanged", sequenceBMaximized.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])) && sequenceBAfterRestore.every((pane, index) => cameraTransform(pane) === cameraTransform(initial[index])));
        await page.getByRole("button", { name: "Swap dual viewers" }).click();
        const swappedSequenceInitial = await paneState();
        await page.getByRole("button", { name: "Maximize Viewer A" }).click();
