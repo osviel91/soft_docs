@@ -101,6 +101,13 @@ const KEYBOARD_PAN_STEP = 48;
 const PARTICIPANT_HIT_RADIUS = 18;
 const POINTER_SLOP = 5;
 
+interface TouchContact { x: number; y: number }
+interface PinchGesture { distance: number; midpoint: { x: number; y: number } }
+
+function midpoint(a: TouchContact, b: TouchContact) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
 interface ParticipantHint {
   participantId: string;
   label: string;
@@ -289,6 +296,49 @@ export default function DiagramViewport({
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number; dragging: boolean; excluded: boolean } | null>(
     null,
   );
+  const touchContacts = useRef(new Map<number, TouchContact>());
+  const pinchRef = useRef<PinchGesture | null>(null);
+  const suppressTouchClick = useRef(false);
+
+  const localPoint = (clientX: number, clientY: number) => {
+    const bounds = paneRef.current?.getBoundingClientRect();
+    return { x: clientX - (bounds?.left ?? 0), y: clientY - (bounds?.top ?? 0) };
+  };
+
+  const beginPinch = (currentTarget: HTMLDivElement) => {
+    const contacts = [...touchContacts.current.entries()].slice(0, 2);
+    if (contacts.length < 2) return;
+    const [first, second] = contacts.map(([, point]) => point);
+    pinchRef.current = {
+      distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+      midpoint: midpoint(first, second),
+    };
+    dragRef.current = null;
+    movedSincePointerDown.current = true;
+    suppressTouchClick.current = true;
+    setIsPanning(false);
+    for (const [pointerId] of contacts) {
+      try { currentTarget.setPointerCapture(pointerId); } catch { /* capture may be unavailable in tests */ }
+    }
+  };
+
+  const clearTouchGesture = () => {
+    touchContacts.current.clear();
+    pinchRef.current = null;
+    dragRef.current = null;
+    movedSincePointerDown.current = false;
+    setIsPanning(false);
+  };
+
+  useEffect(() => () => {
+    const pane = paneRef.current;
+    if (pane) for (const pointerId of touchContacts.current.keys()) {
+      try { if (pane.hasPointerCapture(pointerId)) pane.releasePointerCapture(pointerId); } catch { /* unmount cleanup */ }
+    }
+    touchContacts.current.clear();
+    pinchRef.current = null;
+    dragRef.current = null;
+  }, []);
 
   // Track the pane's size so fit/center stay correct when the layout changes.
   // ResizeObserver is absent in jsdom, hence the guard.
@@ -514,6 +564,24 @@ export default function DiagramViewport({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return; // left button / touch / pen only
+    // A cancelled gesture may not synthesize a click. Retire its click guard
+    // when the next independent pointer sequence begins, not before the
+    // current gesture's possible click has had a chance to be consumed.
+    if (touchContacts.current.size === 0) suppressTouchClick.current = false;
+    if (event.pointerType === "touch") {
+      const point = localPoint(event.clientX, event.clientY);
+      touchContacts.current.set(event.pointerId, point);
+      if (touchContacts.current.size === 2) beginPinch(event.currentTarget);
+      else if (touchContacts.current.size > 2) {
+        // Ignore extra fingers, but never allow them to become taps/selections.
+        suppressTouchClick.current = true;
+        movedSincePointerDown.current = true;
+      } else {
+        movedSincePointerDown.current = false;
+        dragRef.current = { pointerId: event.pointerId, startX: point.x, startY: point.y, x: point.x, y: point.y, dragging: false, excluded: Boolean((onNoteToggle && noteIndexFromTarget(event.target) !== null) || participantDragName(event.target) !== null) };
+      }
+      return;
+    }
     movedSincePointerDown.current = false;
     // A note bullet is a control, not a drag surface. Capturing the pointer here
     // would retarget the follow-up click at the pane, so the delegated toggle
@@ -535,6 +603,43 @@ export default function DiagramViewport({
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch" && touchContacts.current.has(event.pointerId)) {
+      const point = localPoint(event.clientX, event.clientY);
+      touchContacts.current.set(event.pointerId, point);
+      const contacts = [...touchContacts.current.values()].slice(0, 2);
+      if (contacts.length === 2) {
+        const nextMidpoint = midpoint(contacts[0], contacts[1]);
+        const nextDistance = Math.max(1, Math.hypot(contacts[1].x - contacts[0].x, contacts[1].y - contacts[0].y));
+        const previous = pinchRef.current;
+        if (previous) {
+          updateTransform((current) => zoomAtPoint(
+            panBy(current, nextMidpoint.x - previous.midpoint.x, nextMidpoint.y - previous.midpoint.y),
+            nextDistance / previous.distance,
+            nextMidpoint,
+          ));
+        }
+        pinchRef.current = { distance: nextDistance, midpoint: nextMidpoint };
+        suppressTouchClick.current = true;
+        movedSincePointerDown.current = true;
+        return;
+      }
+      const drag = dragRef.current;
+      if (contacts.length === 1 && drag?.pointerId === event.pointerId && !drag.excluded) {
+        const distance = Math.hypot(point.x - drag.startX, point.y - drag.startY);
+        const wasDragging = drag.dragging;
+        if (!wasDragging && distance <= POINTER_SLOP) return;
+        if (!wasDragging) {
+          drag.dragging = true;
+          movedSincePointerDown.current = true;
+          setIsPanning(true);
+          try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* detached/test targets */ }
+        }
+        updateTransform((current) => panBy(current, point.x - drag.x, point.y - drag.y));
+        drag.x = point.x;
+        drag.y = point.y;
+        return;
+      }
+    }
     if (participantAssist) {
       if (event.altKey && event.buttons === 0 && !dragRef.current) {
         const match = participantNearPoint(contentRef.current, event.clientX, event.clientY);
@@ -568,6 +673,33 @@ export default function DiagramViewport({
   };
 
   const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch" && touchContacts.current.has(event.pointerId)) {
+      const hadGesture = pinchRef.current !== null || dragRef.current?.dragging === true;
+      touchContacts.current.delete(event.pointerId);
+      if (touchContacts.current.size === 2) {
+        const [first, second] = [...touchContacts.current.values()];
+        pinchRef.current = { distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)), midpoint: midpoint(first, second) };
+        suppressTouchClick.current = true;
+        movedSincePointerDown.current = true;
+      } else if (touchContacts.current.size === 1) {
+        pinchRef.current = null;
+        const [[pointerId, point]] = [...touchContacts.current.entries()];
+        // Continue with the remaining finger from its current position; never
+        // reuse the pre-pinch origin or allow the gesture to become a click.
+        dragRef.current = { pointerId, startX: point.x, startY: point.y, x: point.x, y: point.y, dragging: true, excluded: false };
+        movedSincePointerDown.current = true;
+        suppressTouchClick.current = true;
+        setIsPanning(true);
+      } else if (touchContacts.current.size === 0) {
+        pinchRef.current = null;
+        dragRef.current = null;
+        setIsPanning(false);
+        movedSincePointerDown.current = hadGesture;
+        if (hadGesture) suppressTouchClick.current = true;
+      }
+      try { if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId); } catch { /* capture may already be released */ }
+      return;
+    }
     if (dragRef.current?.pointerId !== event.pointerId) return;
     const wasDragging = dragRef.current.dragging;
     dragRef.current = null;
@@ -579,8 +711,24 @@ export default function DiagramViewport({
   };
 
   const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (touchContacts.current.has(event.pointerId)) {
+      clearTouchGesture();
+      suppressTouchClick.current = true;
+      return;
+    }
     endDrag(event);
     movedSincePointerDown.current = false;
+  };
+
+  const onLostPointerCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (touchContacts.current.has(event.pointerId)) {
+      clearTouchGesture();
+      suppressTouchClick.current = true;
+    } else if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+      setIsPanning(false);
+      movedSincePointerDown.current = false;
+    }
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -606,6 +754,12 @@ export default function DiagramViewport({
   // the nearest element carrying `data-note-index` and report it. This keeps the
   // viewport agnostic about what a note is.
   const onContentClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressTouchClick.current) {
+      suppressTouchClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const index = noteIndexFromTarget(event.target);
     if (index !== null) {
       onNoteToggle?.(index);
@@ -872,8 +1026,15 @@ export default function DiagramViewport({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={cancelDrag}
+        onLostPointerCapture={onLostPointerCapture}
         onPointerLeave={() => setParticipantHint((current) => current?.source === "alt" ? null : current)}
-        onClick={(event) => {
+      onClick={(event) => {
+          if (suppressTouchClick.current) {
+            suppressTouchClick.current = false;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (event.target === event.currentTarget && !movedSincePointerDown.current) onNodeSelect?.(null);
         }}
       >

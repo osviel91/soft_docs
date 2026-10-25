@@ -11,6 +11,16 @@ const SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><text>Hi</text></svg>';
 const SIZE = { width: 400, height: 300 };
 
+class TestPointerEvent extends MouseEvent {
+  pointerId: number;
+  pointerType: string;
+  constructor(type: string, init: MouseEventInit & { pointerId?: number; pointerType?: string } = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+    this.pointerType = init.pointerType ?? "mouse";
+  }
+}
+
 /** jsdom reports every element as 0x0; give the pane a real box. */
 function stubPaneSize(width: number, height: number) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
@@ -31,9 +41,35 @@ function transformOf(): string {
   return screen.getByTestId("viewport-content").style.transform;
 }
 
+function dispatchTouchPointer(type: string, pointerId: number, clientX: number, clientY: number) {
+  const eventName: Record<string, string> = {
+    pointerdown: "pointerDown", pointermove: "pointerMove", pointerup: "pointerUp",
+    pointercancel: "pointerCancel", lostpointercapture: "lostPointerCapture",
+  };
+  const fire = (fireEvent as unknown as Record<string, (element: Element, init: object) => void>)[eventName[type]!];
+  act(() => fire(screen.getByTestId("viewport-pane"), {
+    pointerId, pointerType: "touch", button: 0, clientX, clientY,
+    buttons: type === "pointerup" ? 0 : 1,
+  }));
+}
+
+function scaleOf(): number {
+  const match = transformOf().match(/scale\(([^)]+)\)/);
+  return Number(match?.[1]);
+}
+
 describe("DiagramViewport", () => {
-  beforeEach(() => stubPaneSize(800, 600));
-  afterEach(() => vi.restoreAllMocks());
+  let originalPointerEvent: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    stubPaneSize(800, 600);
+    originalPointerEvent = Object.getOwnPropertyDescriptor(window, "PointerEvent");
+    if (!window.PointerEvent) Object.defineProperty(window, "PointerEvent", { configurable: true, value: TestPointerEvent });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalPointerEvent) Object.defineProperty(window, "PointerEvent", originalPointerEvent);
+    else Reflect.deleteProperty(window, "PointerEvent");
+  });
 
   it("renders the supplied svg markup", () => {
     render(<DiagramViewport svg={SVG} size={SIZE} />);
@@ -253,6 +289,91 @@ describe("DiagramViewport", () => {
       if (original) Object.defineProperty(window, "PointerEvent", original);
       else Reflect.deleteProperty(window, "PointerEvent");
     }
+  });
+
+  it("keeps a one-finger tap selectable and transitions to pan only past the slop", () => {
+    const onNodeSelect = vi.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g data-node-id="message:touch"><text>Tap</text></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+    const pane = screen.getByTestId("viewport-pane");
+    dispatchTouchPointer("pointerdown", 1, 100, 100);
+    dispatchTouchPointer("pointermove", 1, 103, 102);
+    dispatchTouchPointer("pointerup", 1, 103, 102);
+    fireEvent.click(document.querySelector("text")!);
+    expect(onNodeSelect).toHaveBeenCalledWith("message:touch");
+
+    const before = transformOf();
+    dispatchTouchPointer("pointerdown", 2, 100, 100);
+    dispatchTouchPointer("pointermove", 2, 120, 100);
+    dispatchTouchPointer("pointerup", 2, 120, 100);
+    fireEvent.click(pane);
+    expect(transformOf()).not.toBe(before);
+    expect(onNodeSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("pinches around the local midpoint, follows midpoint translation, and resets to one-finger pan", () => {
+    const onNodeSelect = vi.fn();
+    render(<DiagramViewport svg={SVG} size={SIZE} onNodeSelect={onNodeSelect} />);
+    dispatchTouchPointer("pointerdown", 11, 200, 200);
+    dispatchTouchPointer("pointerdown", 12, 400, 200);
+    dispatchTouchPointer("pointermove", 12, 500, 200);
+    expect(scaleOf()).toBeCloseTo(1.5);
+    // The point under the initial midpoint (300, 200) remains anchored there.
+    expect(transformOf()).toContain("translate(200px, 125px)");
+
+    dispatchTouchPointer("pointermove", 11, 240, 220);
+    dispatchTouchPointer("pointermove", 12, 540, 220);
+    expect(scaleOf()).toBeCloseTo(1.5);
+    const movedTransform = transformOf().match(/translate\(([^p]+)px, ([^p]+)px\)/);
+    expect(Number(movedTransform?.[1])).toBeCloseTo(240);
+    expect(Number(movedTransform?.[2])).toBeCloseTo(145);
+
+    dispatchTouchPointer("pointerup", 12, 540, 220);
+    const before = transformOf();
+    dispatchTouchPointer("pointermove", 11, 250, 225);
+    expect(transformOf()).not.toBe(before);
+    dispatchTouchPointer("pointerup", 11, 250, 225);
+    fireEvent.click(screen.getByTestId("viewport-pane"));
+    expect(onNodeSelect).not.toHaveBeenCalled();
+  });
+
+  it("clamps pinch zoom to 10% and 800%", () => {
+    render(<DiagramViewport svg={SVG} size={SIZE} />);
+    dispatchTouchPointer("pointerdown", 21, 100, 100);
+    dispatchTouchPointer("pointerdown", 22, 300, 100);
+    dispatchTouchPointer("pointermove", 22, 5000, 100);
+    expect(scaleOf()).toBe(8);
+    dispatchTouchPointer("pointermove", 22, 101, 100);
+    expect(scaleOf()).toBe(0.1);
+    dispatchTouchPointer("pointerup", 21, 100, 100);
+    dispatchTouchPointer("pointerup", 22, 101, 100);
+  });
+
+  it.each(["pointercancel", "lostpointercapture"])("cancels an active pinch on %s without selection", (ending) => {
+    const onNodeSelect = vi.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g data-node-id="message:after-cancel"><text>Tap after cancel</text></g></svg>';
+    render(<DiagramViewport svg={svg} size={SIZE} onNodeSelect={onNodeSelect} />);
+    dispatchTouchPointer("pointerdown", 31, 100, 100);
+    dispatchTouchPointer("pointerdown", 32, 300, 100);
+    dispatchTouchPointer(ending, 31, 100, 100);
+    fireEvent.click(screen.getByTestId("viewport-pane"));
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId("viewport-pane")).not.toHaveClass("viewport__pane--panning");
+    dispatchTouchPointer("pointerdown", 33, 120, 120);
+    dispatchTouchPointer("pointerup", 33, 120, 120);
+    fireEvent.click(document.querySelector("text")!);
+    expect(onNodeSelect).toHaveBeenCalledWith("message:after-cancel");
+  });
+
+  it("uses distinct participant decorations for inspection, selection, and keyboard focus", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><g class="participant" data-participant-id="billing" data-participant-label="Billing"><rect data-node-id="participant@0:0"/><line x1="100" x2="100" y1="10" y2="290" stroke-dasharray="4 3"/></g></svg>';
+    const { container } = render(<DiagramViewport svg={svg} size={SIZE} activeNodeId="participant@0:0" participantAssist />);
+    const group = container.querySelector<SVGGElement>("g[data-participant-id]")!;
+    expect(group).toHaveClass("participant--selected");
+    expect(group.querySelector("line")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Participant Billing" })).toHaveAttribute("tabindex", "0");
+    act(() => group.focus());
+    expect(group).toHaveFocus();
   });
 
   it("highlights every current-resource occurrence by identity", () => {
