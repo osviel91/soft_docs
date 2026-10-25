@@ -36,12 +36,15 @@ function identityOf(option: ComparisonOption): VisualResourceIdentity {
   };
 }
 
-function DualPane({ session, pane, lineage, snapshot, controller }: {
+function DualPane({ session, pane, lineage, snapshot, controller, maximized, hidden, onToggleMaximize }: {
   session: Session;
   pane: "a" | "b";
   lineage: VisualSessionLineage;
   snapshot: VisualSessionSnapshot | null;
   controller: VisualSessionController;
+  maximized: boolean;
+  hidden: boolean;
+  onToggleMaximize: (button: HTMLButtonElement | null) => void;
 }) {
   const { option, source, representation } = session;
   const resourceIdentity = useMemo(() => identityOf(option), [option.context.knowledgeContext.id, option.context.knowledgeContext.kind, option.context.projectId, option.resourceId]);
@@ -62,6 +65,7 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
   const markdownScrollerRef = useRef<HTMLDivElement>(null);
   const markdownFrameRef = useRef<number | null>(null);
   const markdownRestoreFrameRef = useRef<number | null>(null);
+  const maximizeButtonRef = useRef<HTMLButtonElement>(null);
   const pendingMarkdownSnapshotRef = useRef<VisualSessionSnapshot["markdownScroll"]>(undefined);
   const expectedProgrammaticScrollRef = useRef<number | null>(null);
   const saveSnapshot = useCallback((patch: Partial<VisualSessionSnapshot>) => {
@@ -117,7 +121,7 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
     if (representation !== "markdown") return;
     const scroller = markdownScrollerRef.current;
     const controllerState = controller.getState();
-    if (!scroller || controllerSuspended || controllerState.suspended || controllerState.availability !== "ready") return;
+    if (!scroller || hidden || controllerSuspended || controllerState.suspended || controllerState.availability !== "ready") return;
     const view = scroller.ownerDocument.defaultView;
     const restore = () => {
       markdownRestoreFrameRef.current = null;
@@ -146,7 +150,7 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
       markdownRestoreFrameRef.current = null;
       pendingMarkdownSnapshotRef.current = undefined;
     };
-  }, [controller, controllerSuspended, generation, lineage, markdownRestoreKey, pane, representation, resourceIdentity, saveSnapshot, sourceFingerprint]);
+  }, [controller, controllerSuspended, generation, hidden, lineage, markdownRestoreKey, pane, representation, resourceIdentity, saveSnapshot, sourceFingerprint]);
   const flow = useMemo(() => representation === "event-flow" ? analyzeEventFlow(source).flow : null, [representation, source]);
   const name = "markdown" in option.resource
     ? noteDisplayName(option.resource.name, source)
@@ -155,8 +159,10 @@ function DualPane({ session, pane, lineage, snapshot, controller }: {
     ? { kind: "private-work", id: option.context.knowledgeContext.id, label: option.context.knowledgeContext.name }
     : { kind: option.context.knowledgeContext.kind, id: option.context.knowledgeContext.id });
 
-  return <section className="comparison__pane" aria-label={`Dual viewer ${pane.toUpperCase()}`} data-testid={`dual-pane-${pane}`}>
-    <header className="comparison__header"><div><strong>Viewer {pane.toUpperCase()}</strong><span className="comparison__provenance">{provenance}</span><h2>{name}</h2><span>{option.resource.name}</span></div></header>
+  return <section id={`dual-pane-${pane}`} className="comparison__pane" aria-label={`Dual viewer ${pane.toUpperCase()}`} data-testid={`dual-pane-${pane}`}>
+    <header className="comparison__header"><div><strong>Viewer {pane.toUpperCase()}</strong><span className="comparison__provenance">{provenance}</span><h2>{name}</h2><span>{option.resource.name}</span></div>
+      <button ref={maximizeButtonRef} type="button" className="icon-button" aria-label={`${maximized ? "Restore" : "Maximize"} Viewer ${pane.toUpperCase()}`} aria-pressed={maximized} aria-controls={`dual-pane-${pane}`} onClick={() => onToggleMaximize(maximizeButtonRef.current)}>{maximized ? "⊡" : "⤢"}</button>
+    </header>
     <div className={`comparison__viewer${representation === "markdown" ? " comparison__viewer--markdown" : ""}`}>
       {representation === "markdown" ? <MarkdownView markdown={source} scrollerRef={markdownScrollerRef} onScroll={captureMarkdownScroll} />
         : representation === "conceptual" ? <ConceptualPreview source={source} onNodeSelect={selectNode} activeNodeId={activeNodeId} initialTransform={compatibleTransform} onVisualTransformChange={captureTransform} validateRestoredNode />
@@ -194,6 +200,15 @@ export default function DualView({ options, projectId, activeProjectId, activePr
   availability?: VisualSessionAvailability;
 }) {
   const [, setRenderVersion] = useState(0);
+  const [maximizedPane, setMaximizedPane] = useState<"a" | "b" | null>(null);
+  const scopeRef = useRef({ projectId, activeProjectId, activeContextId });
+  useLayoutEffect(() => {
+    const previousScope = scopeRef.current;
+    if (previousScope.projectId !== projectId || previousScope.activeProjectId !== activeProjectId || previousScope.activeContextId !== activeContextId) {
+      scopeRef.current = { projectId, activeProjectId, activeContextId };
+      setMaximizedPane(null);
+    }
+  }, [activeContextId, activeProjectId, projectId]);
   const updateFromController = () => setRenderVersion(version => version + 1);
   const sessionState = controller.getState();
   const a = availability === "ready" ? options.find(option => option.id === sessionState.selections.a?.optionId) : undefined;
@@ -205,15 +220,23 @@ export default function DualView({ options, projectId, activeProjectId, activePr
     updateFromController();
   };
   const swap = () => { controller.swap(); updateFromController(); };
+  const toggleMaximize = (pane: "a" | "b", button: HTMLButtonElement | null) => {
+    setMaximizedPane(current => current === pane ? null : pane);
+    button?.focus();
+  };
   const renderPane = (option: ComparisonOption, pane: "a" | "b", lineage: VisualSessionLineage) => {
     const identity = identityOf(option);
     const source = option.source;
     const sourceFingerprint = fingerprintVisualSource(source);
     const snapshot = controller.getSnapshot(identity, lineage, sourceFingerprint);
     const paneKey = `${option.id}:${lineage}:${sourceFingerprint}`;
-    return <div className="comparison__slot" key={paneKey}><DualPane key={paneKey} session={{ option, source, representation: option.representation ?? resourceRepresentationOfName(option.resource.name) }} pane={pane} lineage={lineage} snapshot={snapshot} controller={controller} /></div>;
+    const isMaximized = maximizedPane === pane;
+    const isHidden = maximizedPane !== null && !isMaximized;
+    return <div ref={element => { element?.toggleAttribute("inert", isHidden); }} className={`comparison__slot${isMaximized ? " comparison__slot--maximized" : ""}${isHidden ? " comparison__slot--hidden" : ""}`} key={paneKey} data-pane={pane} aria-hidden={isHidden}>
+      <DualPane key={paneKey} session={{ option, source, representation: option.representation ?? resourceRepresentationOfName(option.resource.name) }} pane={pane} lineage={lineage} snapshot={snapshot} controller={controller} maximized={isMaximized} hidden={isHidden} onToggleMaximize={button => toggleMaximize(pane, button)} />
+    </div>;
   };
-  return <div ref={rootRef} className={`comparison dual-view${focusMode ? " dual-view--focus" : ""}`} data-testid="dual-view" aria-hidden={false}>
+  return <div ref={rootRef} className={`comparison dual-view${focusMode ? " dual-view--focus" : ""}`} data-testid="dual-view" data-maximized-pane={maximizedPane ?? "normal"} aria-hidden={false}>
     <header className="comparison__toolbar"><strong>Dual View · {projectId}</strong>
       <span className="comparison__navigation-hint" role="status" data-testid="comparison-navigation-hint">Usa los selectores Viewer A/B para cambiar los recursos mientras comparas</span>
       {serverWorkspaces.length > 0 && onSelectServerWorkspace ? <label>Workspace <select aria-label="Dual View workspace" value={selectedServerWorkspaceId ?? ""} onChange={event => onSelectServerWorkspace(event.target.value)}>{serverWorkspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label> : null}
