@@ -1244,6 +1244,7 @@ body {
   min-width: 0;
   min-height: 0;
 }
+.dual-view .comparison__panes { position: relative; }
 
 .comparison__content {
   display: flex;
@@ -1339,6 +1340,8 @@ body {
 
 .comparison__slot { display: flex; flex: 1 1 50%; min-width: 0; min-height: 0; }
 .comparison__slot--hidden { display: none; }
+.dual-view .comparison__slot--maximized { flex: 1 1 100%; min-width: 0; min-height: 0; }
+.dual-view .comparison__slot--hidden { display: flex; position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
 
 .comparison__pane {
   display: flex;

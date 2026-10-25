@@ -136,6 +136,116 @@ describe("App — dual viewer foundation", () => {
     expect(screen.queryByTestId("comparison-parallel-view-notice")).toBeNull();
   });
 
+  it("maximizes by the current A/B slot without unmounting or disabling the other session", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "alpha", name: "alpha.concept", projectId: "dual", source: 'concept alpha "Alpha"' },
+      { id: "beta", name: "beta.concept", projectId: "dual", source: 'concept beta "Beta"' },
+      { id: "gamma", name: "gamma.concept", projectId: "dual", source: 'concept gamma "Gamma"' },
+    ];
+    await importResources({ id: "dual", name: "Dual", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+
+    const dualView = screen.getByTestId("dual-view");
+    const slot = (pane: "a" | "b") => dualView.querySelector<HTMLElement>(`.comparison__slot[data-pane="${pane}"]`)!;
+    const maximizeA = screen.getByRole("button", { name: "Maximize Viewer A" });
+    maximizeA.focus();
+    fireEvent.click(maximizeA);
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+    expect(maximizeA).toHaveAttribute("aria-pressed", "true");
+    expect(document.activeElement).toBe(maximizeA);
+    expect(slot("a")).not.toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).toHaveAttribute("aria-hidden", "true");
+    expect(slot("b")).toHaveAttribute("inert");
+    expect(screen.getByTestId("dual-pane-b")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    expect(dualView).toHaveClass("dual-view--focus");
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreenElement });
+    Object.defineProperty(dualView, "requestFullscreen", { configurable: true, value: vi.fn(async () => {
+      fullscreenElement = dualView;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    }) });
+    Object.defineProperty(document, "exitFullscreen", { configurable: true, value: vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    }) });
+    fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
+    expect(await screen.findByRole("button", { name: "Exit fullscreen" })).toHaveAttribute("aria-pressed", "true");
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(await screen.findByRole("button", { name: "Fullscreen" })).toHaveAttribute("aria-pressed", "false");
+    expect(dualView).toHaveClass("dual-view--focus");
+    fireEvent.click(screen.getByRole("button", { name: "Exit Focus" }));
+    expect(dualView).not.toHaveClass("dual-view--focus");
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+
+    const selectA = screen.getByRole("combobox", { name: "Dual View A resource" });
+    const selectB = screen.getByRole("combobox", { name: "Dual View B resource" });
+    const gammaId = Array.from((selectA as HTMLSelectElement).options).find(option => option.textContent?.includes("gamma.concept"))?.value;
+    const alphaId = Array.from((selectA as HTMLSelectElement).options).find(option => option.textContent?.includes("alpha.concept"))?.value;
+    expect(gammaId).toBeDefined();
+    expect(alphaId).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Swap dual viewers" }));
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+    expect(slot("a")).not.toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).toHaveClass("comparison__slot--hidden");
+    fireEvent.change(selectA, { target: { value: gammaId } });
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("gamma.concept");
+    expect(dualView).toHaveAttribute("data-maximized-pane", "a");
+
+    const restoreA = screen.getByRole("button", { name: "Restore Viewer A" });
+    fireEvent.click(restoreA);
+    expect(dualView).toHaveAttribute("data-maximized-pane", "normal");
+    expect(document.activeElement).toBe(restoreA);
+    expect(slot("a")).not.toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).not.toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).not.toHaveAttribute("inert");
+
+    fireEvent.change(selectB, { target: { value: alphaId } });
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("gamma.concept");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("alpha.concept");
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Viewer B" }));
+    expect(dualView).toHaveAttribute("data-maximized-pane", "b");
+    expect(slot("a")).toHaveClass("comparison__slot--hidden");
+    expect(slot("b")).not.toHaveClass("comparison__slot--hidden");
+    fireEvent.click(screen.getByRole("button", { name: "Restore Viewer B" }));
+    expect(dualView).toHaveAttribute("data-maximized-pane", "normal");
+
+    fireEvent.change(selectA, { target: { value: alphaId } });
+    fireEvent.change(selectB, { target: { value: alphaId } });
+    expect(screen.getByTestId("dual-pane-a")).toHaveTextContent("alpha.concept");
+    expect(screen.getByTestId("dual-pane-b")).toHaveTextContent("alpha.concept");
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Viewer A" }));
+    expect(screen.getByTestId("dual-pane-a")).toBeInTheDocument();
+    expect(screen.getByTestId("dual-pane-b")).toBeInTheDocument();
+    expect(slot("b")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("resets local Dual View maximization when navigating to Analysis and returning", async () => {
+    render(<App />);
+    const diagrams: DiagramFile[] = [
+      { id: "one", name: "one.concept", projectId: "dual", source: 'concept one "One"' },
+      { id: "two", name: "two.concept", projectId: "dual", source: 'concept two "Two"' },
+    ];
+    await importResources({ id: "dual", name: "Dual", datasetIds: diagrams.map(item => item.id), noteIds: [] }, diagrams);
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Viewer B" }));
+    expect(screen.getByTestId("dual-view")).toHaveAttribute("data-maximized-pane", "b");
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Analysis" }));
+    expect(screen.queryByTestId("dual-view")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Switch to Dual View" }));
+    expect(screen.getByTestId("dual-view")).toHaveAttribute("data-maximized-pane", "normal");
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Viewer A" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Dual View" }));
+    fireEvent.click(screen.getByTestId("compare-mode-button"));
+    expect(screen.getByTestId("dual-view")).toHaveAttribute("data-maximized-pane", "normal");
+  });
+
   it("changes only one Dual View resource and swaps the rendered sessions", async () => {
     render(<App />);
     const diagrams: DiagramFile[] = [
