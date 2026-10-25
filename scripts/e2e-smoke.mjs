@@ -2191,7 +2191,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
   };
 
   await scenario("UX-3B.1 Dual View preserves independent visual sessions", async () => {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, hasTouch: true });
     const page = await context.newPage();
     const http500s = [];
     let projectId = null;
@@ -2701,6 +2701,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.mouse.move(panStart.x, panStart.y, { steps: 3 });
       await page.mouse.up();
       const participantLifeline = panes[0].locator('g[data-participant-id="Browser"] line[stroke-dasharray]').first();
+      const participantGroup = panes[0].locator('g[data-participant-id="Browser"]');
       const participantId = await panes[0].locator('g[data-participant-id="Browser"] [data-node-id]').getAttribute("data-node-id");
       await participantLifeline.click({ force: true });
       await page.waitForFunction((id) => document.querySelector(`[data-testid="dual-pane-a"] .svg-node--active[data-node-id="${CSS.escape(id)}"]`), participantId, { timeout: UI_TIMEOUT_MS });
@@ -2714,6 +2715,150 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
       for (let zoom = 0; zoom < 3; zoom += 1) await panes[0].getByTestId("zoom-out").click();
       check("Participant lifeline selection is stable at multiple zoom levels and does not change either camera", participantCameraStable);
+      const selectionCue = await participantGroup.evaluate((group) => ({
+        outline: getComputedStyle(group).outlineStyle,
+        lineStroke: getComputedStyle(group.querySelector('line[stroke-dasharray]')).stroke,
+        lineFilter: getComputedStyle(group).filter,
+      }));
+      check("Participant selection uses a local lifeline cue without a group outline or halo", selectionCue.outline === "none" && selectionCue.lineFilter === "none" && selectionCue.lineStroke !== "rgb(0, 0, 0)", JSON.stringify(selectionCue));
+
+      // Capture the selected lifeline at representative zooms. The indicator
+      // should remain local to the line rather than becoming a halo around the
+      // full participant group as the camera magnifies it.
+      const evidenceDir = join(tmpdir(), "ux-seq-3-evidence");
+      await mkdir(evidenceDir, { recursive: true });
+      const paneA = page.getByTestId("dual-pane-a").getByTestId("viewport-pane");
+      const paneBounds = await paneA.boundingBox();
+      if (!paneBounds) throw new Error("Dual View A has no visible canvas for pinch verification.");
+      const paneCenter = { x: paneBounds.x + paneBounds.width / 2, y: paneBounds.y + paneBounds.height / 2 };
+      await page.getByTestId("dual-pane-a").getByTestId("zoom-reset").click();
+      await paneA.screenshot({ path: join(evidenceDir, "lifeline-100.png") });
+      for (const [zoom, deltaY] of [[200, -277.2588722239781], [400, -277.2588722239781]]) {
+        await page.mouse.move(paneCenter.x, paneCenter.y);
+        await page.mouse.wheel(0, deltaY);
+        const actual = await page.getByTestId("dual-pane-a").getByTestId("zoom-level").textContent();
+        check(`Selected participant remains readable at ${zoom}%`, Math.abs(Number.parseInt(actual, 10) - zoom) <= 1, actual);
+        await paneA.screenshot({ path: join(evidenceDir, `lifeline-${zoom}.png`) });
+      }
+      await page.getByTestId("dual-pane-a").getByTestId("zoom-reset").click();
+
+      // CDP touch input generates the browser's real touch Pointer Events in a
+      // hasTouch context; unlike a JS-dispatched PointerEvent this exercises
+      // Chromium's touch-to-pointer path and CSS touch-action handling.
+      const touch = await context.newCDPSession(page);
+      const beforePinch = await paneA.locator(".viewport__content").evaluate((element) => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { scale: matrix.a, x: matrix.e, y: matrix.f };
+      });
+      const paneBBeforePinch = (await paneState())[1].transform;
+      const start = [
+        { x: paneCenter.x - 50, y: paneCenter.y, id: 101 },
+        { x: paneCenter.x + 50, y: paneCenter.y, id: 102 },
+      ];
+      await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: start });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [
+          { x: paneCenter.x - 70, y: paneCenter.y + 20, id: 101 },
+          { x: paneCenter.x + 130, y: paneCenter.y + 20, id: 102 },
+        ],
+      });
+      const pinchCamera = await paneA.locator(".viewport__content").evaluate((element) => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { scale: matrix.a, x: matrix.e, y: matrix.f };
+      });
+      const localBounds = await paneA.boundingBox();
+      const movedMidpoint = { x: paneCenter.x + 30, y: paneCenter.y + 20 };
+      const anchoredPoint = {
+        x: ((paneCenter.x - localBounds.x) - beforePinch.x) / beforePinch.scale,
+        y: ((paneCenter.y - localBounds.y) - beforePinch.y) / beforePinch.scale,
+      };
+      const anchoredX = anchoredPoint.x * pinchCamera.scale + pinchCamera.x;
+      const anchoredY = anchoredPoint.y * pinchCamera.scale + pinchCamera.y;
+      check("Two-finger Chromium pinch magnifies the active camera", Math.abs(pinchCamera.scale - 2) < 0.02, `scale=${pinchCamera.scale.toFixed(3)}`);
+      check("Pinch zoom follows the translated midpoint without a jump", Math.abs(anchoredX - (movedMidpoint.x - localBounds.x)) < 2 && Math.abs(anchoredY - (movedMidpoint.y - localBounds.y)) < 2, JSON.stringify(pinchCamera));
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [
+          { x: paneCenter.x - 100, y: paneCenter.y, id: 103 },
+          { x: paneCenter.x + 100, y: paneCenter.y, id: 104 },
+        ],
+      });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [
+          { x: paneCenter.x - 50, y: paneCenter.y, id: 103 },
+          { x: paneCenter.x + 50, y: paneCenter.y, id: 104 },
+        ],
+      });
+      await page.waitForFunction(() => {
+        const content = document.querySelector('[data-testid="dual-pane-a"] .viewport__content');
+        if (!content) return false;
+        return new DOMMatrix(getComputedStyle(content).transform).a < 1.02;
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      const reducedCamera = await paneA.locator(".viewport__content").evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a);
+      check("Two-finger Chromium pinch reduces zoom", Math.abs(reducedCamera - 1) < 0.02, `scale=${reducedCamera.toFixed(3)}`);
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [
+          { x: paneCenter.x - 50, y: paneCenter.y, id: 105 },
+          { x: paneCenter.x + 50, y: paneCenter.y, id: 106 },
+        ],
+      });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [
+          { x: paneCenter.x - 500, y: paneCenter.y, id: 105 },
+          { x: paneCenter.x + 500, y: paneCenter.y, id: 106 },
+        ],
+      });
+      await page.waitForFunction(() => {
+        const content = document.querySelector('[data-testid="dual-pane-a"] .viewport__content');
+        return Boolean(content && new DOMMatrix(getComputedStyle(content).transform).a >= 7.99);
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      const maxTouchScale = await paneA.locator(".viewport__content").evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a);
+      check("Chromium pinch respects the 800% maximum", Math.abs(maxTouchScale - 8) < 0.02, `scale=${maxTouchScale.toFixed(3)}`);
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [
+          { x: paneCenter.x, y: paneCenter.y, id: 105 },
+          { x: paneCenter.x + 1, y: paneCenter.y, id: 106 },
+        ],
+      });
+      await page.waitForFunction(() => {
+        const content = document.querySelector('[data-testid="dual-pane-a"] .viewport__content');
+        return Boolean(content && new DOMMatrix(getComputedStyle(content).transform).a <= 0.101);
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      const minTouchScale = await paneA.locator(".viewport__content").evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a);
+      check("Chromium pinch respects the 10% minimum", Math.abs(minTouchScale - 0.1) < 0.002, `scale=${minTouchScale.toFixed(3)}`);
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+      const beforeOneFingerPan = await paneA.locator(".viewport__content").evaluate((element) => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { x: matrix.e, y: matrix.f };
+      });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: paneCenter.x, y: paneCenter.y, id: 107 }] });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: paneCenter.x + 24, y: paneCenter.y + 18, id: 107 }] });
+      await page.waitForFunction((origin) => {
+        const content = document.querySelector('[data-testid="dual-pane-a"] .viewport__content');
+        if (!content) return false;
+        const matrix = new DOMMatrix(getComputedStyle(content).transform);
+        return matrix.a <= 0.101 && (matrix.e !== origin.x || matrix.f !== origin.y);
+      }, beforeOneFingerPan, { timeout: UI_TIMEOUT_MS });
+      const afterOneFingerPan = await paneA.locator(".viewport__content").evaluate((element) => {
+        const matrix = new DOMMatrix(getComputedStyle(element).transform);
+        return { scale: matrix.a, x: matrix.e, y: matrix.f };
+      });
+      check("Chromium one-finger touch pans at the minimum zoom without zooming", afterOneFingerPan.scale <= 0.101 && (afterOneFingerPan.x !== beforeOneFingerPan.x || afterOneFingerPan.y !== beforeOneFingerPan.y), JSON.stringify({ beforeOneFingerPan, afterOneFingerPan }));
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await touch.detach();
+      await page.getByTestId("dual-pane-a").getByTestId("zoom-reset").click();
+      check("Pinch completion does not deselect the participant", await paneA.locator('.svg-node--active[data-node-id]').getAttribute("data-node-id") === participantId);
+      check("Dual View B camera remains independent during A pinch", (await paneState())[1].transform === paneBBeforePinch);
+
       const sequenceCameraBeforeMaximize = await paneState();
       await page.getByRole("button", { name: "Maximize Viewer A" }).click();
       await page.waitForFunction(() => document.querySelector('[data-testid="dual-view"]')?.getAttribute("data-maximized-pane") === "a", undefined, { timeout: UI_TIMEOUT_MS });

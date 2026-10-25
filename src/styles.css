@@ -2857,9 +2857,24 @@ body {
   display: block;
 }
 
-.viewport__content .participant--inspection { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 38%, transparent)); }
-.viewport__content .participant--selected { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 62%, transparent)); }
-.viewport__content g.participant:focus-visible { filter: drop-shadow(0 0 3px var(--accent)); outline: none; }
+.viewport__content .participant--inspection,
+.viewport__content .participant--selected,
+.viewport__content g.participant:focus-visible { filter: none; }
+.viewport__content .participant--inspection line[stroke-dasharray] {
+  stroke: color-mix(in srgb, var(--accent) 52%, #64748b) !important;
+}
+.viewport__content .participant--selected line[stroke-dasharray] {
+  stroke: var(--accent) !important;
+  stroke-width: 2 !important;
+}
+.viewport__content g.participant:focus-visible rect {
+  stroke: var(--accent) !important;
+  stroke-width: 2 !important;
+}
+.viewport__content g.participant:focus-visible line[stroke-dasharray] {
+  stroke: var(--accent) !important;
+  stroke-dasharray: 1 3 !important;
+}
 .viewport__content .sequence-message__hit { pointer-events: stroke; }
 .viewport__context-hint { position: absolute; z-index: 14; width: max-content; max-width: min(360px, calc(100% - 16px)); padding: 8px 10px; color: var(--text); background: var(--bg-elevated); border: 1px solid var(--accent); border-radius: var(--radius-sm); box-shadow: var(--shadow-pop); font-size: 12px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; pointer-events: none; }
 
@@ -4646,6 +4661,13 @@ body {
 .viewport__content .svg-node--active {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* SVG group outlines use the group's full geometric bounds. On a Sequence
+   participant that spans the complete lifeline, so keep the selection cue on
+   the local lifeline instead of drawing a large rectangle around the group. */
+.viewport__content g[data-participant-id].svg-node--active {
+  outline: none;
 }
 
 .overview {
