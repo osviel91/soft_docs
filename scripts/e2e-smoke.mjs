@@ -3409,6 +3409,61 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     check("No HTTP 500 responses during Dual View E2E", http500s.length === 0, http500s.join(", "));
   });
 
+  await scenario("UX-COMP-2 historical Comparison View verifies and navigates revisions", async () => {
+    const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } });
+    const page = await context.newPage();
+    const http500s = [];
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const projectName = `UX-COMP-2 Comparison ${Date.now()}`;
+      await createServerProject(page, projectName);
+      const project = await serverProjectByName(page, projectName);
+      if (!project) throw new Error("Disposable Comparison project was not discoverable.");
+      const workName = `comparison-${Date.now()}`;
+      const work = await apiRequest(page, `/api/projects/${project.id}/private-work`, {
+        method: "POST",
+        body: JSON.stringify({ name: workName }),
+      });
+      const contextId = work.json?.context?.id;
+      if (work.status !== 201 || !contextId) throw new Error(`Comparison MY WORK fixture creation failed: ${work.status} ${work.text}`);
+      const created = await apiRequest(page, `/api/projects/${project.id}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ path: "comparison.concept", type: "conceptual", content: 'concept customer "Customer"', contextId }),
+      });
+      const resourceId = created.json?.resource?.id;
+      if (created.status !== 201 || !resourceId) throw new Error(`Comparison fixture creation failed: ${created.status} ${created.text}`);
+      const updated = await apiRequest(page, `/api/projects/${project.id}/resources/${resourceId}`, {
+        method: "PUT",
+        body: JSON.stringify({ expectedRevision: 1, content: 'concept customer "Account"\nconcept invoice "Invoice"', contextId }),
+      });
+      if (updated.status !== 200) throw new Error(`Comparison revision fixture update failed: ${updated.status} ${updated.text}`);
+
+      page.on("response", response => { if (response.status() === 500) http500s.push(`${response.request().method()} ${new URL(response.url()).pathname} 500`); });
+      await page.goto(`${BASE_URL}/?project=${encodeURIComponent(project.id)}&context=${encodeURIComponent(contextId)}&resource=${encodeURIComponent(resourceId)}`, { waitUntil: "domcontentloaded" });
+      await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("analysis-mode-button").click();
+      await page.getByRole("button", { name: "Compare revisions" }).click();
+      await page.getByTestId("verified-revision-pair").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      check("historical pair is verified as one resource lineage", (await page.getByTestId("verified-revision-pair").textContent()).includes("r1 → r2"));
+      await page.getByTestId("revision-change-list").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.getByRole("button", { name: "Next difference" }).click();
+      check("difference navigation updates the evidence detail", (await page.getByTestId("revision-change-detail").textContent()).includes("invoice"));
+      const paneA = page.getByTestId("revision-pane-a");
+      const paneB = page.getByTestId("revision-pane-b");
+      await paneA.getByTestId("zoom-in").click();
+      const cameraA = await paneA.locator("[data-testid='conceptual-preview-svg']").getAttribute("style");
+      const cameraB = await paneB.locator("[data-testid='conceptual-preview-svg']").getAttribute("style");
+      check("historical pane cameras are independent", cameraA !== cameraB);
+      await mkdir(join(tmpdir(), "ux-comp-2-evidence"), { recursive: true });
+      await page.screenshot({ path: join(tmpdir(), "ux-comp-2-evidence", "comparison-view.png"), fullPage: true });
+      check("Comparison View produced no HTTP 500 responses", http500s.length === 0, http500s.join(", "));
+    } finally {
+      await context.close();
+    }
+  });
+
   await scenario("Universal focus mode preserves viewer state across representations", async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
