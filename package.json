@@ -20,6 +20,7 @@
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:mcp",
     "test:e2e": "npm run build:web && npm run api:build && npm run mcp:service:build && node scripts/e2e-smoke.mjs",
     "test:e2e:dual": "E2E_SCENARIO=\"UX-3B.1 Dual View preserves independent visual sessions\" npm run test:e2e",
+    "test:e2e:comparison": "E2E_SCENARIO=\"UX-COMP-2 historical Comparison View verifies and navigates revisions\" npm run test:e2e",
     "test:mcp": "npm run mcp:build && node scripts/mcp-smoke.mjs && npm run mcp:service:build && node scripts/mcp-service-artifact-smoke.mjs && vitest run tests/mcp",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

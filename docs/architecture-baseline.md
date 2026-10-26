@@ -193,6 +193,29 @@ current rules are in the canonical documentation model.
   with its immutable submitted snapshot. Current SHARED informs staleness and
   readiness, not the canonical historical diff.
 
+### Historical resource Comparison View
+
+- Historical comparison is server-only and is scoped to one exact
+  `(projectId, contextId, resourceId)` lineage. Each snapshot response is checked
+  against that tuple, its requested revision, and its resource type before the
+  UI renders it. Context isolation and resource-read authorization remain owned by
+  the existing API/application path.
+- `ComparisonView` owns the selected revision pair, request generation, active
+  difference, errors, and independent per-pane cameras. It calls the existing
+  revision list/snapshot API. It does not share camera state with Dual View and
+  does not treat a content fingerprint as historical identity.
+- Conceptual and Database pairs with the same representation reuse
+  `diffResources`, native SVG renderers, and `DiagramViewport`. Stable-ID matches
+  are confirmed; name-keyed Database columns are candidates. Source hunks remain
+  textual evidence. Sequence, Event Flow, Markdown, invalid DSL, and cross-type
+  pairs do not claim historical semantic visualization; they use explicit
+  source-only fallback where content is available.
+- This UI feature adds no persistence schema, permission changes, or MCP
+  revision-snapshot endpoint. See `docs/resource-diff.md` for confidence,
+  evidence, and truncation semantics. Architectural MCP resources remain
+  independently governed; this local repository documentation is not a write to
+  SHARED or MY WORK.
+
 ### Workspace Explorer Foundation
 
 - The Explorer separates server project browsing, active project knowledge, and

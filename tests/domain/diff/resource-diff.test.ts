@@ -40,6 +40,19 @@ describe("resource diff", () => {
       expect.objectContaining({ kind: "added", entity: "column", identity: "orders#name:new_name" }),
       expect.objectContaining({ kind: "modified", entity: "foreign-key", identity: "orders_customer" }),
     ]));
+    expect(diff.content.changes.find(change => change.entity === "table" && change.identity === "orders")).toMatchObject({ confidence: "confirmed", matchBasis: "stable entity ID" });
+    expect(diff.content.changes.find(change => change.identity === "orders#name:old_name")).toMatchObject({ confidence: "candidate", matchBasis: expect.stringContaining("column name") });
+  });
+
+  it("does not run a representation adapter across incompatible resource types", () => {
+    const diff = diffResources(
+      state('concept customer "Customer"', "conceptual"),
+      state('table customer - "Customer"', "database"),
+    );
+    expect(diff.content.available).toBe(false);
+    expect(diff.content.changes).toEqual([expect.objectContaining({ entity: "representation", kind: "modified", details: { old: "conceptual", new: "database" } })]);
+    expect(diff.source.changed).toBe(true);
+    expect(diff.source.hunks).toHaveLength(1);
   });
 
   it("detects PK, unique, index, type, nullability, and default changes without source-order noise", () => {

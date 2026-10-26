@@ -23,6 +23,7 @@ import type { AnalysisContext } from "./cross-context-analysis";
 import { analysisProvenanceLabel, type KnowledgeContext } from "../../domain/workspace/knowledge-context";
 import type { ServerApiClient, ServerProject, ServerResourceRevision, ServerResourceRevisionSummary, ServerResourceType, ServerWorkspace } from "../../workspace/server/api-client";
 import type { UiPreferences } from "../../workspace/ui-preferences";
+import type { DiagramViewportTransform } from "./DiagramViewport";
 
 export interface ComparisonViewProps {
   primary: ComparisonResource;
@@ -78,6 +79,22 @@ export interface RevisionComparisonResource {
   contextId: string | null;
   path: string;
   type: ServerResourceType;
+}
+
+export interface HistoricalSnapshotIdentity {
+  projectId: string;
+  contextId: string | null;
+  resourceId: string;
+  revision: number;
+  representation: ResourceRepresentation;
+}
+
+interface ComparisonSession {
+  id: string;
+  pairKey: string | null;
+  generation: number;
+  activeChange: string | null;
+  cameras: Record<Pane, DiagramViewportTransform | null>;
 }
 
 type Pane = "a" | "b";
@@ -437,8 +454,8 @@ export default function ComparisonView({
     : Math.min(summaryHeight, Math.max(180, comparisonHeight - 260));
 
   const canCompareRevisions = Boolean(
-    revisionClient && revisionResource &&
-    (revisionResource.type === "conceptual" || revisionResource.type === "database"),
+    revisionClient && revisionResource && revisionResource.projectId && revisionResource.resourceId &&
+    resourceRepresentationOfType(revisionResource.type),
   );
 
   return (
@@ -549,17 +566,29 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
   const [listError, setListError] = useState<string | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [activeChange, setActiveChange] = useState<string | null>(null);
+  const [cameras, setCameras] = useState<Record<Pane, DiagramViewportTransform | null>>({ a: null, b: null });
+  const listGeneration = useRef(0);
+  const requestGeneration = useRef(0);
   const pairKey = revisionA === null || revisionB === null ? null : `${revisionA}:${revisionB}`;
+  const session: ComparisonSession = {
+    id: JSON.stringify([resource.projectId, resource.contextId, resource.resourceId, pairKey]),
+    pairKey,
+    generation: requestGeneration.current,
+    activeChange,
+    cameras,
+  };
 
   useEffect(() => {
     let active = true;
+    const generation = ++listGeneration.current;
     setListLoading(true);
     setListError(null);
     setRevisions([]);
     setRevisionA(null);
     setRevisionB(null);
     void client.listResourceRevisions(resource.projectId, resource.resourceId, resource.contextId).then((result) => {
-      if (!active) return;
+      if (!active || generation !== listGeneration.current) return;
       if (result.some((entry) => !summaryMatchesResource(entry, resource))) {
         setListError("The revision list did not match the selected project, resource and context.");
         return;
@@ -569,15 +598,16 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
       setRevisionA(ordered.at(-2)?.revision ?? ordered.at(-1)?.revision ?? null);
       setRevisionB(ordered.at(-1)?.revision ?? null);
     }).catch((error: unknown) => {
-      if (active) setListError(error instanceof Error ? error.message : "Could not list resource revisions.");
+      if (active && generation === listGeneration.current) setListError(revisionRequestError(error, "Could not list resource revisions."));
     }).finally(() => {
-      if (active) setListLoading(false);
+      if (active && generation === listGeneration.current) setListLoading(false);
     });
-    return () => { active = false; };
+    return () => { active = false; if (listGeneration.current === generation) listGeneration.current += 1; };
   }, [client, resource.projectId, resource.resourceId, resource.contextId, retry]);
 
   useEffect(() => {
     let active = true;
+    const generation = ++requestGeneration.current;
     setSnapshotA(null);
     setSnapshotB(null);
     setLoadedPair(null);
@@ -592,7 +622,7 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
       client.getResourceRevision(resource.projectId, resource.resourceId, resource.contextId, revisionA),
       client.getResourceRevision(resource.projectId, resource.resourceId, resource.contextId, revisionB),
     ]).then(([a, b]) => {
-      if (!active) return;
+      if (!active || generation !== requestGeneration.current) return;
       if (!snapshotMatchesResource(a, resource, revisionA) || !snapshotMatchesResource(b, resource, revisionB)) {
         setSnapshotError("A revision snapshot did not match the selected project, resource, context and revision.");
         return;
@@ -601,22 +631,35 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
       setSnapshotB(b);
       setLoadedPair(requestedPair);
     }).catch((error: unknown) => {
-      if (active) setSnapshotError(error instanceof Error ? error.message : "Could not load the selected revisions.");
+      if (active && generation === requestGeneration.current) setSnapshotError(revisionRequestError(error, "Could not load the selected revisions."));
     }).finally(() => {
-      if (active) setSnapshotsLoading(false);
+      if (active && generation === requestGeneration.current) setSnapshotsLoading(false);
     });
-    return () => { active = false; };
+    return () => { active = false; if (requestGeneration.current === generation) requestGeneration.current += 1; };
   }, [client, resource.projectId, resource.resourceId, resource.contextId, revisionA, revisionB, retry]);
 
   const snapshotsReady = loadedPair === pairKey && snapshotA !== null && snapshotB !== null;
   const sameRepresentation = snapshotsReady && snapshotA.type === snapshotB.type && (snapshotA.type === "conceptual" || snapshotA.type === "database");
+  const verifiedIdentities: [HistoricalSnapshotIdentity, HistoricalSnapshotIdentity] | null = snapshotsReady && snapshotA && snapshotB
+    ? [snapshotIdentity(snapshotA), snapshotIdentity(snapshotB)] : null;
   const diff = useMemo<ResourceDiff | null>(() => {
-    if (!snapshotsReady || !sameRepresentation || !snapshotA || !snapshotB) return null;
+    if (!snapshotsReady || !snapshotA || !snapshotB) return null;
     return diffResources(
       { content: snapshotA.content, type: snapshotA.type, ...(snapshotA.metadata === undefined ? {} : { metadata: snapshotA.metadata }) },
       { content: snapshotB.content, type: snapshotB.type, ...(snapshotB.metadata === undefined ? {} : { metadata: snapshotB.metadata }) },
     );
-  }, [snapshotsReady, sameRepresentation, snapshotA, snapshotB]);
+  }, [snapshotsReady, snapshotA, snapshotB]);
+  const changes = diff?.content.available && sameRepresentation ? diff.content.changes : [];
+  const selectedChange = changes.find(change => changeKey(change) === activeChange) ?? changes[0] ?? null;
+  useEffect(() => {
+    if (!changes.some(change => changeKey(change) === activeChange)) setActiveChange(changes[0] ? changeKey(changes[0]) : null);
+  }, [activeChange, changes]);
+  useEffect(() => { setCameras({ a: null, b: null }); setActiveChange(null); }, [pairKey, resource.projectId, resource.contextId, resource.resourceId]);
+  const stepChange = (direction: 1 | -1) => {
+    if (!changes.length) return;
+    const current = Math.max(0, changes.findIndex(change => changeKey(change) === (selectedChange ? changeKey(selectedChange) : null)));
+    setActiveChange(changeKey(changes[(current + direction + changes.length) % changes.length]!));
+  };
 
   return <>
     <section className="comparison__summary" aria-label="Structural revision comparison" data-testid="revision-structural-diff">
@@ -632,22 +675,23 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
           {listError || snapshotError ? <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button> : null}
         </div>
       </header>
-      {listLoading ? <p role="status">Loading resource revisions…</p> : listError ? <p role="alert">{listError}</p> : revisions.length === 0 ? <p role="status">No revisions are available for this resource.</p> : null}
+      {listLoading ? <p role="status">Loading resource revisions…</p> : listError ? <p role="alert">{listError}</p> : revisions.length === 0 ? <p role="status">No revisions are available for this resource.</p> : revisions.length === 1 ? <p role="status">Only one historical revision is available; a two-version comparison may have no differences.</p> : null}
       {snapshotsLoading ? <p role="status">Loading selected snapshots…</p> : snapshotError ? <p role="alert">{snapshotError}</p> : null}
       {snapshotsReady && snapshotA && snapshotB && !sameRepresentation ? <p role="status">The selected revisions have incompatible representations; no structural diff was calculated.</p> : null}
-      {diff ? <RevisionDiffSummary diff={diff} /> : null}
+      {snapshotsReady && verifiedIdentities ? <p className="comparison__revision-identity" data-testid="verified-revision-pair">Verified same lineage · {verifiedIdentities[0].projectId} / {verifiedIdentities[0].contextId ?? "SHARED"} / {verifiedIdentities[0].resourceId} · r{verifiedIdentities[0].revision} → r{verifiedIdentities[1].revision}</p> : null}
+      {diff ? <RevisionDiffSummary diff={diff} semanticSupported={Boolean(sameRepresentation)} /> : null}
       {diff?.content.available === false ? <section aria-label="Revision diagnostics"><h3>Validation diagnostics</h3><ul>{diff.content.diagnostics.map((diagnostic, index) => <li key={index}>{diagnosticMessage(diagnostic)}</li>)}</ul></section> : null}
-      {diff?.content.changes.length ? <section aria-label="Structural changes"><h3>Changes</h3><ul>{diff.content.changes.map((change, index) => <li key={`${change.entity}:${change.identity}:${index}`} className={`comparison__revision-change comparison__revision-change--${change.kind}`}>
-        <strong>{change.kind}</strong> {change.entity} · {change.identity}
-      </li>)}</ul></section> : null}
-      {diff?.metadata.changes.length ? <section aria-label="Metadata changes"><h3>Metadata changes</h3><ul>{diff.metadata.changes.map((change, index) => <li key={`${change.field}:${change.identity}:${index}`}><strong>{change.kind}</strong> {change.field} · {change.identity}</li>)}</ul></section> : null}
+      {sameRepresentation && changes.length ? <section aria-label="Structural changes" data-testid="revision-change-list"><h3>Changes · {changes.length}</h3><div className="comparison__analysis-controls"><button type="button" aria-label="Previous difference" onClick={() => stepChange(-1)}>Previous</button><button type="button" aria-label="Next difference" onClick={() => stepChange(1)}>Next</button><span>{Math.max(0, changes.findIndex(change => changeKey(change) === (selectedChange ? changeKey(selectedChange) : null))) + 1} / {changes.length}</span></div><ul>{changes.map(change => <li key={changeKey(change)}><button type="button" aria-pressed={selectedChange === change} className={`comparison__revision-change comparison__revision-change--${change.kind}`} onClick={() => setActiveChange(changeKey(change))}><strong>{change.kind}</strong> {change.entity} · {change.identity} <small>{change.confidence === "candidate" ? "Candidate correspondence" : change.kind === "modified" ? "Confirmed stable-ID match" : "Stable-ID entity; no counterpart inferred"}</small></button></li>)}</ul></section> : null}
+      {selectedChange && verifiedIdentities ? <section aria-label="Selected difference evidence" data-testid="revision-change-detail"><h3>Difference evidence</h3><p>{selectedChange.entity} · {selectedChange.identity} · {selectedChange.confidence === "candidate" ? "Candidate; not a confirmed modification" : selectedChange.kind === "modified" ? "Confirmed modification by stable entity ID" : "Entity identified by stable ID; no counterpart inferred"}</p><p>Match basis: {selectedChange.matchBasis ?? "representation-specific identity"}</p><p>Provenance: r{verifiedIdentities[0].revision} → r{verifiedIdentities[1].revision}</p><pre>{JSON.stringify(selectedChange.details ?? {}, null, 2)}</pre>{diff?.source.hunks.length ? <details><summary>Source evidence · {diff.source.totalHunks} hunk(s){diff.source.truncated ? " · partial" : ""}</summary><SourceDiffView source={diff.source} beforeContent={snapshotA!.content} afterContent={snapshotB!.content} mode="unified" beforeLabel={`r${snapshotA!.revision}`} afterLabel={`r${snapshotB!.revision}`} /></details> : null}</section> : null}
+      {diff?.source.changed && snapshotA && snapshotB ? <details data-testid="revision-source-evidence"><summary>Textual source evidence · {diff.source.totalHunks} hunk(s){diff.source.truncated ? " · partial result" : ""}</summary><SourceDiffView source={diff.source} beforeContent={snapshotA.content} afterContent={snapshotB.content} mode="unified" beforeLabel={`r${snapshotA.revision}`} afterLabel={`r${snapshotB.revision}`} /></details> : null}
+      {diff?.metadata.changes.length ? <section aria-label="Metadata changes"><h3>Metadata changes · source metadata</h3><ul>{diff.metadata.changes.map((change, index) => <li key={`${change.field}:${change.identity}:${index}`}><strong>{change.kind}</strong> {change.field} · {change.identity}<dl><dt>Old</dt><dd>{change.oldValue ?? "(absent)"}</dd><dt>New</dt><dd>{change.newValue ?? "(absent)"}</dd></dl></li>)}</ul></section> : null}
     </section>
     <div className="comparison__content"><div className="comparison__panes">
       <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-        {snapshotsReady && snapshotA ? <RevisionPreviewPane pane="a" snapshot={snapshotA} reviewChanges={diff?.content.available ? diff.content.changes : []} reviewSide="base" maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+        {snapshotsReady && snapshotA ? <RevisionPreviewPane key={`${session.id}:a:${snapshotA.revision}`} pane="a" snapshot={snapshotA} semanticPreviewEnabled={Boolean(sameRepresentation)} reviewChanges={changes} activeChange={activeChange} camera={session.cameras.a} onCameraChange={transform => setCameras(current => ({ ...current, a: transform }))} reviewSide="base" maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
       </div>
       <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-        {snapshotsReady && snapshotB ? <RevisionPreviewPane pane="b" snapshot={snapshotB} reviewChanges={diff?.content.available ? diff.content.changes : []} reviewSide="proposed" maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+        {snapshotsReady && snapshotB ? <RevisionPreviewPane key={`${session.id}:b:${snapshotB.revision}`} pane="b" snapshot={snapshotB} semanticPreviewEnabled={Boolean(sameRepresentation)} reviewChanges={changes} activeChange={activeChange} camera={session.cameras.b} onCameraChange={transform => setCameras(current => ({ ...current, b: transform }))} reviewSide="proposed" maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
       </div>
     </div></div>
   </>;
@@ -661,11 +705,20 @@ function snapshotMatchesResource(snapshot: ServerResourceRevision, resource: Rev
   return summaryMatchesResource(snapshot, resource) && snapshot.revision === revision && snapshot.representation === resourceRepresentationOfType(snapshot.type) && typeof snapshot.content === "string";
 }
 
-export function RevisionDiffSummary({ diff }: { diff: ResourceDiff }) {
+function snapshotIdentity(snapshot: ServerResourceRevision): HistoricalSnapshotIdentity {
+  return { projectId: snapshot.projectId, contextId: snapshot.contextId, resourceId: snapshot.resourceId, revision: snapshot.revision, representation: snapshot.representation };
+}
+
+function changeKey(change: SemanticChange): string {
+  return `${change.entity}:${change.identity}`;
+}
+
+export function RevisionDiffSummary({ diff, semanticSupported = true }: { diff: ResourceDiff; semanticSupported?: boolean }) {
   const structuralChanges = diff.content.totalChanges;
   return <section aria-label="Diff summary" data-testid="revision-diff-summary">
     <h3>Structural diff</h3>
-    {!diff.content.available ? <p role="status">Semantic diff unavailable because one or both revisions have validation errors.</p>
+    {!semanticSupported ? <p role="status">Semantic diff unavailable for this representation pair; textual source comparison is shown instead.</p>
+      : !diff.content.available ? <p role="status">Semantic diff unavailable because one or both revisions have validation errors.</p>
       : structuralChanges > 0 ? <p role="status">Structural diff available · {structuralChanges} change(s).</p>
         : diff.metadata.changed || diff.source.changed ? <p role="status">Source/metadata-only changes; no structural changes.</p>
           : <p role="status">No structural changes.</p>}
@@ -676,10 +729,14 @@ export function RevisionDiffSummary({ diff }: { diff: ResourceDiff }) {
   </section>;
 }
 
-function RevisionPreviewPane({ pane, snapshot, reviewChanges, reviewSide, maximized, onMaximize, onRestore }: {
+function RevisionPreviewPane({ pane, snapshot, semanticPreviewEnabled, reviewChanges, activeChange, camera, onCameraChange, reviewSide, maximized, onMaximize, onRestore }: {
   pane: "a" | "b";
   snapshot: ServerResourceRevision;
+  semanticPreviewEnabled: boolean;
   reviewChanges: SemanticChange[];
+  activeChange: string | null;
+  camera: DiagramViewportTransform | null;
+  onCameraChange: (transform: DiagramViewportTransform) => void;
   reviewSide: "base" | "proposed";
   maximized: boolean;
   onMaximize: () => void;
@@ -687,13 +744,13 @@ function RevisionPreviewPane({ pane, snapshot, reviewChanges, reviewSide, maximi
 }) {
   const representation = resourceRepresentationOfType(snapshot.type);
   return <section className={`comparison__pane${maximized ? " comparison__pane--maximized" : ""}`} aria-label={`Revision ${pane.toUpperCase()}`} data-testid={`revision-pane-${pane}`}>
-    <header className="comparison__header"><div><strong>Revision {pane.toUpperCase()}</strong><span>{snapshot.contextId === null ? "SHARED" : "MY WORK"} · r{snapshot.revision} · {new Date(snapshot.createdAt).toLocaleString()}</span><h2>{snapshot.path}</h2><span>{representationLabel(representation)}</span></div>
+    <header className="comparison__header"><div><strong>Revision {pane.toUpperCase()}</strong><span>{snapshot.contextId === null ? "SHARED" : "MY WORK"} · r{snapshot.revision} · {new Date(snapshot.createdAt).toLocaleString()}</span><span>Authored by {snapshot.authoredBy.kind === "user" ? `user ${snapshot.authoredBy.userId}` : snapshot.authoredBy.kind === "agent" ? `agent ${snapshot.authoredBy.agentId}` : "system"}</span><h2>{snapshot.path}</h2><span>{representationLabel(representation)}</span></div>
       <button type="button" className="icon-button" aria-label={maximized ? `Restore revision ${pane.toUpperCase()}` : `Maximize revision ${pane.toUpperCase()}`} onClick={maximized ? onRestore : onMaximize}>{maximized ? "⊡" : "⤢"}</button>
     </header>
     <div className="comparison__viewer">
-      {snapshot.type === "conceptual" ? <ConceptualPreview source={snapshot.content} reviewChanges={reviewChanges} reviewSide={reviewSide} comparisonMode />
-        : snapshot.type === "database" ? <DatabasePreview source={snapshot.content} reviewChanges={reviewChanges} comparisonMode />
-          : <p role="status">This representation has no structural preview in revision comparison.</p>}
+      {semanticPreviewEnabled && snapshot.type === "conceptual" ? <ConceptualPreview source={snapshot.content} reviewChanges={reviewChanges} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} reviewSide={reviewSide} comparisonMode />
+        : semanticPreviewEnabled && snapshot.type === "database" ? <DatabasePreview source={snapshot.content} reviewChanges={reviewChanges} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} comparisonMode />
+          : <section aria-label="Historical source fallback"><p role="status">Structural historical preview is not supported for {representationLabel(representation)}. Showing source only; no semantic change is asserted.</p><pre>{snapshot.content}</pre></section>}
     </div>
   </section>;
 }
@@ -701,6 +758,14 @@ function RevisionPreviewPane({ pane, snapshot, reviewChanges, reviewSide, maximi
 function diagnosticMessage(diagnostic: unknown): string {
   if (typeof diagnostic === "object" && diagnostic !== null && "message" in diagnostic && typeof diagnostic.message === "string") return diagnostic.message;
   return typeof diagnostic === "string" ? diagnostic : JSON.stringify(diagnostic);
+}
+
+function revisionRequestError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/\b(403|404|forbidden|not_found|not found|retired|revoked)\b/i.test(message)) {
+    return "Historical revision unavailable: the resource may be retired or access may have been revoked.";
+  }
+  return message || fallback;
 }
 
 function traceProvenance(context: AnalysisContext) {

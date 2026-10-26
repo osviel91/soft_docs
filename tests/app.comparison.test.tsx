@@ -6,11 +6,11 @@ import DualView, { compatibleVisualSnapshot, fingerprintVisualSource, type Visua
 import type { ProjectIndex } from "../src/domain/project/project-index";
 import type { DiagramFile, NoteFile, Project } from "../src/domain/workspace/types";
 import type { ResourceDiff } from "../src/domain/diff/resource-diff";
-import type { ServerResourceRevision, ServerResourceRevisionSummary } from "../src/workspace/server/api-client";
+import type { ServerResourceRevision, ServerResourceRevisionSummary, ServerResourceType } from "../src/workspace/server/api-client";
 import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "../src/workspace/ui-preferences";
 import { createVisualSessionController } from "../src/features/preview/visual-session-controller";
-import { resourceRepresentationOfName } from "../src/domain/workspace/resource-id";
+import { resourceRepresentationOfName, resourceRepresentationOfType } from "../src/domain/workspace/resource-id";
 
 afterEach(() => {
   cleanup();
@@ -85,8 +85,8 @@ function visualSessionDescriptors(options: ComparisonOption[]) {
   }));
 }
 
-function revisionSnapshot(revision: number, content: string, type: "conceptual" | "database" = "conceptual"): ServerResourceRevision {
-  return { ...revisionResource, revision, type, representation: type, content, authoredBy: { kind: "user", userId: "owner", subjectUserId: "owner" }, createdAt: `2026-01-0${revision}T00:00:00.000Z` };
+function revisionSnapshot(revision: number, content: string, type: ServerResourceType = "conceptual"): ServerResourceRevision {
+  return { ...revisionResource, revision, type, representation: resourceRepresentationOfType(type), content, authoredBy: { kind: "user", userId: "owner", subjectUserId: "owner" }, createdAt: `2026-01-0${revision}T00:00:00.000Z` };
 }
 
 function revisionClient(snapshots: ServerResourceRevision[]) {
@@ -97,11 +97,14 @@ function revisionClient(snapshots: ServerResourceRevision[]) {
   };
 }
 
-function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conceptual" | "database" = "conceptual") {
-  const resource: DiagramFile = { id: "file-id", name: type === "conceptual" ? "model.concept" : "schema.dbschema", source: snapshots.at(-1)?.content ?? "", projectId: "project" };
+function renderRevisionCompare(snapshots: ServerResourceRevision[], type: ServerResourceType = "conceptual") {
+  const path = type === "sequence-diagram" ? "model.seq" : type === "event-flow" ? "model.eventseq" : type === "markdown-document" ? "notes.md" : type === "database" ? "schema.dbschema" : "model.concept";
+  const resource: DiagramFile | NoteFile = type === "markdown-document"
+    ? { id: "file-id", name: path, markdown: snapshots.at(-1)?.content ?? "", projectId: "project" }
+    : { id: "file-id", name: path, source: snapshots.at(-1)?.content ?? "", projectId: "project" };
   return render(<ComparisonView
     primary={resource}
-    primarySource={resource.source}
+    primarySource={"source" in resource ? resource.source : resource.markdown}
     resources={[resource]}
     index={revisionIndex}
     resourceIdForFile={() => revisionResource.resourceId}
@@ -113,7 +116,7 @@ function renderRevisionCompare(snapshots: ServerResourceRevision[], type: "conce
     maximized={false}
     onToggleMaximize={() => {}}
     revisionClient={revisionClient(snapshots)}
-    revisionResource={{ ...revisionResource, type }}
+    revisionResource={{ ...revisionResource, path, type }}
   />);
 }
 
@@ -750,6 +753,14 @@ describe("App — dual viewer foundation", () => {
     expect(screen.getByTestId("revision-pane-a").querySelector('[data-review-change="concept:account"]')).toHaveClass("review-change--modified");
     expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="relationship:places"]')).toHaveClass("review-change--modified");
     expect(screen.getByTestId("revision-pane-b").querySelector('[data-concept-id="order"]')).toBeNull();
+    expect(screen.getByTestId("verified-revision-pair")).toHaveTextContent("project / SHARED / stable-resource · r1 → r2");
+    expect(screen.getByTestId("revision-change-detail")).toHaveTextContent("Confirmed modification by stable entity ID");
+    const initiallySelected = screen.getByTestId("revision-pane-a").querySelector(".review-change--active");
+    expect(initiallySelected).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Next difference" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next difference" }));
+    await waitFor(() => expect(screen.getByTestId("revision-change-detail")).toHaveTextContent("concept · invoice"));
+    expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="concept:invoice"]')).toHaveClass("review-change--active");
   });
 
   it("compares Database revisions using native row highlights and keeps implicit renames as remove plus add", async () => {
@@ -782,7 +793,198 @@ describe("App — dual viewer foundation", () => {
     renderRevisionCompare(mixed);
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
     await waitFor(() => expect(screen.getByText(/incompatible representations/)).toBeInTheDocument());
-    expect(screen.queryByTestId("revision-diff-summary")).toBeNull();
+    expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("textual source comparison is shown instead");
+    expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("concept account");
+    expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("table accounts");
+    expect(screen.getAllByText(/Showing source only/)).toHaveLength(2);
+  });
+
+  it.each([
+    ["Sequence", "sequence-diagram" as const, "participant Client\nparticipant API\nClient -> API: Before", "participant Client\nparticipant API\nClient -> API: After", "Client -> API: Before", "Client -> API: After"],
+    ["Event Flow", "event-flow" as const, "event Before\nproducer Client", "event After\nproducer Client", "event Before", "event After"],
+    ["Markdown", "markdown-document" as const, "# Before\n\nold text", "# After\n\nnew text", "# Before", "# After"],
+  ])("shows verified textual-only evidence for historical %s revisions", async (_label, type, before, after, beforeEvidence, afterEvidence) => {
+    renderRevisionCompare([revisionSnapshot(1, before, type), revisionSnapshot(2, after, type)], type);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+
+    expect(await screen.findByTestId("verified-revision-pair")).toHaveTextContent("r1 → r2");
+    expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("textual source comparison is shown instead");
+    expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent("Textual source evidence");
+    expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent(beforeEvidence);
+    expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent(afterEvidence);
+    for (const pane of [screen.getByTestId("revision-pane-a"), screen.getByTestId("revision-pane-b")]) {
+      expect(pane).toHaveTextContent("Showing source only; no semantic change is asserted.");
+      expect(pane.querySelector("svg")).toBeNull();
+    }
+    expect(screen.queryByTestId("revision-change-list")).toBeNull();
+    expect(screen.queryByText(/Confirmed stable-ID match|Confirmed modification/)).toBeNull();
+  });
+
+  it.each([
+    ["project", { projectId: "different-project" }],
+    ["context", { contextId: "different-context" }],
+    ["resource", { resourceId: "different-resource" }],
+    ["revision", { revision: 99 }],
+    ["representation", { representation: "database" as const }],
+  ])("rejects a snapshot with a mismatched %s identity field", async (_field, mismatch) => {
+    const snapshots = [revisionSnapshot(1, 'concept account "Account"'), revisionSnapshot(2, 'concept account "Account"')];
+    const client = revisionClient(snapshots);
+    const original = client.getResourceRevision;
+    client.getResourceRevision = async (...args) => {
+      const result = await original(...args);
+      return args[3] === 2 ? { ...result, ...mismatch } : result;
+    };
+    const resource: DiagramFile = { id: "file-id", name: "model.concept", source: snapshots[1]!.content, projectId: "project" };
+    render(<ComparisonView primary={resource} primarySource={resource.source} resources={[resource]} index={revisionIndex} resourceIdForFile={() => revisionResource.resourceId} onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} revisionClient={client} revisionResource={revisionResource} />);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("did not match the selected project, resource, context and revision");
+    expect(screen.queryByTestId("revision-pane-a")).toBeNull();
+    expect(screen.queryByTestId("revision-pane-b")).toBeNull();
+  });
+
+  it("clears loaded snapshots after revalidation is forbidden and does not restore them on return", async () => {
+    const snapshots = [revisionSnapshot(1, 'concept account "Protected base"'), revisionSnapshot(2, 'concept account "Protected target"')];
+    let revoked = false;
+    let lateSnapshot: ((snapshot: ServerResourceRevision) => void) | undefined;
+    let listCalls = 0;
+    let snapshotCalls = 0;
+    const client = {
+      listResourceRevisions: async () => {
+        listCalls += 1;
+        if (revoked) throw new Error("404 not_found");
+        return snapshots.map(({ resourceId, projectId, contextId, revision, type, representation, createdAt }) => ({ resourceId, projectId, contextId, revision, type, representation, createdAt }));
+      },
+      getResourceRevision: async (_projectId: string, _resourceId: string, _contextId: string | null, revision: number) => {
+        snapshotCalls += 1;
+        if (!revoked) return snapshots.find(snapshot => snapshot.revision === revision)!;
+        if (snapshotCalls % 2 === 1) return await new Promise<ServerResourceRevision>(resolve => { lateSnapshot = resolve; });
+        throw new Error("403 forbidden: resource:read revoked");
+      },
+    };
+    const resource: DiagramFile = { id: "file-id", name: "model.concept", source: snapshots[1]!.content, projectId: "project" };
+    render(<ComparisonView primary={resource} primarySource={resource.source} resources={[resource]} index={revisionIndex} resourceIdForFile={() => revisionResource.resourceId} onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} revisionClient={client} revisionResource={revisionResource} />);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByTestId("verified-revision-pair")).toHaveTextContent("r1 → r2");
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("Protected base");
+      expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("Protected target");
+    });
+
+    // There is no push notification for authorization revocation. The next user
+    // transition that requests snapshots is where the server's denial is seen.
+    revoked = true;
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision A" }), { target: { value: "2" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("resource may be retired or access may have been revoked");
+    await act(async () => { lateSnapshot?.(snapshots[1]!); });
+    expect(screen.queryByTestId("revision-pane-a")).toBeNull();
+    expect(screen.queryByTestId("revision-pane-b")).toBeNull();
+    expect(screen.queryByText(/Protected (base|target)/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Return to parallel views" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("resource may be retired or access may have been revoked");
+    expect(listCalls).toBe(2);
+    expect(screen.queryByTestId("revision-pane-a")).toBeNull();
+    expect(screen.queryByTestId("revision-pane-b")).toBeNull();
+    expect(screen.queryByText(/Protected (base|target)/)).toBeNull();
+  });
+
+  it("keeps revision cameras pane-local and resets them for either selector, swapped pairs, and re-entry", async () => {
+    const snapshots = [
+      revisionSnapshot(1, 'concept account "Account"'),
+      revisionSnapshot(2, 'concept account "Account"\nconcept invoice "Invoice"'),
+      revisionSnapshot(3, 'concept account "Account"\nconcept invoice "Invoice"\nconcept order "Order"'),
+    ];
+    renderRevisionCompare(snapshots);
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    const paneA = screen.getByTestId("revision-pane-a");
+    const paneB = screen.getByTestId("revision-pane-b");
+    fireEvent.click(within(paneA).getByTestId("zoom-in"));
+    fireEvent.click(within(paneB).getByTestId("zoom-in"));
+    await waitFor(() => expect(paneA.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).not.toContain("scale(1)"));
+    const zoomedA = paneA.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    const zoomedB = paneB.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    expect(zoomedA).not.toBe(zoomedB);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision A" }), { target: { value: "1" } });
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1");
+      expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("r3");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull();
+      expect(screen.getByTestId("revision-pane-b").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull();
+    });
+    const afterAChange = screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    const afterAChangeB = screen.getByTestId("revision-pane-b").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    expect(afterAChange).not.toBe(zoomedA);
+    expect(afterAChangeB).not.toBe(zoomedB);
+
+    fireEvent.click(within(screen.getByTestId("revision-pane-a")).getByTestId("zoom-in"));
+    fireEvent.click(within(screen.getByTestId("revision-pane-b")).getByTestId("zoom-in"));
+    const beforeBChangeA = screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    const beforeBChange = screen.getByTestId("revision-pane-b").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision B" }), { target: { value: "2" } });
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1");
+      expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("r2");
+    });
+    await waitFor(() => expect(screen.getByTestId("revision-pane-b").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).not.toBe(beforeBChangeA);
+    expect(screen.getByTestId("revision-pane-b").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).not.toBe(beforeBChange);
+
+    // Reverse the same pair (A=r2, B=r1) through the two server revision selectors.
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision A" }), { target: { value: "2" } });
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r2"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision B" }), { target: { value: "1" } });
+    await waitFor(() => {
+      expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r2");
+      expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("r1");
+    });
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    fireEvent.click(within(screen.getByTestId("revision-pane-a")).getByTestId("zoom-in"));
+    const swappedTransform = screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+    fireEvent.click(screen.getByRole("button", { name: "Return to parallel views" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r2"));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("r3");
+    expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).not.toBe(swappedTransform);
+  });
+
+  it("does not read or write Dual View camera sessions while historical cameras change", async () => {
+    const snapshots = [
+      revisionSnapshot(1, 'concept account "Account"'),
+      revisionSnapshot(2, 'concept account "Account"\nconcept invoice "Invoice"'),
+      revisionSnapshot(3, 'concept account "Account"\nconcept invoice "Invoice"\nconcept order "Order"'),
+    ];
+    const resource: DiagramFile = { id: "dual-resource", name: "dual.concept", source: snapshots[2]!.content, projectId: "project" };
+    const option: ComparisonOption = {
+      id: "dual-option", resource, resourceId: revisionResource.resourceId, representation: "conceptual", source: resource.source, label: "Dual resource",
+      context: { projectId: "project", knowledgeContext: { kind: "local", id: "local:project", projectId: "project" }, index: revisionIndex, resourceId: revisionResource.resourceId },
+    };
+    render(<>
+      <DualView options={[option]} controller={visualControllerFor([option], option.id)} projectId="project" onExit={() => {}} />
+      <ComparisonView primary={resource} primarySource={resource.source} resources={[resource]} index={revisionIndex} resourceIdForFile={() => revisionResource.resourceId} onExit={() => {}} onOpenResource={() => {}} maximizedPane={null} onMaximize={() => {}} onRestore={() => {}} maximized={false} onToggleMaximize={() => {}} revisionClient={revisionClient(snapshots)} revisionResource={revisionResource} />
+    </>);
+    const dualPane = screen.getByTestId("dual-pane-a");
+    await waitFor(() => expect(dualPane.querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    fireEvent.click(within(dualPane).getByTestId("zoom-in"));
+    const dualTransform = dualPane.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style");
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r2"));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector("[data-testid='conceptual-preview-svg'] svg")).not.toBeNull());
+    fireEvent.click(within(screen.getByTestId("revision-pane-a")).getByTestId("zoom-in"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Revision A" }), { target: { value: "1" } });
+    await waitFor(() => expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("r1"));
+    expect(dualPane.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toBe(dualTransform);
+
+    fireEvent.click(screen.getByRole("button", { name: "Return to parallel views" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("r3"));
+    expect(dualPane.querySelector("[data-testid='conceptual-preview-svg']")?.getAttribute("style")).toBe(dualTransform);
   });
 
   it("distinguishes source-only changes from revisions with no changes", async () => {

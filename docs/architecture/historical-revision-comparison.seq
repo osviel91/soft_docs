@@ -1,0 +1,38 @@
+title Historical revision Comparison View
+
+participant User
+participant ComparisonView
+participant ServerApiClient
+participant ResourceRevisionAPI
+participant Authorization
+participant ResourceRepository
+participant ResourceDiff
+participant DiagramViewport
+
+User -> ComparisonView: Select base and target revisions
+ComparisonView -> ServerApiClient: listResourceRevisions(projectId, contextId, resourceId)
+ServerApiClient -> ResourceRevisionAPI: GET revision summaries
+ResourceRevisionAPI -> Authorization: authorize resource:read in context
+Authorization --> ResourceRevisionAPI: Allow or deny
+ResourceRevisionAPI -> ResourceRepository: Read summaries for exact resource lineage
+ResourceRepository --> ResourceRevisionAPI: Revision identities and metadata
+ResourceRevisionAPI --> ServerApiClient: Revision summaries
+ServerApiClient --> ComparisonView: Candidate revision selectors
+
+ComparisonView -> ServerApiClient: getResourceRevision(baseRevision)
+ComparisonView -> ServerApiClient: getResourceRevision(targetRevision)
+ServerApiClient -> ResourceRevisionAPI: Read each requested snapshot
+ResourceRevisionAPI -> Authorization: Re-authorize resource:read
+Authorization --> ResourceRevisionAPI: Allow or deny
+ResourceRevisionAPI -> ResourceRepository: Load immutable snapshots
+ResourceRepository --> ResourceRevisionAPI: Snapshot content, type, authorship, time
+ResourceRevisionAPI --> ServerApiClient: Snapshot responses
+ServerApiClient --> ComparisonView: Responses or unavailable error
+ComparisonView -> ComparisonView: Verify project, context, resource, revision, representation
+ComparisonView -> ResourceDiff: Compare same-type Conceptual or Database snapshots
+ResourceDiff --> ComparisonView: Changes with match basis, source evidence, diagnostics, limits
+ComparisonView -> DiagramViewport: Render each verified snapshot with independent camera
+ComparisonView --> User: Difference list, detail, evidence, fallback or access error
+
+note over ComparisonView : Mismatched identity rejects the pair. Responses from an obsolete pair are ignored and protected pane content is cleared.
+note over ResourceDiff : Cross-type pairs use textual evidence only. Heuristic/name correspondence stays a candidate, never a confirmed rename.

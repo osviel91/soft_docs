@@ -28,6 +28,10 @@ export interface SemanticChange {
   kind: ChangeKind;
   entity: string;
   identity: string;
+  /** Confidence in the old/new correspondence, not in whether source changed. */
+  confidence?: "confirmed" | "candidate";
+  /** The key used to associate the entity across snapshots. */
+  matchBasis?: string;
   details?: Record<string, unknown>;
 }
 
@@ -737,7 +741,22 @@ export function diffResources(
   const metadata = metadataDiff(base.metadata, proposed.metadata);
   const representation = resourceRepresentationOfType(base.type);
   const strategy = strategies[representation];
-  const content = strategy(base.content, proposed.content);
+  const content = base.type === proposed.type
+    ? strategy(base.content, proposed.content)
+    : representationResult(representation, [], [], true);
+  if (content.available && (representation === "conceptual" || representation === "database")) {
+    content.changes = content.changes.map(change => {
+      // A Database column without an authored semantic ID is keyed by its name;
+      // that is useful evidence, but not proof that a renamed column is the same.
+      const candidate = representation === "database" && change.entity === "column"
+        && !change.identity.includes("#id:");
+      return {
+        ...change,
+        confidence: candidate ? "candidate" : "confirmed",
+        matchBasis: candidate ? "table id + column name (name-based candidate)" : "stable entity ID",
+      };
+    });
+  }
   if (base.type !== proposed.type) {
     content.changes = [
       {
