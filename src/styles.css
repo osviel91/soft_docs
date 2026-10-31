@@ -619,18 +619,18 @@ body {
 :is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic {
   filter: drop-shadow(0 0 2px rgba(192, 132, 252, 0.65));
 }
-:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added :is(rect, line, path, polyline, polygon, circle) {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
   stroke: var(--ok);
 }
-:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed :is(rect, line, path, polyline, polygon, circle) {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
   stroke: var(--danger);
   stroke-dasharray: 5 3;
 }
-:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--syntactic :is(rect, line, path, polyline, polygon, circle),
-:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--modified :is(rect, line, path, polyline, polygon, circle) {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--syntactic :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle),
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--modified :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
   stroke: var(--review-syntax);
 }
-:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic :is(rect, line, path, polyline, polygon, circle) {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
   stroke: var(--review-semantic);
 }
 :is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added polygon,
