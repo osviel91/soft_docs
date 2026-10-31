@@ -699,6 +699,40 @@ body {
 .review-change--active text {
   font-weight: 800;
 }
+.proposal-review .viewport--review .sequence-message.review-change--added,
+.proposal-review .viewport--review .sequence-message.review-change--removed,
+.proposal-review .viewport--review .sequence-message.review-change--syntactic,
+.proposal-review .viewport--review .sequence-message.review-change--semantic,
+.proposal-review .viewport--review .participant.review-change--added,
+.proposal-review .viewport--review .participant.review-change--removed,
+.proposal-review .viewport--review .participant.review-change--syntactic,
+.proposal-review .viewport--review .participant.review-change--semantic {
+  filter: none;
+}
+.proposal-review .viewport--review .sequence-message.review-change--active,
+.proposal-review .viewport--review .participant.review-change--active {
+  filter: drop-shadow(0 0 2px var(--accent));
+}
+.proposal-review .viewport--review .sequence-message.review-change--active line,
+.proposal-review .viewport--review .sequence-message.review-change--active path,
+.proposal-review .viewport--review .sequence-message.review-change--active polyline,
+.proposal-review .viewport--review .sequence-message.review-change--active polygon,
+.proposal-review .viewport--review .sequence-message.review-change--active circle,
+.proposal-review .viewport--review .sequence-message.review-change--active rect,
+.proposal-review .viewport--review .participant.review-change--active line,
+.proposal-review .viewport--review .participant.review-change--active path,
+.proposal-review .viewport--review .participant.review-change--active polyline,
+.proposal-review .viewport--review .participant.review-change--active polygon,
+.proposal-review .viewport--review .participant.review-change--active circle,
+.proposal-review .viewport--review .participant.review-change--active rect {
+  stroke-width: 1.5;
+}
+.proposal-review .viewport--review .participant.review-change--added rect,
+.proposal-review .viewport--review .participant.review-change--removed rect,
+.proposal-review .viewport--review .participant.review-change--syntactic rect,
+.proposal-review .viewport--review .participant.review-change--semantic rect {
+  stroke-width: 1.5;
+}
 .viewport--review .viewport__rail {
   top: 8px;
   right: 8px;
