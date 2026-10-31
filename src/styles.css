@@ -605,133 +605,55 @@ body {
   font-size: 0.55em;
   font-weight: 500;
 }
-.review-change--added {
-  filter: drop-shadow(0 0 5px rgba(74, 222, 128, 0.75));
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added {
+  filter: drop-shadow(0 0 2px rgba(74, 222, 128, 0.7));
 }
-.review-change--added rect {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed {
+  opacity: 0.7;
+  filter: drop-shadow(0 0 2px rgba(248, 113, 113, 0.55));
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--modified,
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--syntactic {
+  filter: drop-shadow(0 0 2px rgba(251, 146, 60, 0.65));
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic {
+  filter: drop-shadow(0 0 2px rgba(192, 132, 252, 0.65));
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added :is(rect, line, path, polyline, polygon, circle) {
   stroke: var(--ok);
-  stroke-width: 3;
 }
-.review-change--removed {
-  opacity: 0.62;
-  filter: drop-shadow(0 0 5px rgba(248, 113, 113, 0.75));
-}
-.review-change--removed rect {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed :is(rect, line, path, polyline, polygon, circle) {
   stroke: var(--danger);
-  stroke-width: 3;
   stroke-dasharray: 5 3;
 }
-.review-change--syntactic {
-  filter: drop-shadow(0 0 5px rgba(251, 146, 60, 0.85));
-}
-.review-change--syntactic rect {
-  stroke: var(--review-syntax);
-  stroke-width: 3;
-}
-.review-change--syntactic line,
-.review-change--syntactic path,
-.review-change--syntactic polyline,
-.review-change--syntactic polygon,
-.review-change--syntactic circle {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--syntactic :is(rect, line, path, polyline, polygon, circle),
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--modified :is(rect, line, path, polyline, polygon, circle) {
   stroke: var(--review-syntax);
 }
-.review-change--syntactic polygon,
-.review-change--syntactic text {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic :is(rect, line, path, polyline, polygon, circle) {
+  stroke: var(--review-semantic);
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added polygon,
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added text {
+  fill: var(--ok);
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed polygon,
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--removed text {
+  fill: var(--danger);
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--syntactic :is(polygon, text),
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--modified :is(polygon, text) {
   fill: var(--review-syntax);
 }
-.review-change--semantic {
-  filter: drop-shadow(0 0 5px rgba(192, 132, 252, 0.9));
-}
-.review-change--semantic rect {
-  stroke: var(--review-semantic);
-  stroke-width: 3;
-}
-.review-change--semantic line,
-.review-change--semantic path,
-.review-change--semantic polyline,
-.review-change--semantic polygon,
-.review-change--semantic circle {
-  stroke: var(--review-semantic);
-}
-.review-change--semantic polygon,
-.review-change--semantic text {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic :is(polygon, text) {
   fill: var(--review-semantic);
 }
-.review-change--added line,
-.review-change--added path,
-.review-change--added polyline,
-.review-change--added polygon,
-.review-change--added circle {
-  stroke: var(--ok);
-}
-.review-change--added polygon {
-  fill: var(--ok);
-}
-.review-change--added text {
-  fill: var(--ok);
-}
-.review-change--removed line,
-.review-change--removed path,
-.review-change--removed polyline,
-.review-change--removed polygon,
-.review-change--removed circle {
-  stroke: var(--danger);
-  stroke-dasharray: 5 3;
-}
-.review-change--removed polygon {
-  fill: var(--danger);
-}
-.review-change--removed text {
-  fill: var(--danger);
-}
-.review-change--active {
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--active {
   opacity: 1;
-  filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 10px var(--accent));
-}
-.review-change--active line,
-.review-change--active path,
-.review-change--active polyline,
-.review-change--active polygon,
-.review-change--active circle,
-.review-change--active rect {
-  stroke-width: 4;
-}
-.review-change--active text {
-  font-weight: 800;
-}
-.proposal-review .viewport--review .sequence-message.review-change--added,
-.proposal-review .viewport--review .sequence-message.review-change--removed,
-.proposal-review .viewport--review .sequence-message.review-change--syntactic,
-.proposal-review .viewport--review .sequence-message.review-change--semantic,
-.proposal-review .viewport--review .participant.review-change--added,
-.proposal-review .viewport--review .participant.review-change--removed,
-.proposal-review .viewport--review .participant.review-change--syntactic,
-.proposal-review .viewport--review .participant.review-change--semantic {
-  filter: none;
-}
-.proposal-review .viewport--review .sequence-message.review-change--active,
-.proposal-review .viewport--review .participant.review-change--active {
   filter: drop-shadow(0 0 2px var(--accent));
 }
-.proposal-review .viewport--review .sequence-message.review-change--active line,
-.proposal-review .viewport--review .sequence-message.review-change--active path,
-.proposal-review .viewport--review .sequence-message.review-change--active polyline,
-.proposal-review .viewport--review .sequence-message.review-change--active polygon,
-.proposal-review .viewport--review .sequence-message.review-change--active circle,
-.proposal-review .viewport--review .sequence-message.review-change--active rect,
-.proposal-review .viewport--review .participant.review-change--active line,
-.proposal-review .viewport--review .participant.review-change--active path,
-.proposal-review .viewport--review .participant.review-change--active polyline,
-.proposal-review .viewport--review .participant.review-change--active polygon,
-.proposal-review .viewport--review .participant.review-change--active circle,
-.proposal-review .viewport--review .participant.review-change--active rect {
-  stroke-width: 1.5;
-}
-.proposal-review .viewport--review .participant.review-change--added rect,
-.proposal-review .viewport--review .participant.review-change--removed rect,
-.proposal-review .viewport--review .participant.review-change--syntactic rect,
-.proposal-review .viewport--review .participant.review-change--semantic rect {
-  stroke-width: 1.5;
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--active text {
+  font-weight: 800;
 }
 .viewport--review .viewport__rail {
   top: 8px;

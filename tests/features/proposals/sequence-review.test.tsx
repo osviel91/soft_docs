@@ -198,14 +198,14 @@ describe("sequence proposal review fixture", () => {
       expect(normalMessage.querySelector("line:not(.sequence-message__hit)")).toHaveAttribute("stroke-width", "1.5");
       expect(getComputedStyle(normalMessage).filter || "none").toBe("none");
       expect(messageLine).toHaveAttribute("stroke-width", "1.5");
-      expect(getComputedStyle(proposedMessage).filter).toBe("none");
+      expect(getComputedStyle(proposedMessage).filter).toContain("0 0 2px");
 
       const next = within(review.container).getByTestId("change-next");
       for (let count = 0; count < 5 && !proposedMessage.classList.contains("review-change--active"); count += 1) {
         fireEvent.click(next);
       }
       expect(proposedMessage).toHaveClass("review-change--active");
-      expect(getComputedStyle(messageLine).strokeWidth).toBe("1.5");
+      expect(messageLine).toHaveAttribute("stroke-width", "1.5");
       expect(getComputedStyle(proposedMessage).filter).toContain("drop-shadow");
 
       expect(within(proposed).getByTestId("minimap")).toBeInTheDocument();

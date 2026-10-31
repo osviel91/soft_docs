@@ -749,6 +749,8 @@ describe("App — dual viewer foundation", () => {
     expect(screen.queryByText(/Structural historical comparison is not yet supported|incompatible representations/)).toBeNull();
     expect(screen.getByRole("combobox", { name: "Revision A" })).toHaveValue("1");
     expect(screen.getByRole("combobox", { name: "Revision B" })).toHaveValue("2");
+    expect(screen.getByTestId("revision-pane-a")).toHaveClass("comparison__pane--diff");
+    expect(screen.getByTestId("revision-pane-b")).toHaveClass("comparison__pane--diff");
     await waitFor(() => expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="concept:invoice"]')).toHaveClass("review-change--added"));
     expect(screen.getByTestId("revision-pane-a").querySelector('[data-review-change="concept:order"]')).toHaveClass("review-change--removed");
     expect(screen.getByTestId("revision-pane-a").querySelector('[data-review-change="concept:account"]')).toHaveClass("review-change--modified");

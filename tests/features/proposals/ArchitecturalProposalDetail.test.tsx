@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { ArchitecturalProposalDetail, ProposalResourceComparison } from "../../../src/features/proposals/ArchitecturalProposalDetail";
 import type { ServerApiClient, ServerArchitecturalProposalDiff, ServerArchitecturalProposal } from "../../../src/workspace/server/api-client";
 import { diffResources } from "../../../src/domain/diff/resource-diff";
@@ -146,6 +148,90 @@ describe("ArchitecturalProposalDetail", () => {
 });
 
 describe("ProposalResourceComparison", () => {
+  it.each([
+    ["event-flow" as const, "event OrderCreated"],
+    ["conceptual" as const, 'concept restaurant "Restaurant"'],
+    ["database" as const, 'table restaurants - "Restaurants"'],
+  ])("uses the shared, thin added-change style for %s diagrams", async (type, proposedContent) => {
+    const computed = diffResources(
+      { content: "", type },
+      { content: proposedContent, type },
+    );
+    const resource = {
+      ...computed,
+      path: `new-artifact.${type}`,
+      type,
+      operation: "ADDED" as const,
+      baseContent: "",
+      proposedContent,
+    };
+    const stylesheet = document.createElement("style");
+    stylesheet.textContent = await readFile(path.join(process.cwd(), "src/styles.css"), "utf8");
+    document.head.append(stylesheet);
+    try {
+      const view = render(
+        <ProposalResourceComparison resource={resource} mode="after" onModeChange={vi.fn()} />,
+      );
+      const inspector = view.container.querySelector(".proposal-inspector")!;
+      let changed: Element | null = null;
+      await waitFor(() => {
+        changed = inspector.querySelector(".review-change--added");
+        expect(changed).not.toBeNull();
+      });
+      const shape = changed!.querySelector<SVGElement>("rect, path, line")!;
+      expect(getComputedStyle(changed!).filter).toContain("0 0 2px");
+      expect(getComputedStyle(shape).stroke).toBe("var(--ok)");
+      changed!.classList.add("review-change--active");
+      expect(getComputedStyle(changed!).filter).toContain("drop-shadow");
+      expect(["3", "4", "3px", "4px"]).not.toContain(getComputedStyle(shape).strokeWidth);
+      expect(inspector.querySelector(".viewport--review")).toBeInTheDocument();
+    } finally {
+      stylesheet.remove();
+    }
+  });
+
+  it("keeps added Sequence strokes thin in the Architectural Proposal Change Inspector", async () => {
+    const proposedContent = "participant API\nparticipant Search\nAPI -> Search: locate restaurant";
+    const computed = diffResources(
+      { content: "", type: "sequence-diagram" },
+      { content: proposedContent, type: "sequence-diagram" },
+    );
+    const resource = {
+      ...computed,
+      path: "restaurant-enrichment.seq",
+      type: "sequence-diagram" as const,
+      operation: "ADDED" as const,
+      baseContent: "",
+      proposedContent,
+    };
+    const stylesheet = document.createElement("style");
+    stylesheet.textContent = await readFile(path.join(process.cwd(), "src/styles.css"), "utf8");
+    document.head.append(stylesheet);
+    try {
+      const view = render(
+        <ProposalResourceComparison resource={resource} mode="after" onModeChange={vi.fn()} />,
+      );
+      const inspector = view.container.querySelector(".proposal-inspector")!;
+      const message = inspector.querySelector<SVGGElement>(
+        ".sequence-message.review-change--added",
+      )!;
+      const line = message.querySelector<SVGLineElement>("line:not(.sequence-message__hit)")!;
+      const participant = inspector.querySelector<SVGGElement>(
+        ".participant.review-change--added",
+      )!;
+      const participantBox = participant.querySelector<SVGRectElement>("rect")!;
+
+      expect(inspector.querySelectorAll(".viewport--review")).toHaveLength(1);
+      expect(getComputedStyle(message).filter).toContain("0 0 2px");
+      expect(line).toHaveAttribute("stroke-width", "1.5");
+      expect(getComputedStyle(line).stroke).toBe("var(--ok)");
+      expect(participantBox).toHaveAttribute("stroke-width", "1.5");
+      expect(getComputedStyle(participantBox).stroke).toBe("var(--ok)");
+    } finally {
+      stylesheet.remove();
+    }
+  });
+
   it("renders Database Before, After, and Compare from the semantic resource diff", async () => {
     const baseContent = 'table customer - "Customer"';
     const proposedContent = 'table customer - "AccountHolder"';

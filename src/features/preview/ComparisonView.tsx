@@ -745,7 +745,7 @@ function RevisionPreviewPane({ pane, snapshot, semanticPreviewEnabled, reviewCha
   onRestore: () => void;
 }) {
   const representation = resourceRepresentationOfType(snapshot.type);
-  return <section className={`comparison__pane${maximized ? " comparison__pane--maximized" : ""}`} aria-label={`Revision ${pane.toUpperCase()}`} data-testid={`revision-pane-${pane}`}>
+  return <section className={`comparison__pane comparison__pane--diff${maximized ? " comparison__pane--maximized" : ""}`} aria-label={`Revision ${pane.toUpperCase()}`} data-testid={`revision-pane-${pane}`}>
     <header className="comparison__header"><div><strong>Revision {pane.toUpperCase()}</strong><span>{snapshot.contextId === null ? "SHARED" : "MY WORK"} · r{snapshot.revision} · {new Date(snapshot.createdAt).toLocaleString()}</span><span>Authored by {snapshot.authoredBy.kind === "user" ? `user ${snapshot.authoredBy.userId}` : snapshot.authoredBy.kind === "agent" ? `agent ${snapshot.authoredBy.agentId}` : "system"}</span><h2>{snapshot.path}</h2><span>{representationLabel(representation)}</span></div>
       <button type="button" className="icon-button" aria-label={maximized ? `Restore revision ${pane.toUpperCase()}` : `Maximize revision ${pane.toUpperCase()}`} onClick={maximized ? onRestore : onMaximize}>{maximized ? "⊡" : "⤢"}</button>
     </header>
