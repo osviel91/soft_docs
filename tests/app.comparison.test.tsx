@@ -746,6 +746,7 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
 
     await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Structural diff available"));
+    expect(screen.queryByText(/Structural historical comparison is not yet supported|incompatible representations/)).toBeNull();
     expect(screen.getByRole("combobox", { name: "Revision A" })).toHaveValue("1");
     expect(screen.getByRole("combobox", { name: "Revision B" })).toHaveValue("2");
     await waitFor(() => expect(screen.getByTestId("revision-pane-b").querySelector('[data-review-change="concept:invoice"]')).toHaveClass("review-change--added"));
@@ -771,6 +772,8 @@ describe("App — dual viewer foundation", () => {
     renderRevisionCompare(snapshots, "database");
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
 
+    await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Structural diff available"));
+    expect(screen.queryByText(/Structural historical comparison is not yet supported|incompatible representations/)).toBeNull();
     await waitFor(() => expect(screen.getByTestId("revision-pane-a").querySelector('[data-column-id="accounts:old_name"]')).toHaveClass("review-change--removed"));
     expect(screen.getByTestId("revision-pane-b").querySelector('[data-column-id="accounts:new_name"]')).toHaveClass("review-change--added");
     expect(screen.getByTestId("revision-pane-a").querySelector('[data-column-id="account_id"]')).toHaveClass("review-change--modified");
@@ -787,12 +790,14 @@ describe("App — dual viewer foundation", () => {
     await waitFor(() => expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Semantic diff unavailable"));
     expect(screen.getByRole("heading", { name: "Validation diagnostics" })).toBeInTheDocument();
     expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("Conceptual source has errors");
+    expect(screen.queryByText(/incompatible representations|Structural historical comparison is not yet supported/)).toBeNull();
     invalidView.unmount();
 
     const mixed = [revisionSnapshot(1, 'concept account "Account"'), revisionSnapshot(2, 'table accounts - "Accounts"', "database")];
     renderRevisionCompare(mixed);
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
     await waitFor(() => expect(screen.getByText(/incompatible representations/)).toBeInTheDocument());
+    expect(screen.queryByText(/Structural historical comparison is not yet supported/)).toBeNull();
     expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("textual source comparison is shown instead");
     expect(screen.getByTestId("revision-pane-a")).toHaveTextContent("concept account");
     expect(screen.getByTestId("revision-pane-b")).toHaveTextContent("table accounts");
@@ -808,7 +813,9 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
 
     expect(await screen.findByTestId("verified-revision-pair")).toHaveTextContent("r1 → r2");
-    expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("textual source comparison is shown instead");
+    expect(screen.getByText("Structural historical comparison is not yet supported for this representation. Textual source differences are shown instead.")).toBeInTheDocument();
+    expect(screen.queryByText(/incompatible representations/)).toBeNull();
+    expect(screen.getByTestId("revision-diff-summary")).toHaveTextContent("Structural historical comparison is not yet supported");
     expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent("Textual source evidence");
     expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent(beforeEvidence);
     expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent(afterEvidence);
