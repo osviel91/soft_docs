@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import ProposalReview from "../../../src/features/proposals/ProposalReview";
+import Preview from "../../../src/features/preview/Preview";
 import { diffResources } from "../../../src/domain/diff/resource-diff";
 import type { ResourceState } from "../../../src/domain/diff/resource-state";
 import {
@@ -84,10 +87,10 @@ const current: ServerResource = {
   revision: 1,
 };
 
-function renderReview(diff: ServerChangeProposalDiff) {
+function renderReview(diff: ServerChangeProposalDiff, proposalValue = proposal) {
   return render(
     <ProposalReview
-      proposal={proposal}
+      proposal={proposalValue}
       diff={diff}
       analysis={{
         baseRevision: diff.baseRevision,
@@ -151,6 +154,70 @@ describe("sequence proposal review fixture", () => {
       "interaction:message:4-4",
     ])
       expect(count(id)).toBe(2);
+
+    const message = (label: string) =>
+      [...container.querySelectorAll<SVGGElement>(".sequence-message")].find(
+        (element) => element.getAttribute("data-message-label") === label,
+      );
+    expect(message("fresh call")).toHaveClass("review-change--added");
+    expect(message("retiring call")).toHaveClass("review-change--removed");
+    expect(message("edited text")).toHaveClass("review-change--syntactic");
+    expect(message("reverse me")).toHaveClass("review-change--semantic");
+    for (const reviewClass of [
+      "review-change--added",
+      "review-change--removed",
+      "review-change--syntactic",
+      "review-change--semantic",
+    ])
+      expect(message("keep")).not.toHaveClass(reviewClass);
+  });
+
+  it("keeps a newly added proposal sequence message at renderer stroke weight while preserving review navigation", async () => {
+    const source = "participant API\nparticipant Search\nAPI -> Search: locate restaurant";
+    const diff = makeDiff("", source);
+    const style = document.createElement("style");
+    style.textContent = await readFile(path.join(process.cwd(), "src/styles.css"), "utf8");
+    document.head.append(style);
+    try {
+      const normal = render(<Preview source={source} />);
+      const review = renderReview(diff, { ...proposal, proposedContent: source });
+      fireEvent.click(within(review.container).getByRole("button", { name: "Compare" }));
+
+      const normalMessage = normal.container.querySelector<SVGGElement>(
+        ".sequence-message[data-sequence-message='1']",
+      )!;
+      const artifacts = [...review.container.querySelectorAll<HTMLElement>(".proposal-review__artifact")];
+      const base = artifacts.find((artifact) => artifact.textContent?.includes("BASE"))!;
+      const proposed = artifacts.find((artifact) => artifact.textContent?.includes("PROPOSED"))!;
+      const proposedSvg = proposed.querySelector<SVGSVGElement>("[data-testid='preview-svg']")!;
+      const proposedMessage = proposedSvg.querySelector<SVGGElement>(".sequence-message.review-change--added[data-sequence-message='1']")!;
+      const messageLine = proposedMessage.querySelector<SVGLineElement>("line:not(.sequence-message__hit)")!;
+
+      expect(base.querySelector(".sequence-message")).toBeNull();
+      expect(proposedMessage).toHaveAttribute("data-review-change", "interaction:message:0-1");
+      expect(normalMessage.querySelector("line:not(.sequence-message__hit)")).toHaveAttribute("stroke-width", "1.5");
+      expect(getComputedStyle(normalMessage).filter || "none").toBe("none");
+      expect(messageLine).toHaveAttribute("stroke-width", "1.5");
+      expect(getComputedStyle(proposedMessage).filter).toBe("none");
+
+      const next = within(review.container).getByTestId("change-next");
+      for (let count = 0; count < 5 && !proposedMessage.classList.contains("review-change--active"); count += 1) {
+        fireEvent.click(next);
+      }
+      expect(proposedMessage).toHaveClass("review-change--active");
+      expect(getComputedStyle(messageLine).strokeWidth).toBe("1.5");
+      expect(getComputedStyle(proposedMessage).filter).toContain("drop-shadow");
+
+      expect(within(proposed).getByTestId("minimap")).toBeInTheDocument();
+      const zoom = within(proposed).getByTestId("zoom-level");
+      const beforeZoom = proposedSvg.getAttribute("style");
+      fireEvent.click(within(proposed).getByTestId("zoom-in"));
+      expect(zoom).not.toHaveTextContent("100%");
+      expect(proposedSvg.getAttribute("style")).not.toBe(beforeZoom);
+      normal.unmount();
+    } finally {
+      style.remove();
+    }
   });
 
   it("reveals each Compare target as the reviewer presses Next", () => {
