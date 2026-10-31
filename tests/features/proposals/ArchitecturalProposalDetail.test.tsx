@@ -215,6 +215,7 @@ describe("ProposalResourceComparison", () => {
       const message = inspector.querySelector<SVGGElement>(
         ".sequence-message.review-change--added",
       )!;
+      const hitLine = message.querySelector<SVGLineElement>("line.sequence-message__hit")!;
       const line = message.querySelector<SVGLineElement>("line:not(.sequence-message__hit)")!;
       const participant = inspector.querySelector<SVGGElement>(
         ".participant.review-change--added",
@@ -223,6 +224,21 @@ describe("ProposalResourceComparison", () => {
 
       expect(inspector.querySelectorAll(".viewport--review")).toHaveLength(1);
       expect(getComputedStyle(message).filter).toContain("0 0 2px");
+      expect(hitLine).toHaveAttribute("stroke", "transparent");
+      expect(hitLine).toHaveAttribute("stroke-width", "14");
+      expect(getComputedStyle(hitLine).stroke).not.toBe("var(--ok)");
+      for (const [state, color] of [
+        ["review-change--removed", "var(--danger)"],
+        ["review-change--modified", "var(--review-syntax)"],
+        ["review-change--semantic", "var(--review-semantic)"],
+      ]) {
+        message.classList.remove("review-change--added", "review-change--active");
+        message.classList.add(state);
+        expect(getComputedStyle(hitLine).stroke).not.toBe(color);
+      }
+      message.classList.remove("review-change--removed", "review-change--modified", "review-change--semantic");
+      message.classList.add("review-change--added", "review-change--active");
+      expect(getComputedStyle(hitLine).stroke).not.toBe("var(--ok)");
       expect(line).toHaveAttribute("stroke-width", "1.5");
       expect(getComputedStyle(line).stroke).toBe("var(--ok)");
       expect(participantBox).toHaveAttribute("stroke-width", "1.5");
