@@ -3464,6 +3464,264 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
     }
   });
 
+  await scenario("UX-COMP-3D historical Sequence Comparison validates rendered revisions", async () => {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1200 } });
+    const page = await context.newPage();
+    const http500s = [];
+    const pageErrors = [];
+    const evidenceRoot = process.env.E2E_EVIDENCE_DIR ?? join(tmpdir(), "ux-comp-3d-r-evidence");
+    const evidenceDir = join(evidenceRoot, `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`);
+    await mkdir(evidenceDir, { recursive: true });
+    page.on("pageerror", error => pageErrors.push(error.message));
+    page.on("response", response => { if (response.status() === 500) http500s.push(`${response.request().method()} ${new URL(response.url()).pathname} 500`); });
+
+    const before = [
+      'title "Revision before"', 'participant A as "Alpha"', "participant B", "participant C", "participant D",
+      "A ->> C: keep-anchor", "A ->> C: delete-me",
+      "alt accepted", "  A ->> C: move-me", "else rejected", "  A ->> C: branch-only", "end",
+      "loop retry", "  A ->> C: loop-stable", "end",
+      "opt optional", "  A ->> C: optional-stable", "end",
+      "par left", "  A ->> C: parallel-one", "  A ->> C: parallel-two", "and right", "  A ->> C: parallel-side", "end",
+    ].join("\n");
+    const after = [
+      'title "Revision after"', 'participant A as "Alpha renamed"', "participant C", "participant E",
+      "A ->> C: keep-anchor", "A ->> C: add-me",
+      "alt accepted", "  A ->> C: branch-only", "else rejected", "  A ->> C: move-me", "end",
+      "loop retry", "  A ->> C: loop-stable", "end",
+      "opt optional", "  A ->> C: optional-stable", "end",
+      "par left", "  A ->> C: parallel-one", "  A ->> C: parallel-two", "and right", "  A ->> C: parallel-side", "end",
+    ].join("\n");
+    const reorderedBefore = 'title "Reorder before"\nparticipant A\nparticipant B\nA ->> B: first\nA ->> B: second';
+    const reorderedAfter = 'title "Reorder after"\nparticipant A\nparticipant B\nA ->> B: second\nA ->> B: first';
+    const candidateBefore = 'title "Candidate before"\nparticipant A\nparticipant B\nA ->> B: old label';
+    const candidateAfter = 'title "Candidate after"\nparticipant A\nparticipant B\nA ->> B: new label';
+    const ambiguousBefore = 'title "Ambiguous before"\nparticipant A\nparticipant B\nA ->> B: same\nA ->> B: same';
+    const ambiguousAfter = 'title "Ambiguous after"\nparticipant A\nparticipant B\nA ->> B: same';
+    const noteBefore = 'title "Note before"\nparticipant A\nparticipant B\nA ->> B: target\nnote on 1: before';
+    const noteAfter = 'title "Note after"\nparticipant A\nparticipant B\nA ->> B: inserted\nA ->> B: target\nnote on 2: after';
+    const groupBefore = 'title "Grouped before"\nparticipant A\nparticipant B';
+    const groupAfter = 'title "Grouped after"\nparticipant A\nparticipant B\nopt new-container\n  A ->> B: nested-child\nend';
+
+    try {
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      await waitForAuthEntry(page);
+      await signIn(page, idp, owner);
+      const projectName = `UX-COMP-3D Sequence ${Date.now()}`;
+      await createServerProject(page, projectName);
+      const project = await serverProjectByName(page, projectName);
+      if (!project) throw new Error("Disposable Sequence Comparison project was not discoverable.");
+      const work = await apiRequest(page, `/api/projects/${project.id}/private-work`, {
+        method: "POST", body: JSON.stringify({ name: `sequence-comparison-${Date.now()}` }),
+      });
+      const contextId = work.json?.context?.id;
+      if (work.status !== 201 || !contextId) throw new Error(`Sequence fixture context creation failed: ${work.status} ${work.text}`);
+
+      const resources = [];
+      for (const [path, label, initial, revised] of [
+        ["sequence-main.seq", "Revision after", before, after],
+        ["sequence-reorder.seq", "Reorder after", reorderedBefore, reorderedAfter],
+        ["sequence-candidate.seq", "Candidate after", candidateBefore, candidateAfter],
+        ["sequence-ambiguous.seq", "Ambiguous after", ambiguousBefore, ambiguousAfter],
+        ["sequence-note.seq", "Note after", noteBefore, noteAfter],
+        ["sequence-grouped.seq", "Grouped after", groupBefore, groupAfter],
+      ]) {
+        const created = await apiRequest(page, `/api/projects/${project.id}/resources`, {
+          method: "POST", body: JSON.stringify({ path, type: "sequence-diagram", content: initial, contextId }),
+        });
+        const resourceId = created.json?.resource?.id;
+        if (created.status !== 201 || !resourceId) throw new Error(`Sequence fixture ${path} creation failed: ${created.status} ${created.text}`);
+        const updated = await apiRequest(page, `/api/projects/${project.id}/resources/${resourceId}`, {
+          method: "PUT", body: JSON.stringify({ expectedRevision: 1, content: revised, contextId }),
+        });
+        if (updated.status !== 200) throw new Error(`Sequence fixture ${path} revision creation failed: ${updated.status} ${updated.text}`);
+        resources.push({ path, label, resourceId });
+      }
+      check("simulated fixtures are persisted as six resources with r1/r2 revision history", resources.length === 6, `${projectName}; MY WORK context ${contextId}`);
+
+      const openResource = async ({ path, label, resourceId }) => {
+        await page.goto(`${BASE_URL}/?project=${encodeURIComponent(project.id)}`, { waitUntil: "domcontentloaded" });
+        await page.locator('[data-testid="workspace-active-project"]').filter({ hasText: projectName }).waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await openMyWorkContext(page, contextId);
+        await page.locator('[data-testid="explorer-my-work-section"]').waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const myWorkToggle = page.getByTestId("explorer-my-work-toggle");
+        if ((await myWorkToggle.getAttribute("aria-expanded")) !== "true") await myWorkToggle.click();
+        const row = page.locator('[data-testid="explorer-my-work-section"] [data-testid="explorer-diagram"]').filter({ hasText: label });
+        await row.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await row.getByTestId("select-diagram-button").click();
+        await page.waitForFunction(({ label }) => [...document.querySelectorAll('[data-testid="explorer-my-work-section"] .explorer__resource--selected')].some(item => item.textContent?.includes(label)), { label }, { timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("analysis-mode-button").click();
+        await page.getByRole("button", { name: "Compare revisions" }).click();
+        await page.getByTestId("verified-revision-pair").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        await page.getByTestId("sequence-revision-structural-diff").waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+        const pairText = await page.getByTestId("verified-revision-pair").textContent();
+        const selectedName = await page.locator(".comparison__summary h2").first().textContent().catch(() => "");
+        check(`${path} selected through Explorer and verified revision pair`, pairText.includes("r1 → r2") && selectedName.includes(path), `${pairText}; selected=${selectedName}; resource=${resourceId}`);
+      };
+
+      const main = resources[0];
+      await openResource(main);
+      const saveShot = async name => page.screenshot({ path: join(evidenceDir, name), fullPage: true });
+      const paneA = page.getByTestId("revision-pane-a");
+      const paneB = page.getByTestId("revision-pane-b");
+      const svgA = paneA.locator('[data-testid="preview-svg"] svg');
+      const svgB = paneB.locator('[data-testid="preview-svg"] svg');
+      await svgA.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await svgB.waitFor({ state: "visible", timeout: UI_TIMEOUT_MS });
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-testid^="revision-pane-"] [data-testid="minimap-image"]')].length === 2 && [...document.querySelectorAll('[data-testid^="revision-pane-"] [data-testid="minimap-image"]')].every(image => image.complete && image.naturalWidth > 0), undefined, { timeout: UI_TIMEOUT_MS });
+      const initialSvgAudit = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="revision-pane-"] svg')].map(svg => ({
+        root: svg.namespaceURI === "http://www.w3.org/2000/svg",
+        parserErrors: new DOMParser().parseFromString(svg.outerHTML, "image/svg+xml").querySelectorAll("parsererror").length,
+        hitTargets: [...svg.querySelectorAll(".sequence-message__hit")].map(target => ({
+          stroke: target.getAttribute("stroke"), width: target.getAttribute("stroke-width"),
+          vectorEffect: target.getAttribute("vector-effect"),
+        })),
+      })));
+      check("both historical Sequence previews render SVG with correct namespace and no parser errors", initialSvgAudit.length === 2 && initialSvgAudit.every(svg => svg.root && svg.parserErrors === 0));
+      check("rendered message hit targets preserve transparent 14px non-scaling strokes", initialSvgAudit.every(svg => svg.hitTargets.length > 0 && svg.hitTargets.every(hit => hit.stroke === "transparent" && hit.width === "14" && hit.vectorEffect === "non-scaling-stroke")), JSON.stringify(initialSvgAudit.map(svg => svg.hitTargets.length)));
+      check("both historical Sequence minimap images load", await Promise.all([paneA, paneB].map(async pane => pane.locator('[data-testid="minimap-image"]').evaluate(image => image.complete && image.naturalWidth > 0))).then(values => values.every(Boolean)));
+      await saveShot("sequence-comparison-bilateral.png");
+      for (const [pane, other] of [[paneA, paneB], [paneB, paneA]]) {
+        const beforeMapTransform = await pane.locator('[data-testid="preview-svg"]').getAttribute("style");
+        const otherTransform = await other.locator('[data-testid="preview-svg"]').getAttribute("style");
+        const map = pane.locator(".minimap__canvas");
+        const mapBox = await map.boundingBox();
+        await map.click({ position: { x: Math.max(2, mapBox.width * 0.7), y: Math.max(2, mapBox.height * 0.7) } });
+        check("minimap navigation changes only its own historical pane", await pane.locator('[data-testid="preview-svg"]').getAttribute("style") !== beforeMapTransform && await other.locator('[data-testid="preview-svg"]').getAttribute("style") === otherTransform);
+      }
+
+      const changeButtons = page.locator('[data-testid="revision-change-list"] .comparison__revision-change');
+      const buttonText = await changeButtons.allTextContents();
+      const requiredKinds = ["added", "removed", "modified", "moved"];
+      for (const kind of requiredKinds) check(`main fixture produces ${kind} structural change`, buttonText.some(text => text.toLowerCase().includes(kind)));
+      check("fragment kinds alt/opt/loop/par are present in both revision sources", [before, after].every(source => ["alt", "opt", "loop", "par"].every(kind => source.split("\n").some(line => line.trim().startsWith(kind)))));
+      check("comparison exposes source diff evidence", await page.getByTestId("revision-source-evidence").count() === 1);
+      await page.getByTestId("revision-source-evidence").locator("summary").click();
+      const sourceEvidenceText = await page.getByTestId("revision-source-evidence").innerText();
+      check("textual source evidence displays deleted and added interaction labels", sourceEvidenceText.includes("delete-me") && sourceEvidenceText.includes("add-me"));
+      const reorderResource = resources[1];
+      await openResource(reorderResource);
+      const reorderTexts = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
+      check("separate stable-scope fixture produces reordered interaction changes", reorderTexts.some(text => text.includes("reordered")));
+      const reorderButton = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: /reordered/i }).first();
+      if (await reorderButton.count()) {
+        await reorderButton.click();
+        const reorderEvidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
+        const reorderVisualAudit = await page.evaluate(({ beforeRef, afterRef }) => {
+          const has = (pane, ref) => ref && [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .review-change--reordered`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId);
+          return { before: has("a", beforeRef), after: has("b", afterRef) };
+        }, { beforeRef: reorderEvidence.beforeReference, afterRef: reorderEvidence.afterReference });
+        check("reordered interaction has bilateral exact references and distinct SVG styling", reorderVisualAudit.before && reorderVisualAudit.after, JSON.stringify(reorderVisualAudit));
+        await saveShot("sequence-reordered.png");
+      }
+      await openResource(resources[2]);
+      const candidate = page.locator('[data-testid="revision-change-list"] .comparison__revision-change--candidate').first();
+      check("candidate is explicitly labelled unconfirmed and has no confirmed decoration", await candidate.count() > 0 && (await candidate.innerText()).includes("Candidate · not confirmed"));
+      if (await candidate.count()) {
+        await candidate.click();
+        const candidateEvidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
+        const candidateDetailHeading = await page.getByTestId("revision-change-detail").locator("h3").innerText();
+        check("modified interaction is represented as an unconfirmed candidate", candidateDetailHeading.includes("interaction modified") && (await candidate.innerText()).includes("Candidate · not confirmed"));
+        const candidateHasConfirmedDecoration = await page.evaluate(({ beforeRef, afterRef }) => {
+          const find = (pane, ref) => ref ? [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .review-change--added, [data-testid="revision-pane-${pane}"] .review-change--removed, [data-testid="revision-pane-${pane}"] .review-change--modified`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId) : false;
+          return find("a", beforeRef) || find("b", afterRef);
+        }, { beforeRef: candidateEvidence.beforeReference, afterRef: candidateEvidence.afterReference });
+        check("candidate targets are not styled as confirmed added/removed/modified", !candidateHasConfirmedDecoration);
+        await saveShot("sequence-candidate-unconfirmed.png");
+      }
+
+      await openResource(resources[3]);
+      check("ambiguous repeated occurrence is disclosed as partial, not no changes", (await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("partial") && (await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("ambiguous") && !(await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("No structural changes"));
+      await openResource(resources[4]);
+      const noteChanges = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
+      check("note fixture changes a note attached to its message occurrence", noteChanges.some(text => text.includes("note") && text.includes("modified")));
+      const noteChange = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: /note/i }).first();
+      if (await noteChange.count()) { await noteChange.click(); await saveShot("sequence-note-occurrence.png"); }
+      await openResource(main);
+      const buttonTextRestored = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
+      check("ambiguous repetitions do not contaminate stable main fixture with false equivalence", !buttonTextRestored.some(text => text.includes("equivalent")));
+
+      for (const kind of requiredKinds) {
+        const target = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: new RegExp(`^${kind}`, "i") }).first();
+        if (await target.count() === 0) continue;
+        await target.click();
+        await page.getByTestId("revision-change-detail").waitFor({ state: "visible" });
+        const evidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
+        const targetAudit = await page.evaluate(({ beforeRef, afterRef }) => {
+          const find = (pane, ref) => ref ? [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] [data-node-id], [data-testid="revision-pane-${pane}"] [data-message-node-id]`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId) : false;
+          return { before: find("a", beforeRef), after: find("b", afterRef), beforeRef: Boolean(beforeRef), afterRef: Boolean(afterRef) };
+         }, { beforeRef: evidence.beforeReference, afterRef: evidence.afterReference });
+        check(`${kind} evidence references resolve to exact rendered snapshot nodes`, (!targetAudit.beforeRef || targetAudit.before) && (!targetAudit.afterRef || targetAudit.after), JSON.stringify(targetAudit));
+        const decoratedAudit = await page.evaluate(({ kind, beforeRef, afterRef }) => {
+          const has = (pane, ref) => ref ? [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .review-change--${kind}`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId) : false;
+          return { before: has("a", beforeRef), after: has("b", afterRef) };
+        }, { kind, beforeRef: evidence.beforeReference, afterRef: evidence.afterReference });
+        check(`${kind} visual decoration matches exact snapshot refs`, (!targetAudit.beforeRef || decoratedAudit.before) && (!targetAudit.afterRef || decoratedAudit.after), JSON.stringify(decoratedAudit));
+        if (kind === "added") await saveShot("sequence-added.png");
+        if (kind === "removed") await saveShot("sequence-removed.png");
+        if (kind === "modified") await saveShot("sequence-modified.png");
+        if (kind === "moved") await saveShot("sequence-moved.png");
+        if (kind === "reordered") await saveShot("sequence-reordered.png");
+      }
+
+      await openResource(resources[5]);
+      const grouped = page.locator('[data-testid="revision-change-list"] details').filter({ hasText: "nested changes retained" }).first();
+      check("added/removed fragment grouping retains descendant evidence", await grouped.count() > 0);
+      if (await grouped.count()) {
+        await grouped.locator("summary").click();
+        check("grouped fragment evidence retains its descendant interaction record", (await grouped.innerText()).includes("added interaction") && (await grouped.innerText()).includes("unmatched"));
+        await saveShot("sequence-fragment-grouped.png");
+      }
+
+      const beforeTransformA = await paneA.locator('[data-testid="preview-svg"]').getAttribute("style");
+      const beforeTransformB = await paneB.locator('[data-testid="preview-svg"]').getAttribute("style");
+      await paneA.getByTestId("zoom-in").click();
+      const zoomedA = await paneA.locator('[data-testid="preview-svg"]').getAttribute("style");
+      const unchangedB = await paneB.locator('[data-testid="preview-svg"]').getAttribute("style");
+      check("historical Sequence cameras zoom independently", zoomedA !== beforeTransformA && unchangedB === beforeTransformB);
+      await paneA.getByRole("button", { name: "Fit diagram to view" }).click();
+      const fittedA = await paneA.locator('[data-testid="preview-svg"]').getAttribute("style");
+      check("historical Sequence Fit control changes the camera", fittedA !== zoomedA);
+      const beforePanA = fittedA;
+      const canvasBox = await paneA.getByTestId("viewport-pane").boundingBox();
+      const panStart = { x: canvasBox.x + canvasBox.width * 0.2, y: canvasBox.y + canvasBox.height * 0.8 };
+      await page.mouse.move(panStart.x, panStart.y);
+      await page.mouse.down(); await page.mouse.move(panStart.x + 28, panStart.y + 18, { steps: 4 }); await page.mouse.up();
+      check("historical Sequence pan changes only pane A", await paneA.locator('[data-testid="preview-svg"]').getAttribute("style") !== beforePanA && await paneB.locator('[data-testid="preview-svg"]').getAttribute("style") === beforeTransformB);
+      await saveShot("sequence-minimaps.png");
+
+      await page.getByRole("combobox", { name: "Revision A" }).selectOption("2");
+      await page.getByRole("combobox", { name: "Revision B" }).selectOption("1");
+      await page.waitForFunction(() => document.querySelector('[data-testid="verified-revision-pair"]')?.textContent?.includes("r2 → r1"), undefined, { timeout: UI_TIMEOUT_MS });
+      await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').first().click();
+      await page.waitForFunction(() => {
+        const text = document.querySelector('[data-testid="revision-change-detail"] pre')?.textContent;
+        if (!text) return false;
+        try {
+          const evidence = JSON.parse(text);
+          const refs = [evidence.beforeReference, evidence.afterReference].filter(Boolean);
+          return refs.length > 0 && refs.every(reference => reference.revision === 2 || reference.revision === 1);
+        } catch { return false; }
+      }, undefined, { timeout: UI_TIMEOUT_MS });
+      const revisionEvidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
+      const reverseTargetAudit = await page.evaluate(({ beforeRef, afterRef }) => {
+        const has = (pane, ref) => ref && [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] [data-node-id], [data-testid="revision-pane-${pane}"] [data-message-node-id]`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId);
+        return { before: has("a", beforeRef), after: has("b", afterRef) };
+      }, { beforeRef: revisionEvidence.beforeReference, afterRef: revisionEvidence.afterReference });
+      check("changing revision reloads pair and snapshot-local references", [revisionEvidence.beforeReference, revisionEvidence.afterReference].filter(Boolean).length > 0 && [revisionEvidence.beforeReference, revisionEvidence.afterReference].filter(Boolean).every(reference => reference.revision === 2 || reference.revision === 1) && (!revisionEvidence.beforeReference || reverseTargetAudit.before) && (!revisionEvidence.afterReference || reverseTargetAudit.after));
+
+      await openResource(reorderResource);
+      const switchedDetail = await page.getByTestId("revision-change-detail").innerText();
+      check("resource switch loads only the second resource's evidence", (await page.getByTestId("verified-revision-pair").innerText()).includes(reorderResource.resourceId) && !switchedDetail.includes("move-me") && !switchedDetail.includes("delete-me"));
+      check("no stale main-resource movement decoration survives resource switch", await page.locator('[data-testid="revision-pane-a"] .sequence-diff--moved, [data-testid="revision-pane-b"] .sequence-diff--moved').count() === 0);
+      await saveShot("sequence-resource-switch.png");
+
+      check("no page errors or HTTP 500 responses during Sequence Comparison", pageErrors.length === 0 && http500s.length === 0, JSON.stringify({ pageErrors, http500s }));
+      console.log(`  Evidence directory: ${evidenceDir}`);
+    } finally {
+      await context.close();
+    }
+  });
+
   await scenario("Universal focus mode preserves viewer state across representations", async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
