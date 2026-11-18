@@ -926,7 +926,8 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
     const summary = await screen.findByTestId("sequence-revision-structural-diff");
     expect(summary).toHaveTextContent("Structural diff partial");
-    expect(summary).toHaveTextContent("equally valid order-preserving correspondences");
+    expect(summary).toHaveTextContent("Multiple optimal alignments leave these occurrences indeterminate");
+    expect(summary).toHaveTextContent("3 indeterminate occurrence(s)");
     expect(summary).not.toHaveTextContent("No structural changes");
   });
 

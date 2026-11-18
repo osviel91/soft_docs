@@ -801,8 +801,8 @@ function SequenceRevisionSummary({ comparison, changes, allChanges, selected, on
   return <section className="comparison__summary" aria-label="Sequence revision comparison" data-testid="sequence-revision-structural-diff">
     <h2>Sequence structural comparison</h2>
     {comparison.availability === "available"
-      ? <p role="status">Structural diff available · {total} change(s).</p>
-      : <p role="status">Structural diff {comparison.availability} · {total} represented change(s); do not interpret this as an absence of changes.</p>}
+      ? <p role="status">Structural diff available · {total} change(s) · {comparison.indeterminate.reduce((sum, region) => sum + region.counts.before + region.counts.after, 0)} indeterminate occurrence(s).</p>
+      : <p role="status">Structural diff {comparison.availability} · {total} represented change(s) · {comparison.indeterminate.reduce((sum, region) => sum + region.counts.before + region.counts.after, 0)} indeterminate occurrence(s); do not interpret this as an absence of changes.</p>}
     <p>Added {comparison.changes.filter((change) => change.kind === "added").length} · Removed {comparison.changes.filter((change) => change.kind === "removed").length} · Modified {comparison.changes.filter((change) => change.kind === "modified").length} · Moved {comparison.changes.filter((change) => change.kind === "moved").length} · Reordered {comparison.changes.filter((change) => change.kind === "reordered").length}</p>
     {comparison.diagnostics.length ? <section aria-label="Sequence comparison diagnostics"><h3>Diagnostics</h3><ul>{comparison.diagnostics.map((diagnostic, index) => <li key={`${diagnostic.code}:${index}`}>{diagnostic.message}{diagnostic.side ? ` (${diagnostic.side}${diagnostic.range ? `, line ${diagnostic.range.start.line + 1}` : ""})` : ""}</li>)}</ul></section> : null}
     {comparison.limitations.map((limitation) => <p key={limitation} className="comparison__candidate">{limitation}</p>)}
