@@ -11,6 +11,7 @@ import { exportProjectToZip } from "../src/workspace/transfer/project-archive";
 import { defaultUiPreferences, UI_PREFERENCES_KEY, writeUiPreferences } from "../src/workspace/ui-preferences";
 import { createVisualSessionController } from "../src/features/preview/visual-session-controller";
 import { resourceRepresentationOfName, resourceRepresentationOfType } from "../src/domain/workspace/resource-id";
+import { decorateSequenceComparisonSvg } from "../src/features/proposals/review-decorations";
 
 afterEach(() => {
   cleanup();
@@ -807,7 +808,6 @@ describe("App — dual viewer foundation", () => {
   });
 
   it.each([
-    ["Sequence", "sequence-diagram" as const, "participant Client\nparticipant API\nClient -> API: Before", "participant Client\nparticipant API\nClient -> API: After", "Client -> API: Before", "Client -> API: After"],
     ["Event Flow", "event-flow" as const, "event Before\nproducer Client", "event After\nproducer Client", "event Before", "event After"],
     ["Markdown", "markdown-document" as const, "# Before\n\nold text", "# After\n\nnew text", "# Before", "# After"],
   ])("shows verified textual-only evidence for historical %s revisions", async (_label, type, before, after, beforeEvidence, afterEvidence) => {
@@ -827,6 +827,145 @@ describe("App — dual viewer foundation", () => {
     }
     expect(screen.queryByTestId("revision-change-list")).toBeNull();
     expect(screen.queryByText(/Confirmed stable-ID match|Confirmed modification/)).toBeNull();
+  });
+
+  it("compares Sequence revisions bilaterally, navigates exact snapshot-local nodes, and keeps minimaps parseable", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nparticipant B\nparticipant C\nA ->> B: old\nA ->> C: gone", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nparticipant B\nparticipant C\nA ->> B: new\nC ->> A: fresh", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+
+    await waitFor(() => expect(screen.getByTestId("sequence-revision-structural-diff")).toHaveTextContent("Structural diff available"));
+    const paneA = screen.getByTestId("revision-pane-a");
+    const paneB = screen.getByTestId("revision-pane-b");
+    expect(paneA.querySelector('[data-testid="preview-svg"] svg')).not.toBeNull();
+    expect(paneB.querySelector('[data-testid="preview-svg"] svg')).not.toBeNull();
+    expect(paneA.querySelector(".sequence-diff--removed")).not.toBeNull();
+    expect(paneB.querySelector(".sequence-diff--added")).not.toBeNull();
+    expect(paneA.querySelector(".sequence-diff--added")).toBeNull();
+    expect(paneB.querySelector(".sequence-diff--removed")).toBeNull();
+    expect(paneA.querySelector(".sequence-diff--candidate")).not.toBeNull();
+    expect(paneB.querySelector(".sequence-diff--candidate")).not.toBeNull();
+    expect(screen.getByTestId("revision-change-list")).toHaveTextContent("removed");
+    expect(screen.getByTestId("revision-change-list")).toHaveTextContent("added");
+    expect(screen.getByTestId("revision-change-list")).toHaveTextContent("Candidate · not confirmed");
+    expect(paneA.querySelector(".sequence-message__hit")).toHaveAttribute("stroke-width", "14");
+    const cameraA = paneA.querySelector<HTMLElement>("[data-testid='preview-svg']")!;
+    const cameraB = paneB.querySelector<HTMLElement>("[data-testid='preview-svg']")!;
+    await waitFor(() => {
+      expect(cameraA.style.transform).not.toBe("translate(0px, 0px) scale(1)");
+      expect(cameraB.style.transform).not.toBe("translate(0px, 0px) scale(1)");
+    });
+    const transformA = cameraA.style.transform;
+    const transformB = cameraB.style.transform;
+    fireEvent.click(within(paneA).getByRole("button", { name: "Zoom in" }));
+    expect(cameraB.style.transform).toBe(transformB);
+    expect(cameraA.style.transform).not.toBe(transformA);
+
+    for (const pane of [paneA, paneB]) {
+      const image = pane.querySelector<HTMLImageElement>("[data-testid='minimap-image']")!;
+      const svgText = decodeURIComponent(image.src.split(",")[1]!);
+      expect(new DOMParser().parseFromString(svgText, "image/svg+xml").querySelector("parsererror")).toBeNull();
+      expect(image.src).toContain("data:image/svg+xml");
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /modified interaction/ }));
+    expect(paneA.querySelector(".review-change--active")).not.toBeNull();
+    expect(paneB.querySelector(".review-change--active")).not.toBeNull();
+    expect(screen.getByTestId("revision-change-detail")).toHaveTextContent("beforeReference");
+    expect(screen.getByTestId("revision-change-detail")).toHaveTextContent("afterReference");
+  });
+
+  it("uses a DOM serializer for decorations around SVG self-closing hit targets", () => {
+    const decorated = decorateSequenceComparisonSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg"><g data-message-node-id="message@2:0"><path class="sequence-message__hit" stroke="transparent" stroke-width="14"/></g></svg>',
+      [{ id: "change-1", entity: "interaction", kind: "added", confidence: "confirmed", modifiedProperties: [], before: null, after: { revision: 2, nodeId: "message@2:0", range: { start: { line: 2, column: 0 }, end: { line: 2, column: 10 } } }, beforeValue: null, afterValue: {} }],
+      "after",
+    );
+    const parsed = new DOMParser().parseFromString(decorated, "image/svg+xml");
+    expect(parsed.querySelector("parsererror")).toBeNull();
+    expect(parsed.querySelector('[data-review-change="change-1"]')?.getAttribute("class")).toContain("review-change--added");
+    expect(parsed.querySelector(".sequence-message__hit")?.getAttribute("stroke")).toBe("transparent");
+    expect(parsed.querySelector(".sequence-message__hit")?.getAttribute("stroke-width")).toBe("14");
+  });
+
+  it("groups added-fragment descendants but keeps their individual evidence", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nparticipant B", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nparticipant B\nloop retry\n  A ->> B: attempt\nend", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    const list = await screen.findByTestId("revision-change-list");
+    expect(list).toHaveTextContent("1 nested change(s) grouped under their container");
+    expect(list.querySelectorAll(".comparison__revision-change")).toHaveLength(1);
+    expect(within(list).getByText("1 nested changes retained")).toBeInTheDocument();
+    expect(screen.getByTestId("revision-pane-b").querySelector(".sequence-diff--added")).not.toBeNull();
+  });
+
+  it("keeps out-of-scope Sequence edits visible as textual evidence", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "title Before\nparticipant A\nactivate A\ndeactivate A", "sequence-diagram"),
+      revisionSnapshot(2, "title After\nparticipant A\nactivate A\ndeactivate A", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByTestId("sequence-revision-structural-diff")).toHaveTextContent("No structural changes");
+    expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent("title Before");
+    expect(screen.getByTestId("revision-source-evidence")).toHaveTextContent("title After");
+  });
+
+  it("shows ambiguous Sequence correspondence as partial rather than as no changes", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nparticipant B\nA ->> B: same\nA ->> B: same", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nparticipant B\nA ->> B: same", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    const summary = await screen.findByTestId("sequence-revision-structural-diff");
+    expect(summary).toHaveTextContent("Structural diff partial");
+    expect(summary).toHaveTextContent("equally valid order-preserving correspondences");
+    expect(summary).not.toHaveTextContent("No structural changes");
+  });
+
+  it("reports invalid Sequence snapshots as unavailable and preserves source evidence", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nA ->> Missing: invalid", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nA ->> A: valid", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    const summary = await screen.findByTestId("sequence-revision-structural-diff");
+    expect(summary).toHaveTextContent("Structural diff unavailable");
+    expect(summary).toHaveTextContent("Unknown participant");
+    expect(screen.getByTestId("revision-source-evidence")).toBeInTheDocument();
+    expect(screen.queryByText("No structural changes.")).toBeNull();
+  });
+
+  it("renders exact message reorders on both Sequence snapshots", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nparticipant B\nA ->> B: one\nA ->> B: two", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nparticipant B\nA ->> B: two\nA ->> B: one", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-change-list")).toHaveTextContent("reordered"));
+    expect(screen.getByTestId("revision-pane-a").querySelector(".sequence-diff--reordered")).not.toBeNull();
+    expect(screen.getByTestId("revision-pane-b").querySelector(".sequence-diff--reordered")).not.toBeNull();
+  });
+
+  it("renders an exact interaction moved between Sequence branches distinctly", async () => {
+    const snapshots = [
+      revisionSnapshot(1, "participant A\nparticipant B\nalt ready\n  A ->> B: exact\nelse wait\n  A ->> B: other\nend", "sequence-diagram"),
+      revisionSnapshot(2, "participant A\nparticipant B\nalt ready\n  A ->> B: other\nelse wait\n  A ->> B: exact\nend", "sequence-diagram"),
+    ];
+    renderRevisionCompare(snapshots, "sequence-diagram");
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    await waitFor(() => expect(screen.getByTestId("revision-change-list")).toHaveTextContent("moved"));
+    expect(screen.getByTestId("revision-pane-a").querySelector(".sequence-diff--moved")).not.toBeNull();
+    expect(screen.getByTestId("revision-pane-b").querySelector(".sequence-diff--moved")).not.toBeNull();
   });
 
   it.each([
