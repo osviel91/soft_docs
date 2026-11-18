@@ -619,6 +619,18 @@ body {
 :is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--semantic {
   filter: drop-shadow(0 0 2px rgba(192, 132, 252, 0.65));
 }
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--moved,
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--reordered {
+  filter: drop-shadow(0 0 2px rgba(96, 165, 250, 0.65));
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--candidate :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
+  stroke: #8b8795;
+  stroke-dasharray: 2 3;
+}
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--moved :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle),
+:is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--reordered :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
+  stroke: #60a5fa;
+}
 :is(.proposal-review, .proposal-inspector, .comparison__pane--diff) .review-change--added :is(rect, line:not(.sequence-message__hit), path:not(.sequence-message__hit), polyline, polygon, circle) {
   stroke: var(--ok);
 }
@@ -1330,6 +1342,9 @@ body {
 .comparison__revision-change--added { border-left: 3px solid #2b9b62; }
 .comparison__revision-change--removed { border-left: 3px solid #c75b5b; }
 .comparison__revision-change--modified { border-left: 3px solid #d49b27; }
+.comparison__revision-change--moved,
+.comparison__revision-change--reordered { border-left: 3px solid #60a5fa; }
+.comparison__revision-change--candidate { border-style: dashed; color: var(--text-muted); }
 
 .comparison__header h2 { margin: 2px 0; font-size: 14px; }
 .comparison__header span, .comparison__header p { margin: 0; color: var(--text-muted); font-size: 11px; }

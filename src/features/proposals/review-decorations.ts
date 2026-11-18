@@ -1,4 +1,5 @@
 import type { SemanticChange } from "../../domain/diff/resource-diff";
+import type { SequenceComparisonChange, SequenceNodeReference } from "../../domain/diff/sequence-comparison";
 import { reviewTargetId } from "./review-targets";
 import {
   sequenceDiffDecorations,
@@ -109,4 +110,33 @@ export function decorateReviewSvg(
     }
   }
   return result;
+}
+
+/** Decorate exact snapshot-local Sequence nodes without editing SVG source text. */
+export function decorateSequenceComparisonSvg(
+  svg: string,
+  changes: SequenceComparisonChange[],
+  side: "before" | "after",
+): string {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svg;
+  const document = new DOMParser().parseFromString(svg, "image/svg+xml");
+  if (document.querySelector("parsererror")) return svg;
+  for (const change of changes) {
+    const reference: SequenceNodeReference | null = side === "before" ? change.before : change.after;
+    if (!reference) continue;
+    const target = Array.from(document.querySelectorAll("[data-node-id], [data-message-node-id]"))
+      .find((element) => element.getAttribute("data-node-id") === reference.nodeId ||
+        element.getAttribute("data-message-node-id") === reference.nodeId);
+    if (!target) continue;
+    target.classList.add(`sequence-diff--${change.kind}`);
+    if (change.confidence === "candidate") {
+      target.classList.add("sequence-diff--candidate", "review-change--candidate");
+    } else if (["added", "removed", "modified"].includes(change.kind)) {
+      target.classList.add(`review-change--${change.kind}`);
+    } else {
+      target.classList.add(`review-change--${change.kind}`);
+    }
+    if (change.id) target.setAttribute("data-review-change", change.id);
+  }
+  return new XMLSerializer().serializeToString(document.documentElement);
 }
