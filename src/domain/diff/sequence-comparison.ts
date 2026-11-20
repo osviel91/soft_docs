@@ -64,11 +64,31 @@ export interface SequenceComparisonDiagnostic {
   range?: SourceRange;
 }
 
+export interface SequenceIndeterminateOccurrence {
+  entity: SequenceComparisonEntity;
+  side: "before" | "after";
+  reference: SequenceNodeReference;
+  value: Record<string, unknown>;
+}
+
+export interface SequenceAmbiguityRegion {
+  id: string;
+  cause: "multiple-optimal-alignments";
+  scope: string;
+  before: SequenceIndeterminateOccurrence[];
+  after: SequenceIndeterminateOccurrence[];
+  ranges: { before: SourceRange[]; after: SourceRange[] };
+  counts: { before: number; after: number };
+  evidence: string[];
+  diagnosticIndices: number[];
+}
+
 export interface SequenceComparison {
   availability: "available" | "partial" | "unavailable";
   beforeRevision: number;
   afterRevision: number;
   changes: SequenceComparisonChange[];
+  indeterminate: SequenceAmbiguityRegion[];
   diagnostics: SequenceComparisonDiagnostic[];
   limitations: string[];
   processedLcsCells: number;
@@ -76,7 +96,7 @@ export interface SequenceComparison {
 }
 
 export interface SequenceComparisonOptions {
-  /** Total suffix-LCS table cells across every compared scope. */
+  /** Total prefix/suffix LCS table cells across every compared scope. */
   maxLcsCells?: number;
 }
 
@@ -140,9 +160,7 @@ interface UnmatchedEntry {
 
 interface Alignment {
   anchors: Array<[number, number]>;
-  ambiguousOldStart: number;
-  ambiguousNewStart: number;
-  ambiguous: boolean;
+  ambiguous: Array<[number, number]>;
 }
 
 class ProcessingLimitExceeded extends Error {}
@@ -302,8 +320,9 @@ function lcsAlignment(
   const rows = before.length + 1;
   const columns = after.length + 1;
   const cells = rows * columns;
-  spend(cells);
+  spend(cells * 2);
   const table = new Uint32Array(cells);
+  const prefix = new Uint32Array(cells);
   const at = (row: number, column: number) => row * columns + column;
 
   for (let i = before.length - 1; i >= 0; i -= 1) {
@@ -313,59 +332,33 @@ function lcsAlignment(
         : Math.max(table[at(i + 1, j)], table[at(i, j + 1)]);
     }
   }
+  for (let i = 0; i < before.length; i += 1) {
+    for (let j = 0; j < after.length; j += 1) {
+      prefix[at(i + 1, j + 1)] = before[i]!.key === after[j]!.key
+        ? prefix[at(i, j)]! + 1
+        : Math.max(prefix[at(i, j + 1)]!, prefix[at(i + 1, j)]!);
+    }
+  }
 
+  const rankPairs = new Map<number, Array<[number, number]>>();
+  const length = table[0]!;
+  for (let i = 0; i < before.length; i += 1) {
+    for (let j = 0; j < after.length; j += 1) {
+      if (before[i]!.key !== after[j]!.key || prefix[at(i, j)]! + 1 + table[at(i + 1, j + 1)]! !== length) continue;
+      const rank = prefix[at(i, j)]!;
+      const pairs = rankPairs.get(rank) ?? [];
+      pairs.push([i, j]);
+      rankPairs.set(rank, pairs);
+    }
+  }
   const anchors: Array<[number, number]> = [];
-  let i = 0;
-  let j = 0;
-  let ambiguous = false;
-  while (i < before.length && j < after.length) {
-    const best = table[at(i, j)]!;
-    const skipBefore = table[at(i + 1, j)]!;
-    const skipAfter = table[at(i, j + 1)]!;
-    const exact = before[i]!.key === after[j]!.key;
-    if (exact && table[at(i + 1, j + 1)]! + 1 === best) {
-      if (skipBefore === best || skipAfter === best) {
-        ambiguous = true;
-        break;
-      }
-      anchors.push([i, j]);
-      i += 1;
-      j += 1;
-      continue;
-    }
-    if (skipBefore > skipAfter) {
-      i += 1;
-      continue;
-    }
-    if (skipAfter > skipBefore) {
-      j += 1;
-      continue;
-    }
-    const oldKeys = new Set(before.slice(i).map((item) => item.key));
-    ambiguous = after.slice(j).some((item) => oldKeys.has(item.key));
-    break;
+  const ambiguous: Array<[number, number]> = [];
+  for (const pairs of rankPairs.values()) {
+    if (pairs.length === 1) anchors.push(pairs[0]!);
+    else ambiguous.push(...pairs);
   }
-
-  const ambiguousOldStart = i;
-  const ambiguousNewStart = j;
-  if (ambiguous) {
-    const oldTailCounts = exactCounts(before.slice(i));
-    const newTailCounts = exactCounts(after.slice(j));
-    let oldTail = before.length - 1;
-    let newTail = after.length - 1;
-    while (oldTail >= i && newTail >= j && before[oldTail]!.key === after[newTail]!.key) {
-      const key = before[oldTail]!.key;
-      if (oldTailCounts.get(key) !== 1 || newTailCounts.get(key) !== 1) break;
-      anchors.push([oldTail, newTail]);
-      oldTailCounts.set(key, 0);
-      newTailCounts.set(key, 0);
-      oldTail -= 1;
-      newTail -= 1;
-    }
-  }
-
   anchors.sort((left, right) => left[0] - right[0]);
-  return { anchors, ambiguousOldStart, ambiguousNewStart, ambiguous };
+  return { anchors, ambiguous };
 }
 
 function propertyChanges(before: Entry, after: Entry): string[] {
@@ -423,6 +416,7 @@ function compareSnapshots(
   let processedLcsCells = 0;
   const changes: PendingChange[] = [];
   const diagnostics: SequenceComparisonDiagnostic[] = [];
+  const indeterminate: SequenceAmbiguityRegion[] = [];
   const unmatched: UnmatchedEntry[] = [];
   const messageMatches = new Map<Entry, { other: Entry; confidence: "confirmed" | "candidate"; basis: string }>();
   const oldGlobalMessageCounts = exactCounts(beforeModel.messages);
@@ -478,64 +472,52 @@ function compareSnapshots(
     const oldItems = oldScope.entries;
     const newItems = newScope.entries;
     const alignment = lcsAlignment(oldItems, newItems, spend);
-    if (alignment.ambiguous) {
-      const oldItem = oldItems[alignment.ambiguousOldStart];
-      const newItem = newItems[alignment.ambiguousNewStart];
-      diagnostics.push({
-        code: "ambiguous-match",
-        severity: "warning",
-        message: "Multiple equally valid order-preserving correspondences exist; ambiguous occurrences remain unmatched.",
-        ...(oldItem ? { side: "before" as const, range: oldItem.range } : {}),
-        ...(newItem && !oldItem ? { side: "after" as const, range: newItem.range } : {}),
-      });
-    }
-
     const matches: EntryMatch[] = [];
     const matchedOld = new Set<Entry>();
     const matchedNew = new Set<Entry>();
-    const ambiguousOld = new Set<Entry>();
-    const ambiguousNew = new Set<Entry>();
+    const ambiguousOld = new Set(alignment.ambiguous.map(([i]) => oldItems[i]!));
+    const ambiguousNew = new Set(alignment.ambiguous.map(([, j]) => newItems[j]!));
     const anchors = alignment.anchors;
+    const oldCountsForCrossing = exactCounts(oldItems);
+    const newCountsForCrossing = exactCounts(newItems);
+    const crossingPairs = oldItems.flatMap((item, oldIndex) => {
+      const newIndex = newItems.findIndex((candidate) => candidate.key === item.key);
+      return newIndex >= 0 && oldCountsForCrossing.get(item.key) === 1 && newCountsForCrossing.get(item.key) === 1
+        ? [{ oldIndex, newIndex }]
+        : [];
+    });
     let oldCursor = 0;
     let newCursor = 0;
 
-    const processGap = (oldEnd: number, newEnd: number, ambiguous: boolean) => {
+    const processGap = (oldEnd: number, newEnd: number) => {
       const oldGap = oldItems.slice(oldCursor, oldEnd);
       const newGap = newItems.slice(newCursor, newEnd);
-      if (ambiguous) {
-        oldGap.forEach((item) => ambiguousOld.add(item));
-        newGap.forEach((item) => ambiguousNew.add(item));
-      } else {
-        const oldCounts = exactCounts(oldGap);
-        const newCounts = exactCounts(newGap);
-        for (const oldItem of oldGap) {
-          if (oldCounts.get(oldItem.key) !== 1 || newCounts.get(oldItem.key) !== 1) continue;
-          const newItem = newGap.find((candidate) => candidate.key === oldItem.key)!;
-          matches.push({ before: oldItem, after: newItem, confidence: "confirmed", basis: "unique-exact-occurrence" });
-          matchedOld.add(oldItem);
-          matchedNew.add(newItem);
-        }
-
-        const remainingOld = oldGap.filter((item) => !matchedOld.has(item));
-        const remainingNew = newGap.filter((item) => !matchedNew.has(item));
-        for (const candidate of groupUniqueCandidates(remainingOld, remainingNew).filter((match) =>
-          match.before.subtype !== "message" ||
-          (newGlobalMessageCounts.get(match.before.key) ?? 0) === 0 &&
-          (oldGlobalMessageCounts.get(match.after.key) ?? 0) === 0)) {
-          matches.push(candidate);
-          matchedOld.add(candidate.before);
-          matchedNew.add(candidate.after);
-        }
+      const oldCounts = exactCounts(oldGap);
+      const newCounts = exactCounts(newGap);
+      for (const oldItem of oldGap) {
+        if (oldCounts.get(oldItem.key) !== 1 || newCounts.get(oldItem.key) !== 1) continue;
+        const newItem = newGap.find((candidate) => candidate.key === oldItem.key)!;
+        matches.push({ before: oldItem, after: newItem, confidence: "confirmed", basis: "unique-exact-occurrence" });
+        matchedOld.add(oldItem);
+        matchedNew.add(newItem);
+      }
+      const remainingOld = oldGap.filter((item) => !matchedOld.has(item));
+      const remainingNew = newGap.filter((item) => !matchedNew.has(item));
+      for (const candidate of groupUniqueCandidates(remainingOld, remainingNew).filter((match) =>
+        match.before.subtype !== "message" ||
+        (newGlobalMessageCounts.get(match.before.key) ?? 0) === 0 &&
+        (oldGlobalMessageCounts.get(match.after.key) ?? 0) === 0)) {
+        matches.push(candidate);
+        matchedOld.add(candidate.before);
+        matchedNew.add(candidate.after);
       }
       oldCursor = oldEnd;
       newCursor = newEnd;
     };
 
     for (const [oldIndex, newIndex] of anchors) {
-      const crossedAmbiguity = alignment.ambiguous &&
-        (oldIndex >= alignment.ambiguousOldStart || newIndex >= alignment.ambiguousNewStart);
       if (oldIndex < oldCursor || newIndex < newCursor) continue;
-      processGap(oldIndex, newIndex, crossedAmbiguity);
+      processGap(oldIndex, newIndex);
       const oldItem = oldItems[oldIndex]!;
       const newItem = newItems[newIndex]!;
       matches.push({ before: oldItem, after: newItem, confidence: "confirmed", basis: "lcs-exact-anchor" });
@@ -544,7 +526,41 @@ function compareSnapshots(
       oldCursor = oldIndex + 1;
       newCursor = newIndex + 1;
     }
-    processGap(oldItems.length, newItems.length, alignment.ambiguous);
+    processGap(oldItems.length, newItems.length);
+    const ambiguousGaps = new Map<number, { before: Set<Entry>; after: Set<Entry> }>();
+    for (const [oldIndex, newIndex] of alignment.ambiguous) {
+      const isReorder = crossingPairs.some((pair) => pair.oldIndex === oldIndex && pair.newIndex === newIndex) &&
+        crossingPairs.some((pair) => (pair.oldIndex < oldIndex && pair.newIndex > newIndex) || (pair.oldIndex > oldIndex && pair.newIndex < newIndex));
+      if (isReorder) continue;
+      const gap = anchors.filter(([i, j]) => i < oldIndex && j < newIndex).length;
+      const occurrences = ambiguousGaps.get(gap) ?? { before: new Set<Entry>(), after: new Set<Entry>() };
+      occurrences.before.add(oldItems[oldIndex]!);
+      occurrences.after.add(newItems[newIndex]!);
+      ambiguousGaps.set(gap, occurrences);
+    }
+    for (const occurrences of ambiguousGaps.values()) {
+      const expand = (roots: Set<Entry>) => {
+        const entries: Entry[] = [];
+        const visit = (item: Entry) => {
+          entries.push(item);
+          for (const child of item.children) child.entries.forEach(visit);
+        };
+        roots.forEach(visit);
+        return [...new Set(entries)];
+      };
+      const oldAmbiguous = expand(occurrences.before);
+      const newAmbiguous = expand(occurrences.after);
+      const diagnosticIndex = diagnostics.length;
+      diagnostics.push({ code: "ambiguous-match", severity: "warning", message: "Multiple optimal alignments leave these occurrences indeterminate.", ...(oldAmbiguous[0] ? { side: "before" as const, range: oldAmbiguous[0].range } : newAmbiguous[0] ? { side: "after" as const, range: newAmbiguous[0].range } : {}) });
+      indeterminate.push({
+        id: `sequence-ambiguity-${indeterminate.length + 1}`, cause: "multiple-optimal-alignments", scope: scopePair,
+        before: oldAmbiguous.map((item) => ({ entity: item.entity, side: "before", reference: ref(item, before.revision)!, value: { ...item.properties } })),
+        after: newAmbiguous.map((item) => ({ entity: item.entity, side: "after", reference: ref(item, after.revision)!, value: { ...item.properties } })),
+        ranges: { before: oldAmbiguous.map((item) => item.range), after: newAmbiguous.map((item) => item.range) },
+        counts: { before: oldAmbiguous.length, after: newAmbiguous.length },
+        evidence: ["Exact occurrence pairs participate in multiple optimal LCS alignments."], diagnosticIndices: [diagnosticIndex],
+      });
+    }
 
     const oldUnique = exactCounts(oldItems);
     const newUnique = exactCounts(newItems);
@@ -677,29 +693,15 @@ function compareSnapshots(
   }
 
   for (const item of unmatched) {
-    if (movedOld.has(item) || movedNew.has(item)) continue;
+    if (movedOld.has(item) || movedNew.has(item) || item.ambiguous) continue;
     changes.push({
       entity: item.entry.entity,
       kind: item.side === "before" ? "removed" : "added",
       confidence: "unmatched",
-      ...(item.ambiguous ? { matchBasis: "ambiguous-ordering" } : {}),
       before: item.side === "before" ? item.entry : null,
       after: item.side === "after" ? item.entry : null,
       modifiedProperties: [],
     });
-  }
-
-  for (const item of unmatched) {
-    if (item.ambiguous && item.entry.subtype === "message" && !diagnostics.some((diagnostic) =>
-      diagnostic.code === "ambiguous-match" && diagnostic.side === item.side && diagnostic.range === item.entry.range)) {
-      diagnostics.push({
-        code: "ambiguous-match",
-        severity: "warning",
-        message: "This occurrence lies in an ambiguous ordering region and is not paired to a counterpart.",
-        side: item.side,
-        range: item.entry.range,
-      });
-    }
   }
 
   changes.sort((left, right) => {
@@ -730,6 +732,7 @@ function compareSnapshots(
     beforeRevision: before.revision,
     afterRevision: after.revision,
     changes: publicChanges,
+    indeterminate,
     diagnostics,
     limitations: OUT_OF_SCOPE.slice(),
     processedLcsCells,
@@ -748,6 +751,7 @@ function invalidResult(
     beforeRevision,
     afterRevision,
     changes: [],
+    indeterminate: [],
     diagnostics,
     limitations: OUT_OF_SCOPE.slice(),
     processedLcsCells: 0,
@@ -818,6 +822,7 @@ export function compareSequenceSnapshots(
       beforeRevision: before.revision,
       afterRevision: after.revision,
       changes: [],
+      indeterminate: [],
       diagnostics: [{
         code: "processing-limit",
         severity: "warning",

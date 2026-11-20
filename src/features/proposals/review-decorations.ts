@@ -1,5 +1,5 @@
 import type { SemanticChange } from "../../domain/diff/resource-diff";
-import type { SequenceComparisonChange, SequenceNodeReference } from "../../domain/diff/sequence-comparison";
+import type { SequenceAmbiguityRegion, SequenceComparisonChange, SequenceIndeterminateOccurrence, SequenceNodeReference } from "../../domain/diff/sequence-comparison";
 import { reviewTargetId } from "./review-targets";
 import {
   sequenceDiffDecorations,
@@ -117,6 +117,7 @@ export function decorateSequenceComparisonSvg(
   svg: string,
   changes: SequenceComparisonChange[],
   side: "before" | "after",
+  indeterminate: SequenceAmbiguityRegion[] = [],
 ): string {
   if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return svg;
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -131,12 +132,30 @@ export function decorateSequenceComparisonSvg(
     target.classList.add(`sequence-diff--${change.kind}`);
     if (change.confidence === "candidate") {
       target.classList.add("sequence-diff--candidate", "review-change--candidate");
-    } else if (["added", "removed", "modified"].includes(change.kind)) {
-      target.classList.add(`review-change--${change.kind}`);
     } else {
+      if (change.confidence === "confirmed") target.classList.add("sequence-diff--confirmed");
       target.classList.add(`review-change--${change.kind}`);
     }
     if (change.id) target.setAttribute("data-review-change", change.id);
   }
+  for (const region of indeterminate) {
+    const occurrences = side === "before" ? region.before : region.after;
+    for (const occurrence of occurrences) {
+      const target = findSequenceTarget(document, occurrence.reference);
+      if (!target) continue;
+      target.classList.add("sequence-diff--indeterminate", "review-change--indeterminate");
+      target.setAttribute("data-review-change", indeterminateOccurrenceTargetId(region.id, occurrence));
+    }
+  }
   return new XMLSerializer().serializeToString(document.documentElement);
+}
+
+function findSequenceTarget(document: Document, reference: SequenceNodeReference): Element | undefined {
+  return Array.from(document.querySelectorAll("[data-node-id], [data-message-node-id]"))
+    .find((element) => element.getAttribute("data-node-id") === reference.nodeId ||
+      element.getAttribute("data-message-node-id") === reference.nodeId);
+}
+
+export function indeterminateOccurrenceTargetId(regionId: string, occurrence: SequenceIndeterminateOccurrence): string {
+  return `${regionId}:${occurrence.side}:${occurrence.reference.nodeId}`;
 }

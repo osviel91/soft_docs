@@ -838,6 +838,9 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
 
     await waitFor(() => expect(screen.getByTestId("sequence-revision-structural-diff")).toHaveTextContent("Structural diff available"));
+    const changesDisclosure = screen.getByTestId("revision-change-list");
+    expect(changesDisclosure).not.toHaveAttribute("open");
+    fireEvent.click(within(changesDisclosure).getByText(/^Changes/));
     const paneA = screen.getByTestId("revision-pane-a");
     const paneB = screen.getByTestId("revision-pane-b");
     expect(paneA.querySelector('[data-testid="preview-svg"] svg')).not.toBeNull();
@@ -891,6 +894,30 @@ describe("App — dual viewer foundation", () => {
     expect(parsed.querySelector(".sequence-message__hit")?.getAttribute("stroke-width")).toBe("14");
   });
 
+  it("decorates indeterminate references neutrally and only on their own snapshot", () => {
+    const region = {
+      id: "ambiguous-1", cause: "multiple-optimal-alignments" as const, scope: "root",
+      before: [{ entity: "interaction" as const, side: "before" as const, reference: { revision: 1, nodeId: "message@1:0", range: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } } }, value: {} }],
+      after: [{ entity: "interaction" as const, side: "after" as const, reference: { revision: 2, nodeId: "message@2:0", range: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } } }, value: {} }],
+      ranges: { before: [{ start: { line: 1, column: 0 }, end: { line: 1, column: 10 } }], after: [{ start: { line: 1, column: 0 }, end: { line: 1, column: 10 } }] },
+      counts: { before: 1, after: 1 }, evidence: ["Two optimal alignments."], diagnosticIndices: [0],
+    };
+    const source = (nodeId: string) => `<svg xmlns="http://www.w3.org/2000/svg"><g class="sequence-message" data-message-node-id="${nodeId}"><path class="sequence-message__hit" fill="none" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/><line x1="0" y1="1" x2="10" y2="1"/></g></svg>`;
+    const before = new DOMParser().parseFromString(decorateSequenceComparisonSvg(source("message@1:0"), [], "before", [region]), "image/svg+xml");
+    const after = new DOMParser().parseFromString(decorateSequenceComparisonSvg(source("message@2:0"), [], "after", [region]), "image/svg+xml");
+    expect(before.querySelector("parsererror")).toBeNull();
+    expect(after.querySelector("parsererror")).toBeNull();
+    const beforeNode = before.querySelector(".sequence-diff--indeterminate")!;
+    const afterNode = after.querySelector(".sequence-diff--indeterminate")!;
+    expect(beforeNode.getAttribute("data-review-change")).toContain("before:message@1:0");
+    expect(afterNode.getAttribute("data-review-change")).toContain("after:message@2:0");
+    expect(beforeNode.classList.contains("review-change--added")).toBe(false);
+    expect(beforeNode.classList.contains("review-change--removed")).toBe(false);
+    expect(before.querySelector(".sequence-message__hit")?.getAttribute("stroke")).toBe("transparent");
+    expect(before.querySelector(".sequence-message__hit")?.getAttribute("stroke-width")).toBe("14");
+    expect(before.querySelector(".sequence-message__hit")?.getAttribute("vector-effect")).toBe("non-scaling-stroke");
+  });
+
   it("groups added-fragment descendants but keeps their individual evidence", async () => {
     const snapshots = [
       revisionSnapshot(1, "participant A\nparticipant B", "sequence-diagram"),
@@ -926,8 +953,19 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
     const summary = await screen.findByTestId("sequence-revision-structural-diff");
     expect(summary).toHaveTextContent("Structural diff partial");
-    expect(summary).toHaveTextContent("equally valid order-preserving correspondences");
+    const diagnostics = screen.getByTestId("sequence-diagnostics");
+    expect(diagnostics).not.toHaveAttribute("open");
+    fireEvent.click(within(diagnostics).getByText(/Diagnostics/));
+    expect(summary).toHaveTextContent("Exact occurrence pairs participate in multiple optimal LCS alignments.");
+    expect(summary).toHaveTextContent("3 indeterminate occurrences");
     expect(summary).not.toHaveTextContent("No structural changes");
+    fireEvent.click(within(diagnostics).getByText(/multiple optimal alignments/));
+    const beforeOccurrence = within(diagnostics).getByRole("button", { name: /before · line 3 · interaction/ });
+    fireEvent.click(beforeOccurrence);
+    expect(screen.getByTestId("indeterminate-occurrence-detail")).toHaveTextContent("before · r1");
+    const beforeTarget = screen.getByTestId("revision-pane-a").querySelector(".sequence-diff--indeterminate[data-review-change]")?.getAttribute("data-review-change");
+    expect(beforeTarget).toBeTruthy();
+    expect(screen.getByTestId("revision-pane-b").querySelector(`[data-review-change="${beforeTarget}"]`)).toBeNull();
   });
 
   it("reports invalid Sequence snapshots as unavailable and preserves source evidence", async () => {
@@ -939,6 +977,7 @@ describe("App — dual viewer foundation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
     const summary = await screen.findByTestId("sequence-revision-structural-diff");
     expect(summary).toHaveTextContent("Structural diff unavailable");
+    fireEvent.click(within(screen.getByTestId("sequence-diagnostics")).getByText(/Diagnostics/));
     expect(summary).toHaveTextContent("Unknown participant");
     expect(screen.getByTestId("revision-source-evidence")).toBeInTheDocument();
     expect(screen.queryByText("No structural changes.")).toBeNull();

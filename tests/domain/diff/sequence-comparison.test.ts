@@ -19,6 +19,7 @@ describe("compareSequenceSnapshots", () => {
       `participant A\nparticipant B\n${message("two")}\n${message("one")}`,
     );
     expect(reordered.changes.filter((change) => change.kind === "reordered")).toHaveLength(2);
+    expect(reordered.indeterminate).toHaveLength(0);
   });
 
   it("pairs exact repeated messages conservatively and reports property edits as candidates", () => {
@@ -68,6 +69,60 @@ describe("compareSequenceSnapshots", () => {
     );
     expect(result.availability).toBe("partial");
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === "ambiguous-match")).toBe(true);
+    expect(result.changes.some((change) => change.confidence === "unmatched")).toBe(false);
+    expect(result.indeterminate).toHaveLength(1);
+    expect(result.indeterminate[0]).toMatchObject({
+      cause: "multiple-optimal-alignments",
+      counts: { before: 2, after: 1 },
+      before: [{ side: "before", reference: { revision: 1 } }, { side: "before", reference: { revision: 1 } }],
+      after: [{ side: "after", reference: { revision: 2 } }],
+      diagnosticIndices: [0],
+    });
+  });
+
+  it("localizes an LCS tie between exact anchors and retains their snapshot-local references", () => {
+    const result = compare(
+      `participant A\nparticipant B\n${message("start")}\n${message("same")}\n${message("same")}\n${message("end")}`,
+      `participant A\nparticipant B\n${message("start")}\n${message("same")}\n${message("end")}`,
+    );
+    expect(result.changes.map((change) => change.beforeValue?.label ?? change.afterValue?.label)).not.toContain("start");
+    expect(result.changes.map((change) => change.beforeValue?.label ?? change.afterValue?.label)).not.toContain("end");
+    expect(result.indeterminate).toHaveLength(1);
+    expect(result.indeterminate[0]?.scope).toBe("root");
+    expect(result.indeterminate[0]?.ranges.before).toHaveLength(2);
+    expect(result.indeterminate[0]?.ranges.after).toHaveLength(1);
+  });
+
+  it("recovers interior exact anchors and evaluates repeated handoffs in exclusive gaps", () => {
+    const oldLabels = ["anchor-1", "anchor-2", "anchor-3", "anchor-4", "anchor-5", "anchor-6", "anchor-7", "anchor-8"];
+    const before = ["participant A", "participant B", "participant Doctrine", "participant EventBus"];
+    const after = [...before];
+    for (let index = 0; index < oldLabels.length; index += 1) {
+      before.push(`A ->> B: ${oldLabels[index]}`);
+      after.push(`A ->> B: ${oldLabels[index]}`);
+      if (index < 4) {
+        before.push("Doctrine ->> EventBus: old handoff");
+        after.push("Doctrine ->> EventBus: new handoff");
+      }
+    }
+    const result = compare(before.join("\n"), after.join("\n"));
+    expect(result.indeterminate).toHaveLength(0);
+    expect(result.changes.filter((change) => change.entity === "interaction" && change.confidence === "candidate" && change.matchBasis === "unique-compatible-gap")).toHaveLength(4);
+    expect(result.changes.filter((change) => change.entity === "interaction" && change.confidence === "unmatched")).toHaveLength(0);
+    expect(result.changes.filter((change) => change.kind === "added" || change.kind === "removed")).toHaveLength(0);
+    for (const label of oldLabels) {
+      expect(result.changes.some((change) => change.beforeValue?.label === label || change.afterValue?.label === label)).toBe(false);
+    }
+  });
+
+  it("reports independent repeated-signature regions without converting them to changes", () => {
+    const result = compare(
+      `participant A\nparticipant B\n${message("start")}\n${message("x")}\n${message("x")}\n${message("middle")}\n${message("y")}\n${message("y")}\n${message("end")}`,
+      `participant A\nparticipant B\n${message("start")}\n${message("x")}\n${message("middle")}\n${message("y")}\n${message("end")}`,
+    );
+    expect(result.indeterminate).toHaveLength(2);
+    expect(result.indeterminate.every((region) => region.before.every((item) => item.reference.revision === 1) && region.after.every((item) => item.reference.revision === 2))).toBe(true);
+    expect(result.changes.every((change) => change.confidence !== "unmatched")).toBe(true);
   });
 
   it("tracks notes on matched occurrences after an ordinal shift", () => {
