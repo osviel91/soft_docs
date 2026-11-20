@@ -20,7 +20,7 @@ import { renderDiagramDocument } from "../../renderer/pipeline/diagram-to-svg";
 import DiagramViewport from "./DiagramViewport";
 import type { DiagramViewportTransform } from "./DiagramViewport";
 import type { SemanticChange } from "../../domain/diff/resource-diff";
-import type { SequenceComparisonChange } from "../../domain/diff/sequence-comparison";
+import type { SequenceAmbiguityRegion, SequenceComparisonChange } from "../../domain/diff/sequence-comparison";
 import { decorateReviewSvg, decorateSequenceComparisonSvg } from "../proposals/review-decorations";
 import DiagramGuidance from "./DiagramGuidance";
 
@@ -58,6 +58,7 @@ export interface PreviewProps {
   focusReviewChange?: string | null;
   reviewSide?: "base" | "proposed";
   sequenceChanges?: SequenceComparisonChange[];
+  sequenceIndeterminate?: SequenceAmbiguityRegion[];
   sequenceSide?: "before" | "after";
   comparisonMode?: boolean;
 }
@@ -85,6 +86,7 @@ export default function Preview({
   focusReviewChange = null,
   reviewSide = "proposed",
   sequenceChanges = [],
+  sequenceIndeterminate = [],
   sequenceSide = "after",
   comparisonMode = false,
 }: PreviewProps) {
@@ -108,8 +110,9 @@ export default function Preview({
       decorateReviewSvg(document.svg, "sequence", reviewChanges, reviewSide),
       sequenceChanges,
       sequenceSide,
+      sequenceIndeterminate,
     ),
-    [document.svg, reviewChanges, reviewSide, sequenceChanges, sequenceSide],
+    [document.svg, reviewChanges, reviewSide, sequenceChanges, sequenceSide, sequenceIndeterminate],
   );
   // `isValid` requires a non-null AST, so guard before calling.
   const valid = ast != null && isValid(ast);

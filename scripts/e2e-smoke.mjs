@@ -22,8 +22,8 @@
  */
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -3517,14 +3517,24 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       if (work.status !== 201 || !contextId) throw new Error(`Sequence fixture context creation failed: ${work.status} ${work.text}`);
 
       const resources = [];
-      for (const [path, label, initial, revised] of [
+      const resourceFixtures = [
         ["sequence-main.seq", "Revision after", before, after],
         ["sequence-reorder.seq", "Reorder after", reorderedBefore, reorderedAfter],
         ["sequence-candidate.seq", "Candidate after", candidateBefore, candidateAfter],
         ["sequence-ambiguous.seq", "Ambiguous after", ambiguousBefore, ambiguousAfter],
         ["sequence-note.seq", "Note after", noteBefore, noteAfter],
         ["sequence-grouped.seq", "Grouped after", groupBefore, groupAfter],
-      ]) {
+      ];
+      const realSnapshotDir = process.env.E2E_REAL_SNAPSHOT_DIR;
+      if (realSnapshotDir) {
+        const realBefore = JSON.parse(readFileSync(join(realSnapshotDir, "monthly-billing-r2.json"), "utf8"));
+        const realAfter = JSON.parse(readFileSync(join(realSnapshotDir, "monthly-billing-r3.json"), "utf8"));
+        for (const [snapshot, revision] of [[realBefore, 2], [realAfter, 3]]) {
+          if (snapshot.path !== "monthly-billing.seq" || snapshot.revision !== revision || snapshot.type !== "sequence-diagram" || snapshot.contextId !== null || snapshot.projectId !== "01a0e384-ccc9-77a3-8fcf-4ef74bf11653" || snapshot.resourceId !== "01a0e388-d756-7f5e-a865-e939d0b077a6") throw new Error(`Unexpected real snapshot metadata for r${revision}`);
+        }
+        resourceFixtures.push(["monthly-billing-real.seq", "Montly Batch Billing", realBefore.content, realAfter.content]);
+      }
+      for (const [path, label, initial, revised] of resourceFixtures) {
         const created = await apiRequest(page, `/api/projects/${project.id}/resources`, {
           method: "POST", body: JSON.stringify({ path, type: "sequence-diagram", content: initial, contextId }),
         });
@@ -3536,7 +3546,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         if (updated.status !== 200) throw new Error(`Sequence fixture ${path} revision creation failed: ${updated.status} ${updated.text}`);
         resources.push({ path, label, resourceId });
       }
-      check("simulated fixtures are persisted as six resources with r1/r2 revision history", resources.length === 6, `${projectName}; MY WORK context ${contextId}`);
+      check("Sequence fixtures are persisted with r1/r2 revision history", resources.length === resourceFixtures.length, `${projectName}; MY WORK context ${contextId}`);
 
       const openResource = async ({ path, label, resourceId }) => {
         await page.goto(`${BASE_URL}/?project=${encodeURIComponent(project.id)}`, { waitUntil: "domcontentloaded" });
@@ -3600,11 +3610,13 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("textual source evidence displays deleted and added interaction labels", sourceEvidenceText.includes("delete-me") && sourceEvidenceText.includes("add-me"));
       const reorderResource = resources[1];
       await openResource(reorderResource);
+      await page.getByTestId("revision-change-list").locator("summary").click();
       const reorderTexts = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
       check("separate stable-scope fixture produces reordered interaction changes", reorderTexts.some(text => text.includes("reordered")));
       const reorderButton = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: /reordered/i }).first();
       if (await reorderButton.count()) {
-        await reorderButton.click();
+         await reorderButton.click();
+         await page.getByTestId("revision-change-detail").locator("summary").click();
         const reorderEvidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
         const reorderVisualAudit = await page.evaluate(({ beforeRef, afterRef }) => {
           const has = (pane, ref) => ref && [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .review-change--reordered`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId);
@@ -3614,13 +3626,16 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         await saveShot("sequence-reordered.png");
       }
       await openResource(resources[2]);
+      await page.getByTestId("revision-change-list").locator("summary").click();
       const candidate = page.locator('[data-testid="revision-change-list"] .comparison__revision-change--candidate').first();
       check("candidate is explicitly labelled unconfirmed and has no confirmed decoration", await candidate.count() > 0 && (await candidate.innerText()).includes("Candidate · not confirmed"));
       if (await candidate.count()) {
-        await candidate.click();
+         await candidate.click();
+         await page.getByTestId("revision-change-detail").locator("summary").click();
         const candidateEvidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
-        const candidateDetailHeading = await page.getByTestId("revision-change-detail").locator("h3").innerText();
-        check("modified interaction is represented as an unconfirmed candidate", candidateDetailHeading.includes("interaction modified") && (await candidate.innerText()).includes("Candidate · not confirmed"));
+         const candidateDetailHeading = await page.getByTestId("revision-change-detail").locator("summary").innerText();
+         check("modified interaction is represented as an unconfirmed candidate", candidateDetailHeading.includes("interaction modified") && (await candidate.innerText()).includes("Candidate · not confirmed"));
+         check("candidate evidence retains exact bilateral snapshot references", Boolean(candidateEvidence.beforeReference?.nodeId) && Boolean(candidateEvidence.afterReference?.nodeId));
         const candidateHasConfirmedDecoration = await page.evaluate(({ beforeRef, afterRef }) => {
           const find = (pane, ref) => ref ? [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .review-change--added, [data-testid="revision-pane-${pane}"] .review-change--removed, [data-testid="revision-pane-${pane}"] .review-change--modified`)].some(node => node.getAttribute("data-node-id") === ref.nodeId || node.getAttribute("data-message-node-id") === ref.nodeId) : false;
           return find("a", beforeRef) || find("b", afterRef);
@@ -3630,13 +3645,33 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
 
       await openResource(resources[3]);
-      check("ambiguous repeated occurrence is disclosed as partial, not no changes", (await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("partial") && (await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("ambiguous") && !(await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("No structural changes"));
+      check("synthetic ambiguity diagnostics are initially folded", await page.getByTestId("sequence-diagnostics").getAttribute("open") === null);
+      await saveShot("sequence-diagnostics-folded.png");
+      check("diagnostics disclosure has an accessible summary control", await page.getByTestId("sequence-diagnostics").locator(":scope > summary").innerText().then(text => text.startsWith("Diagnostics ·")));
+      await page.getByTestId("sequence-diagnostics").locator(":scope > summary").click();
+      const ambiguousRegion = page.getByTestId("sequence-diagnostics").locator("details.sequence-summary__region").first();
+      await ambiguousRegion.locator("summary").click();
+      const indeterminateButton = ambiguousRegion.getByRole("button", { name: /before · line/ }).first();
+      check("diagnostic occurrence controls expose button semantics", await indeterminateButton.getAttribute("type") === "button" && await indeterminateButton.getAttribute("aria-pressed") === "false");
+      await indeterminateButton.click();
+      await page.getByTestId("indeterminate-occurrence-detail").waitFor({ state: "visible" });
+      const localIndeterminateTarget = await page.locator('[data-testid="revision-pane-a"] .sequence-diff--indeterminate[data-review-change]').first().getAttribute("data-review-change");
+      check("indeterminate occurrence navigation decorates only its snapshot-local exact node", Boolean(localIndeterminateTarget) && await page.locator(`[data-testid="revision-pane-b"] [data-review-change="${localIndeterminateTarget}"]`).count() === 0);
+      await saveShot("sequence-indeterminate-local-navigation.png");
+      await saveShot("sequence-diagnostics-expanded.png");
+      check("ambiguous repeated occurrence is disclosed as partial, not no changes", await page.locator(".sequence-summary__availability--partial").count() === 1 && !(await page.getByTestId("sequence-revision-structural-diff").innerText()).includes("No structural changes"));
+      await ambiguousRegion.locator(":scope > summary").click();
+      check("diagnostic region collapses after evidence navigation", await indeterminateButton.isHidden());
+      await page.getByTestId("sequence-diagnostics").locator(":scope > summary").click();
+      check("diagnostic group collapses after review", await ambiguousRegion.isHidden());
       await openResource(resources[4]);
+      await page.getByTestId("revision-change-list").locator(":scope > summary").click();
       const noteChanges = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
       check("note fixture changes a note attached to its message occurrence", noteChanges.some(text => text.includes("note") && text.includes("modified")));
       const noteChange = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: /note/i }).first();
-      if (await noteChange.count()) { await noteChange.click(); await saveShot("sequence-note-occurrence.png"); }
+       if (await noteChange.count()) { await noteChange.click(); await page.getByTestId("revision-change-detail").locator("summary").click(); await saveShot("sequence-note-occurrence.png"); }
       await openResource(main);
+      await page.getByTestId("revision-change-list").locator("summary").click();
       const buttonTextRestored = await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').allTextContents();
       check("ambiguous repetitions do not contaminate stable main fixture with false equivalence", !buttonTextRestored.some(text => text.includes("equivalent")));
 
@@ -3644,6 +3679,9 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
         const target = page.locator('[data-testid="revision-change-list"] .comparison__revision-change').filter({ hasText: new RegExp(`^${kind}`, "i") }).first();
         if (await target.count() === 0) continue;
         await target.click();
+        const evidenceDetails = page.getByTestId("revision-change-detail");
+        if (!(await evidenceDetails.locator("pre").isVisible())) await evidenceDetails.locator(":scope > summary").click();
+        await evidenceDetails.locator("pre").waitFor({ state: "visible" });
         await page.getByTestId("revision-change-detail").waitFor({ state: "visible" });
         const evidence = JSON.parse(await page.getByTestId("revision-change-detail").locator("pre").innerText());
         const targetAudit = await page.evaluate(({ beforeRef, afterRef }) => {
@@ -3664,6 +3702,7 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       }
 
       await openResource(resources[5]);
+      await page.getByTestId("revision-change-list").locator(":scope > summary").click();
       const grouped = page.locator('[data-testid="revision-change-list"] details').filter({ hasText: "nested changes retained" }).first();
       check("added/removed fragment grouping retains descendant evidence", await grouped.count() > 0);
       if (await grouped.count()) {
@@ -3692,7 +3731,10 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       await page.getByRole("combobox", { name: "Revision A" }).selectOption("2");
       await page.getByRole("combobox", { name: "Revision B" }).selectOption("1");
       await page.waitForFunction(() => document.querySelector('[data-testid="verified-revision-pair"]')?.textContent?.includes("r2 → r1"), undefined, { timeout: UI_TIMEOUT_MS });
+      await page.getByTestId("revision-change-list").locator(":scope > summary").click();
       await page.locator('[data-testid="revision-change-list"] .comparison__revision-change').first().click();
+      const reversedEvidence = page.getByTestId("revision-change-detail");
+      if (!(await reversedEvidence.locator("pre").isVisible())) await reversedEvidence.locator(":scope > summary").click();
       await page.waitForFunction(() => {
         const text = document.querySelector('[data-testid="revision-change-detail"] pre')?.textContent;
         if (!text) return false;
@@ -3714,6 +3756,74 @@ async function runServerChecks(browser, idp, apiBase, mcpBase) {
       check("resource switch loads only the second resource's evidence", (await page.getByTestId("verified-revision-pair").innerText()).includes(reorderResource.resourceId) && !switchedDetail.includes("move-me") && !switchedDetail.includes("delete-me"));
       check("no stale main-resource movement decoration survives resource switch", await page.locator('[data-testid="revision-pane-a"] .sequence-diff--moved, [data-testid="revision-pane-b"] .sequence-diff--moved').count() === 0);
       await saveShot("sequence-resource-switch.png");
+
+      const realResource = resources.find(resource => resource.path === "monthly-billing-real.seq");
+      if (realResource) {
+        await openResource(realResource);
+        const summary = page.getByTestId("sequence-revision-structural-diff");
+        const changesDisclosure = page.getByTestId("revision-change-list");
+        const diagnosticsDisclosure = page.getByTestId("sequence-diagnostics");
+        check("production r2/r3 summary starts compact with disclosures folded", await changesDisclosure.getAttribute("open") === null && (await diagnosticsDisclosure.count() === 0 || await diagnosticsDisclosure.getAttribute("open") === null));
+        const counts = await summary.locator(".sequence-summary__counts").innerText();
+        check("production r2/r3 certainty counters show eight candidates and no indeterminate occurrences", counts.includes("8 candidate correspondences") && counts.includes("0 indeterminate occurrences"), counts);
+        await changesDisclosure.locator(":scope > summary").click();
+        const changeRows = changesDisclosure.locator(":scope > ul > li > .comparison__revision-change");
+        const changeText = await changeRows.allTextContents();
+        check("production r2/r3 change list contains 34 records and expected kind breakdown", await changeRows.count() === 34 && changeText.filter(text => /^added/i.test(text)).length === 14 && changeText.filter(text => /^removed/i.test(text)).length === 11 && changeText.filter(text => /^modified/i.test(text)).length === 9, JSON.stringify({ count: await changeRows.count(), kinds: changeText.map(text => text.split(/\s+/)[0]) }));
+        check("production r2/r3 has no diagnostic region disclosure", await diagnosticsDisclosure.count() === 0);
+        const candidateRows = changesDisclosure.locator(".comparison__revision-change--candidate");
+        check("production r2/r3 has eight candidate changes", await candidateRows.count() === 8);
+        const bilateral = [];
+        for (const candidateRow of await candidateRows.all()) {
+          await candidateRow.click();
+          const evidenceDetails = page.getByTestId("revision-change-detail");
+          if (!(await evidenceDetails.locator("pre").isVisible())) await evidenceDetails.locator(":scope > summary").click();
+          const evidence = JSON.parse(await evidenceDetails.locator("pre").innerText());
+          bilateral.push(Boolean(evidence.beforeReference?.nodeId && evidence.afterReference?.nodeId));
+        }
+        check("all production candidate records retain bilateral references", bilateral.length === 8 && bilateral.every(Boolean));
+        const expectedHandoffLabels = ["Dispatch after postFlush", "Post-flush event handoff"];
+        const handoffAudit = await page.evaluate(labels => [...document.querySelectorAll('[data-testid^="revision-pane-"] .sequence-diff--candidate')]
+          .filter(node => labels.includes(node.getAttribute("data-message-label"))).length, expectedHandoffLabels);
+        check("four Doctrine → EventBus handoffs have candidate decoration on both snapshots", handoffAudit === 8, `candidate-decorated handoff nodes=${handoffAudit}`);
+        const exactAnchorAudit = await page.evaluate(() => {
+          const labels = pane => [...document.querySelectorAll(`[data-testid="revision-pane-${pane}"] .sequence-message`)]
+            .filter(node => !node.matches(".sequence-diff--added, .sequence-diff--removed, .sequence-diff--modified, .sequence-diff--candidate, .sequence-diff--moved, .sequence-diff--reordered, .sequence-diff--indeterminate"))
+            .map(node => node.getAttribute("data-message-label"));
+          const before = labels("a");
+          const after = new Set(labels("b"));
+          return before.filter(label => after.has(label));
+        });
+        check("eight exact interaction anchors remain undecorated in both snapshots", exactAnchorAudit.length === 8, exactAnchorAudit.join(" | "));
+        const dimensions = [];
+        const selectedEvidence = page.getByTestId("revision-change-detail");
+        if (await selectedEvidence.count() && await selectedEvidence.locator("pre").isVisible()) await selectedEvidence.locator(":scope > summary").click();
+        await changesDisclosure.locator(":scope > summary").click();
+        for (const [name, width, height] of [["desktop", 1440, 900], ["compact", 1280, 720], ["tablet-landscape", 1024, 768], ["tablet-portrait", 768, 1024]]) {
+          await page.setViewportSize({ width, height });
+          const measured = await page.evaluate(() => {
+            const summary = document.querySelector(".comparison__summary--sequence");
+            const panes = [...document.querySelectorAll('[data-testid^="revision-pane-"]')];
+            const rect = element => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, right: box.right, bottom: box.bottom }; };
+            const paneViewport = document.querySelector(".comparison__panes");
+            return { viewport: { width: innerWidth, height: innerHeight }, summary: summary && rect(summary), panes: panes.map(rect), paneScroll: paneViewport && { clientHeight: paneViewport.clientHeight, scrollHeight: paneViewport.scrollHeight, scrollTop: paneViewport.scrollTop }, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, controls: [...document.querySelectorAll("button")].filter(button => button.getClientRects().length).every(button => button.textContent.trim() || button.getAttribute("aria-label")) };
+          });
+          dimensions.push({ name, ...measured });
+          const sideBySide = width > 1100;
+          const nonOverlapping = sideBySide ? measured.panes[0]?.right <= measured.panes[1]?.x : measured.panes[0]?.bottom <= measured.panes[1]?.y;
+          const scrollableStack = sideBySide || measured.paneScroll?.scrollHeight >= measured.panes.reduce((sum, pane) => sum + pane.height, 0);
+          check(`${name} comparison panes are non-overlapping and reachable`, measured.summary && measured.panes.length === 2 && measured.summary.height <= height * .33 && measured.panes.every(pane => pane.width > 0 && pane.height > 0) && nonOverlapping && scrollableStack && measured.controls, JSON.stringify(measured));
+          await saveShot(`monthly-billing-r2-r3-${name}.png`);
+          if (!sideBySide) {
+            await page.locator(".comparison__panes").evaluate(element => { element.scrollTop = element.scrollHeight; });
+            await saveShot(`monthly-billing-r2-r3-${name}-second-pane.png`);
+            await page.locator(".comparison__panes").evaluate(element => { element.scrollTop = 0; });
+          }
+        }
+        if (await changesDisclosure.getAttribute("open") !== null) await changesDisclosure.locator(":scope > summary").click();
+        check("production change list is collapsed after review", await changesDisclosure.getAttribute("open") === null);
+        await writeFile(join(evidenceDir, "monthly-billing-layout.json"), JSON.stringify(dimensions, null, 2));
+      }
 
       check("no page errors or HTTP 500 responses during Sequence Comparison", pageErrors.length === 0 && http500s.length === 0, JSON.stringify({ pageErrors, http500s }));
       console.log(`  Evidence directory: ${evidenceDir}`);

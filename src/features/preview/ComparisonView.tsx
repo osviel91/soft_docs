@@ -13,6 +13,7 @@ import DatabasePreview from "./DatabasePreview";
 import MarkdownView from "../notes/MarkdownView";
 import { diffResources, type ResourceDiff, type SemanticChange } from "../../domain/diff/resource-diff";
 import { compareSequenceSnapshots, type SequenceComparison, type SequenceComparisonChange, type SequenceNodeReference } from "../../domain/diff/sequence-comparison";
+import { indeterminateOccurrenceTargetId } from "../proposals/review-decorations";
 import { SourceDiffView } from "../diff/SourceDiffView";
 import SemanticMessageInspector from "./SemanticMessageInspector";
 import TraceSurface from "./TraceSurface";
@@ -662,19 +663,24 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
   [snapshotsReady, sequenceComparisonSupported, snapshotA, snapshotB]);
   const changes = diff?.content.available && structuralComparisonSupported && !sequenceComparisonSupported ? diff.content.changes : [];
   const sequenceChanges = sequenceDiff?.availability !== "unavailable" ? sequenceDiff?.changes ?? [] : [];
-  const visibleSequenceChanges = sequenceChanges.filter((change) => !isGroupedSequenceDescendant(change, sequenceChanges));
+  const sequenceIndeterminate = sequenceDiff?.indeterminate ?? [];
+  const visibleSequenceChanges = useMemo(() => sequenceChanges.filter((change) => !isGroupedSequenceDescendant(change, sequenceChanges)), [sequenceChanges]);
   const [activeSequenceChange, setActiveSequenceChange] = useState<string | null>(null);
   const selectedChange = changes.find(change => changeKey(change) === activeChange) ?? changes[0] ?? null;
   useEffect(() => {
     if (!changes.some(change => changeKey(change) === activeChange)) setActiveChange(changes[0] ? changeKey(changes[0]) : null);
   }, [activeChange, changes]);
   useEffect(() => { setCameras({ a: null, b: null }); setActiveChange(null); }, [pairKey, resource.projectId, resource.contextId, resource.resourceId]);
-  useEffect(() => { setActiveSequenceChange(sequenceChanges[0]?.id ?? null); }, [pairKey, resource.projectId, resource.contextId, resource.resourceId, sequenceDiff]);
-  const selectedSequenceChange = visibleSequenceChanges.find((change) => change.id === activeSequenceChange) ?? visibleSequenceChanges[0] ?? null;
+  const sequenceNavigationIds = useMemo(() => [
+    ...visibleSequenceChanges.map((change) => change.id),
+    ...sequenceIndeterminate.flatMap((region) => [...region.before, ...region.after].map((occurrence) => indeterminateOccurrenceTargetId(region.id, occurrence))),
+  ], [visibleSequenceChanges, sequenceIndeterminate]);
+  useEffect(() => { setActiveSequenceChange(visibleSequenceChanges[0]?.id ?? null); }, [pairKey, resource.projectId, resource.contextId, resource.resourceId, sequenceDiff]);
+  const selectedSequenceChange = visibleSequenceChanges.find((change) => change.id === activeSequenceChange) ?? null;
   const stepSequenceChange = (direction: 1 | -1) => {
-    if (!visibleSequenceChanges.length) return;
-    const current = visibleSequenceChanges.findIndex((change) => change.id === selectedSequenceChange?.id);
-    setActiveSequenceChange(visibleSequenceChanges[(current + direction + visibleSequenceChanges.length) % visibleSequenceChanges.length]!.id);
+    if (!sequenceNavigationIds.length) return;
+    const current = Math.max(0, sequenceNavigationIds.indexOf(activeSequenceChange ?? ""));
+    setActiveSequenceChange(sequenceNavigationIds[(current + direction + sequenceNavigationIds.length) % sequenceNavigationIds.length]!);
   };
   const stepChange = (direction: 1 | -1) => {
     if (!changes.length) return;
@@ -683,7 +689,7 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
   };
 
   return <>
-    <section className="comparison__summary" aria-label="Structural revision comparison" data-testid="revision-structural-diff">
+    <section className={`comparison__summary${sequenceComparisonSupported ? " comparison__summary--sequence" : ""}`} aria-label="Structural revision comparison" data-testid="revision-structural-diff">
       <header className="proposal-inspector__header">
         <div><p className="governance-eyebrow">FIXED RESOURCE · {resource.contextId === null ? "SHARED" : "MY WORK"}</p><h2>{resource.path}</h2></div>
         <div className="comparison__analysis-controls">
@@ -701,14 +707,15 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
       {snapshotsReady && snapshotA && snapshotB && !sameRepresentation ? <p role="status">The selected revisions have incompatible representations; no structural diff was calculated.</p> : null}
       {snapshotsReady && verifiedIdentities ? <p className="comparison__revision-identity" data-testid="verified-revision-pair">Verified same lineage · {verifiedIdentities[0].projectId} / {verifiedIdentities[0].contextId ?? "SHARED"} / {verifiedIdentities[0].resourceId} · r{verifiedIdentities[0].revision} → r{verifiedIdentities[1].revision}</p> : null}
        {diff && !sequenceComparisonSupported ? <RevisionDiffSummary diff={diff} semanticSupported={Boolean(structuralComparisonSupported)} sameRepresentation={Boolean(sameRepresentation)} /> : null}
-       {sequenceDiff ? <SequenceRevisionSummary
-         comparison={sequenceDiff}
-         changes={visibleSequenceChanges}
-         allChanges={sequenceChanges}
-         selected={selectedSequenceChange}
-         onSelect={setActiveSequenceChange}
-         onStep={stepSequenceChange}
-       /> : null}
+        {sequenceDiff ? <SequenceRevisionSummary
+          comparison={sequenceDiff}
+          changes={visibleSequenceChanges}
+          allChanges={sequenceChanges}
+          selected={selectedSequenceChange}
+          activeId={activeSequenceChange}
+          onSelect={setActiveSequenceChange}
+          onStep={stepSequenceChange}
+        /> : null}
       {diff?.content.available === false ? <section aria-label="Revision diagnostics"><h3>Validation diagnostics</h3><ul>{diff.content.diagnostics.map((diagnostic, index) => <li key={index}>{diagnosticMessage(diagnostic)}</li>)}</ul></section> : null}
       {sameRepresentation && changes.length ? <section aria-label="Structural changes" data-testid="revision-change-list"><h3>Changes · {changes.length}</h3><div className="comparison__analysis-controls"><button type="button" aria-label="Previous difference" onClick={() => stepChange(-1)}>Previous</button><button type="button" aria-label="Next difference" onClick={() => stepChange(1)}>Next</button><span>{Math.max(0, changes.findIndex(change => changeKey(change) === (selectedChange ? changeKey(selectedChange) : null))) + 1} / {changes.length}</span></div><ul>{changes.map(change => <li key={changeKey(change)}><button type="button" aria-pressed={selectedChange === change} className={`comparison__revision-change comparison__revision-change--${change.kind}`} onClick={() => setActiveChange(changeKey(change))}><strong>{change.kind}</strong> {change.entity} · {change.identity} <small>{change.confidence === "candidate" ? "Candidate correspondence" : change.kind === "modified" ? "Confirmed stable-ID match" : "Stable-ID entity; no counterpart inferred"}</small></button></li>)}</ul></section> : null}
       {selectedChange && verifiedIdentities ? <section aria-label="Selected difference evidence" data-testid="revision-change-detail"><h3>Difference evidence</h3><p>{selectedChange.entity} · {selectedChange.identity} · {selectedChange.confidence === "candidate" ? "Candidate; not a confirmed modification" : selectedChange.kind === "modified" ? "Confirmed modification by stable entity ID" : "Entity identified by stable ID; no counterpart inferred"}</p><p>Match basis: {selectedChange.matchBasis ?? "representation-specific identity"}</p><p>Provenance: r{verifiedIdentities[0].revision} → r{verifiedIdentities[1].revision}</p><pre>{JSON.stringify(selectedChange.details ?? {}, null, 2)}</pre>{diff?.source.hunks.length ? <details><summary>Source evidence · {diff.source.totalHunks} hunk(s){diff.source.truncated ? " · partial" : ""}</summary><SourceDiffView source={diff.source} beforeContent={snapshotA!.content} afterContent={snapshotB!.content} mode="unified" beforeLabel={`r${snapshotA!.revision}`} afterLabel={`r${snapshotB!.revision}`} /></details> : null}</section> : null}
@@ -717,10 +724,10 @@ function HistoricalRevisionComparison({ client, resource, maximizedPane, onMaxim
     </section>
     <div className="comparison__content"><div className="comparison__panes">
       <div className={maximizedPane === "b" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-         {snapshotsReady && snapshotA ? <RevisionPreviewPane key={`${session.id}:a:${snapshotA.revision}`} pane="a" snapshot={snapshotA} semanticPreviewEnabled={Boolean(structuralComparisonSupported)} reviewChanges={changes} sequenceChanges={visibleSequenceChanges} activeChange={sequenceComparisonSupported ? activeSequenceChange : activeChange} camera={session.cameras.a} onCameraChange={transform => setCameras(current => ({ ...current, a: transform }))} reviewSide="base" sequenceSide="before" maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+         {snapshotsReady && snapshotA ? <RevisionPreviewPane key={`${session.id}:a:${snapshotA.revision}`} pane="a" snapshot={snapshotA} semanticPreviewEnabled={Boolean(structuralComparisonSupported)} reviewChanges={changes} sequenceChanges={visibleSequenceChanges} sequenceIndeterminate={sequenceIndeterminate} activeChange={sequenceComparisonSupported ? activeSequenceChange : activeChange} camera={session.cameras.a} onCameraChange={transform => setCameras(current => ({ ...current, a: transform }))} reviewSide="base" sequenceSide="before" maximized={maximizedPane === "a"} onMaximize={() => onMaximize("a")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
       </div>
       <div className={maximizedPane === "a" ? "comparison__slot comparison__slot--hidden" : "comparison__slot"}>
-         {snapshotsReady && snapshotB ? <RevisionPreviewPane key={`${session.id}:b:${snapshotB.revision}`} pane="b" snapshot={snapshotB} semanticPreviewEnabled={Boolean(structuralComparisonSupported)} reviewChanges={changes} sequenceChanges={visibleSequenceChanges} activeChange={sequenceComparisonSupported ? activeSequenceChange : activeChange} camera={session.cameras.b} onCameraChange={transform => setCameras(current => ({ ...current, b: transform }))} reviewSide="proposed" sequenceSide="after" maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
+          {snapshotsReady && snapshotB ? <RevisionPreviewPane key={`${session.id}:b:${snapshotB.revision}`} pane="b" snapshot={snapshotB} semanticPreviewEnabled={Boolean(structuralComparisonSupported)} reviewChanges={changes} sequenceChanges={visibleSequenceChanges} sequenceIndeterminate={sequenceIndeterminate} activeChange={sequenceComparisonSupported ? activeSequenceChange : activeChange} camera={session.cameras.b} onCameraChange={transform => setCameras(current => ({ ...current, b: transform }))} reviewSide="proposed" sequenceSide="after" maximized={maximizedPane === "b"} onMaximize={() => onMaximize("b")} onRestore={onRestore} /> : <div className="comparison__empty">Select two revisions to compare.</div>}
       </div>
     </div></div>
   </>;
@@ -788,42 +795,103 @@ function isGroupedSequenceDescendant(change: SequenceComparisonChange, all: Sequ
   });
 }
 
-function SequenceRevisionSummary({ comparison, changes, allChanges, selected, onSelect, onStep }: {
+function SequenceRevisionSummary({ comparison, changes, allChanges, selected, activeId, onSelect, onStep }: {
   comparison: SequenceComparison;
   changes: SequenceComparisonChange[];
   allChanges: SequenceComparisonChange[];
   selected: SequenceComparisonChange | null;
+  activeId: string | null;
   onSelect: (changeId: string) => void;
   onStep: (direction: 1 | -1) => void;
 }) {
   const total = comparison.changes.length;
-  const grouped = total - changes.length;
-  return <section className="comparison__summary" aria-label="Sequence revision comparison" data-testid="sequence-revision-structural-diff">
-    <h2>Sequence structural comparison</h2>
-    {comparison.availability === "available"
-      ? <p role="status">Structural diff available · {total} change(s) · {comparison.indeterminate.reduce((sum, region) => sum + region.counts.before + region.counts.after, 0)} indeterminate occurrence(s).</p>
-      : <p role="status">Structural diff {comparison.availability} · {total} represented change(s) · {comparison.indeterminate.reduce((sum, region) => sum + region.counts.before + region.counts.after, 0)} indeterminate occurrence(s); do not interpret this as an absence of changes.</p>}
-    <p>Added {comparison.changes.filter((change) => change.kind === "added").length} · Removed {comparison.changes.filter((change) => change.kind === "removed").length} · Modified {comparison.changes.filter((change) => change.kind === "modified").length} · Moved {comparison.changes.filter((change) => change.kind === "moved").length} · Reordered {comparison.changes.filter((change) => change.kind === "reordered").length}</p>
-    {comparison.diagnostics.length ? <section aria-label="Sequence comparison diagnostics"><h3>Diagnostics</h3><ul>{comparison.diagnostics.map((diagnostic, index) => <li key={`${diagnostic.code}:${index}`}>{diagnostic.message}{diagnostic.side ? ` (${diagnostic.side}${diagnostic.range ? `, line ${diagnostic.range.start.line + 1}` : ""})` : ""}</li>)}</ul></section> : null}
-    {comparison.limitations.map((limitation) => <p key={limitation} className="comparison__candidate">{limitation}</p>)}
-    {changes.length ? <section aria-label="Sequence changes" data-testid="revision-change-list"><h3>Changes · {changes.length}{grouped ? ` · ${grouped} nested change(s) grouped under their container` : ""}</h3>
-      <div className="comparison__analysis-controls"><button type="button" aria-label="Previous difference" onClick={() => onStep(-1)}>Previous</button><button type="button" aria-label="Next difference" onClick={() => onStep(1)}>Next</button><span>{Math.max(0, changes.findIndex((change) => change.id === selected?.id)) + 1} / {changes.length}</span></div>
+  const confirmed = comparison.changes.filter((change) => change.confidence === "confirmed").length;
+  const candidates = comparison.changes.filter((change) => change.confidence === "candidate").length;
+  const unmatched = comparison.changes.filter((change) => change.confidence === "unmatched").length;
+  const indeterminateCount = comparison.indeterminate.reduce((sum, region) => sum + region.counts.before + region.counts.after, 0);
+  const hiddenChildren = total - changes.length;
+  const linkedDiagnosticIndices = new Set(comparison.indeterminate.flatMap((region) => region.diagnosticIndices));
+  const diagnostics = comparison.diagnostics.flatMap((diagnostic, index) => linkedDiagnosticIndices.has(index) ? [] : [{ diagnostic, index }]);
+  const diagnosticGroups = new Map<string, typeof diagnostics>();
+  for (const item of diagnostics) {
+    const group = diagnosticGroups.get(item.diagnostic.code) ?? [];
+    group.push(item);
+    diagnosticGroups.set(item.diagnostic.code, group);
+  }
+  const kinds = (["added", "removed", "modified", "moved", "reordered"] as const).map((kind) => ({ kind, count: comparison.changes.filter((change) => change.kind === kind).length }));
+  const selectedOccurrence = comparison.indeterminate.flatMap((region) => [
+    ...region.before.map((occurrence) => ({ region, occurrence })),
+    ...region.after.map((occurrence) => ({ region, occurrence })),
+  ]).find(({ region, occurrence }) => indeterminateOccurrenceTargetId(region.id, occurrence) === activeId);
+  const sequenceNavigationIds = [
+    ...changes.map((change) => change.id),
+    ...comparison.indeterminate.flatMap((region) => [...region.before, ...region.after].map((occurrence) => indeterminateOccurrenceTargetId(region.id, occurrence))),
+  ];
+  return <section className="comparison__summary comparison__summary--sequence" aria-label="Sequence revision comparison" data-testid="sequence-revision-structural-diff">
+    <header className="sequence-summary__header">
+      <h2>Sequence comparison</h2>
+      <span className={`sequence-summary__availability sequence-summary__availability--${comparison.availability}`} role="status">Structural diff {comparison.availability}</span>
+      <span className="sequence-summary__certainty">Availability describes analysis completion; certainty describes each record.</span>
+    </header>
+    <div className="sequence-summary__counts" aria-label="Comparison counts">
+      <span><strong>{confirmed}</strong> confirmed change{confirmed === 1 ? "" : "s"}</span>
+      <span><strong>{candidates}</strong> candidate correspondence{candidates === 1 ? "" : "s"}</span>
+      <span><strong>{unmatched}</strong> unpaired add/remove change{unmatched === 1 ? "" : "s"}</span>
+      <span><strong>{indeterminateCount}</strong> indeterminate occurrence{indeterminateCount === 1 ? "" : "s"}</span>
+    </div>
+    <p className="sequence-summary__definition">Certainty counts partition change records; indeterminate occurrences are separate. The kind breakdown below counts change records only.</p>
+    <p className="sequence-summary__kinds" aria-label="Change records by kind">Change records · {kinds.map(({ kind, count }) => `${kind} ${count}`).join(" · ")}</p>
+    {sequenceNavigationIds.length ? <nav className="sequence-summary__navigation" aria-label="Difference navigation">
+      <button type="button" aria-label="Previous difference" onClick={() => onStep(-1)}>Previous</button>
+      <button type="button" aria-label="Next difference" onClick={() => onStep(1)}>Next</button>
+      <span>{activeId ? `${Math.max(0, sequenceNavigationIds.indexOf(activeId)) + 1} / ${sequenceNavigationIds.length}` : `0 / ${sequenceNavigationIds.length}`}</span>
+    </nav> : null}
+    {comparison.indeterminate.length || diagnostics.length ? <details className="sequence-summary__diagnostics" data-testid="sequence-diagnostics">
+      <summary>Diagnostics · {comparison.indeterminate.length} ambiguous region(s) · {diagnostics.length} other diagnostic(s)</summary>
+      {comparison.indeterminate.length ? <section aria-label="Indeterminate regions">
+        <h3>Matching ambiguity</h3>
+        <p>{comparison.indeterminate.length} region(s) · before {comparison.indeterminate.reduce((sum, region) => sum + region.counts.before, 0)} occurrence(s) · after {comparison.indeterminate.reduce((sum, region) => sum + region.counts.after, 0)} occurrence(s)</p>
+        {comparison.indeterminate.map((region) => <details key={region.id} className="sequence-summary__region">
+          <summary><span aria-hidden="true">⚠</span> {region.cause.replaceAll("-", " ")} · {region.scope} · before {region.counts.before} / after {region.counts.after}</summary>
+          <p>{region.evidence.join(" ")}</p>
+          <ul>{[...region.before, ...region.after].map((occurrence) => <li key={indeterminateOccurrenceTargetId(region.id, occurrence)}>
+            <button type="button" className="sequence-summary__occurrence" aria-pressed={activeId === indeterminateOccurrenceTargetId(region.id, occurrence)} onClick={() => onSelect(indeterminateOccurrenceTargetId(region.id, occurrence))}>
+              <span aria-hidden="true">⚠</span> {occurrence.side} · line {occurrence.reference.range.start.line + 1} · {occurrence.entity}
+            </button>
+          </li>)}</ul>
+        </details>)}
+      </section> : null}
+      {[...diagnosticGroups].map(([code, entries]) => <details key={code} className="sequence-summary__diagnostic-group">
+        <summary>{code === "processing-limit" ? "Processing-budget limit" : code === "invalid-snapshot" ? "Snapshot analysis error" : "Matching diagnostic"} · {entries.length}</summary>
+        <ul>{entries.map(({ diagnostic, index: diagnosticIndex }) => <li key={`${code}:${diagnosticIndex}`}>{diagnostic.message}{diagnostic.side ? ` (${diagnostic.side}${diagnostic.range ? `, line ${diagnostic.range.start.line + 1}` : ""})` : ""}</li>)}</ul>
+      </details>)}
+    </details> : null}
+    {comparison.limitations.length ? <details className="sequence-summary__limitations"><summary>Scope limitations · {comparison.limitations.length}</summary><ul>{comparison.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></details> : null}
+    {changes.length ? <details className="sequence-summary__changes" aria-label="Sequence changes" data-testid="revision-change-list">
+      <summary>Changes · {changes.length}{hiddenChildren ? ` · ${hiddenChildren} nested change(s) grouped under their container` : ""}</summary>
       <ul>{changes.map((change) => {
         const descendants = groupedSequenceDescendants(change, allChanges);
         const statusClass = change.confidence === "candidate" ? "comparison__revision-change--candidate" : `comparison__revision-change--${change.kind}`;
-        return <li key={change.id}><button type="button" aria-pressed={selected?.id === change.id} className={`comparison__revision-change ${statusClass}`} onClick={() => onSelect(change.id)}><strong>{change.kind}</strong> {change.entity}<small>{change.confidence === "candidate" ? "Candidate · not confirmed" : change.matchBasis ?? "Unmatched"}</small></button>{descendants.length ? <details><summary>{descendants.length} nested changes retained</summary><ul>{descendants.map((child) => <li key={child.id}>{child.kind} {child.entity} · {child.confidence}{child.matchBasis ? ` · ${child.matchBasis}` : ""}</li>)}</ul></details> : null}</li>;
+        const status = change.confidence === "candidate" ? "Candidate · not confirmed" : change.confidence === "confirmed" ? `Confirmed · ${change.matchBasis ?? "matched"}` : "No counterpart inferred";
+        return <li key={change.id}><button type="button" aria-pressed={activeId === change.id} className={`comparison__revision-change ${statusClass}`} onClick={() => onSelect(change.id)}><strong>{change.kind}</strong> {change.entity}<small>{status}</small></button>{descendants.length ? <details><summary>{descendants.length} nested changes retained</summary><ul>{descendants.map((child) => <li key={child.id}>{child.kind} {child.entity} · {child.confidence}{child.matchBasis ? ` · ${child.matchBasis}` : ""}</li>)}</ul></details> : null}</li>;
       })}</ul>
-    </section> : comparison.availability === "available" ? <p role="status">No structural changes.</p> : null}
-    {selected ? <section aria-label="Selected difference evidence" data-testid="revision-change-detail"><h3>Difference evidence · {selected.entity} {selected.kind}</h3><p>{selected.confidence === "candidate" ? "Candidate correspondence; not a confirmed change." : selected.matchBasis ?? "No reliable counterpart inferred."}</p><pre>{JSON.stringify({ before: selected.beforeValue, after: selected.afterValue, modifiedProperties: selected.modifiedProperties, beforeReference: selected.before, afterReference: selected.after }, null, 2)}</pre></section> : null}
+    </details> : total === 0 && indeterminateCount === 0 && comparison.availability === "available" ? <p role="status">No structural changes.</p> : null}
+    {selected ? <details className="sequence-summary__evidence" data-testid="revision-change-detail"><summary>Selected change evidence · {selected.entity} {selected.kind} · {selected.confidence}</summary><p>{selected.confidence === "candidate" ? "Candidate correspondence; not a confirmed change." : selected.matchBasis ?? "No reliable counterpart inferred."}</p><pre>{JSON.stringify({ before: selected.beforeValue, after: selected.afterValue, modifiedProperties: selected.modifiedProperties, beforeReference: selected.before, afterReference: selected.after }, null, 2)}</pre></details> : null}
+    {selectedOccurrence ? <section className="sequence-summary__evidence" aria-label="Indeterminate occurrence evidence" data-testid="indeterminate-occurrence-detail">
+      <h3>Indeterminate occurrence · {selectedOccurrence.occurrence.side} · r{selectedOccurrence.occurrence.reference.revision}</h3>
+      <p>No counterpart is asserted. Navigation targets only this snapshot occurrence.</p>
+      <pre>{JSON.stringify({ value: selectedOccurrence.occurrence.value, reference: selectedOccurrence.occurrence.reference, region: selectedOccurrence.region.id }, null, 2)}</pre>
+    </section> : null}
   </section>;
 }
 
-function RevisionPreviewPane({ pane, snapshot, semanticPreviewEnabled, reviewChanges, sequenceChanges, activeChange, camera, onCameraChange, reviewSide, sequenceSide, maximized, onMaximize, onRestore }: {
+function RevisionPreviewPane({ pane, snapshot, semanticPreviewEnabled, reviewChanges, sequenceChanges, sequenceIndeterminate, activeChange, camera, onCameraChange, reviewSide, sequenceSide, maximized, onMaximize, onRestore }: {
   pane: "a" | "b";
   snapshot: ServerResourceRevision;
   semanticPreviewEnabled: boolean;
   reviewChanges: SemanticChange[];
   sequenceChanges: SequenceComparisonChange[];
+  sequenceIndeterminate: SequenceComparison["indeterminate"];
   activeChange: string | null;
   camera: DiagramViewportTransform | null;
   onCameraChange: (transform: DiagramViewportTransform) => void;
@@ -839,7 +907,7 @@ function RevisionPreviewPane({ pane, snapshot, semanticPreviewEnabled, reviewCha
       <button type="button" className="icon-button" aria-label={maximized ? `Restore revision ${pane.toUpperCase()}` : `Maximize revision ${pane.toUpperCase()}`} onClick={maximized ? onRestore : onMaximize}>{maximized ? "⊡" : "⤢"}</button>
     </header>
     <div className="comparison__viewer">
-       {semanticPreviewEnabled && snapshot.type === "sequence-diagram" ? <Preview source={snapshot.content} sequenceChanges={sequenceChanges} sequenceSide={sequenceSide} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} comparisonMode />
+        {semanticPreviewEnabled && snapshot.type === "sequence-diagram" ? <Preview source={snapshot.content} sequenceChanges={sequenceChanges} sequenceIndeterminate={sequenceIndeterminate} sequenceSide={sequenceSide} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} comparisonMode />
          : semanticPreviewEnabled && snapshot.type === "conceptual" ? <ConceptualPreview source={snapshot.content} reviewChanges={reviewChanges} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} reviewSide={reviewSide} comparisonMode />
         : semanticPreviewEnabled && snapshot.type === "database" ? <DatabasePreview source={snapshot.content} reviewChanges={reviewChanges} activeReviewChange={activeChange} focusReviewChange={activeChange} initialTransform={camera} onVisualTransformChange={onCameraChange} comparisonMode />
           : <section aria-label="Historical source fallback"><p role="status">Structural historical preview is not supported for {representationLabel(representation)}. Showing source only; no semantic change is asserted.</p><pre>{snapshot.content}</pre></section>}
